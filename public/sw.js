@@ -249,7 +249,7 @@
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
 // v371: B2-A server-first explicit logout and its precached coordinator.
-const VERSION    = 'v371';
+const VERSION    = 'v372';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

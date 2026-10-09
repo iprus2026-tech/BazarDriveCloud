@@ -92,6 +92,8 @@ async function realCase(name) {
     },
     localLogout: performLocalLogout,
   });
+  const ownedAuth = { token: auth.getAuthToken(), userId: auth.getAuthUserId(),
+    ownerVersion: auth.getAuthOwnerVersion() };
   const pending = coordinator.logout();
   await flush();
   assert.equal(posts, 1);
@@ -106,6 +108,27 @@ async function realCase(name) {
       userId: name === 'foreign' ? 'user-B' : 'user-A', ownerVersion: crypto.randomUUID() }));
   }
   const remove = localStorage.removeItem;
+  const read = localStorage.getItem;
+  const ambiguous = name.startsWith('storage-remove-success-read-throws');
+  let verificationReads = 0;
+  let authRemovals = 0;
+  if (name === 'absent-without-blocked-cleanup') remove(auth.AUTH_STORAGE_KEY);
+  if (ambiguous) {
+    localStorage.removeItem = key => {
+      remove(key);
+      if (key === auth.AUTH_STORAGE_KEY) {
+        authRemovals++;
+        verificationReads++;
+      }
+    };
+    localStorage.getItem = key => {
+      if (key === auth.AUTH_STORAGE_KEY && verificationReads) {
+        verificationReads--;
+        throw new Error('verification read denied after successful removal');
+      }
+      return read(key);
+    };
+  }
   if (name === 'storage-denied' || name === 'storage-noop') {
     localStorage.removeItem = key => {
       if (key === auth.AUTH_STORAGE_KEY) {
@@ -117,7 +140,87 @@ async function realCase(name) {
   }
   request.resolve({ ok: true });
   const result = await pending;
-  if (name.startsWith('foreign') || name === 'same-tab') {
+  if (ambiguous) {
+    assert.equal(authRemovals, 1);
+    assert.equal(verificationReads, 0, 'only the immediate removal verification throws');
+    assert.equal(read(auth.AUTH_STORAGE_KEY), null, 'A was physically removed');
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED',
+      'successful removal with unreadable verification must retain A cleanup ownership');
+    assert.equal(coordinator.getSnapshot().phase, 'local-error');
+    assert.equal(posts, 1);
+    assert.equal(auth.getAuthToken(), null, 'cleanup ownership grants no bearer authority');
+    assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"A"}]');
+    assert.equal(user.get().firstName, 'A');
+    assert.equal(controller.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal((await controller.reconcile()).state, 'SESSION_UNKNOWN');
+    assert.equal(hash, '#/profile');
+    localStorage.getItem = read;
+    localStorage.removeItem = remove;
+    assert.equal(auth.isLogoutAuthCurrent({ ...ownedAuth, ownerVersion: crypto.randomUUID() }), false,
+      'blocked cleanup still requires the exact ownerVersion');
+    if (name.endsWith('-unreadable-retry')) {
+      localStorage.getItem = key => {
+        if (key === auth.AUTH_STORAGE_KEY) throw new Error('auth storage still unreadable');
+        return read(key);
+      };
+      assert.equal(auth.isLogoutAuthCurrent(ownedAuth), true, 'unreadable storage is not a new actor');
+      assert.equal(auth.getAuthToken(), null);
+      assert.equal((await coordinator.logout()).code, 'AUTH_STORAGE_FAILED');
+      assert.equal(posts, 1);
+      assert.equal(controller.getSnapshot().state, 'SESSION_UNKNOWN');
+      assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"A"}]');
+      assert.equal(hash, '#/profile');
+      localStorage.getItem = read;
+    }
+    if (name.endsWith('-marker-mismatch')) {
+      sessionStorage.setItem('bazardrive.auth.rejected_projection.v1', 'bound:' + crypto.randomUUID());
+      assert.equal(auth.isLogoutAuthCurrent(ownedAuth), false);
+      assert.equal((await coordinator.logout()).code, 'AUTH_STALE');
+      assert.equal(posts, 1);
+      assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"A"}]');
+      assert.equal(user.get().firstName, 'A');
+      assert.equal(controller.getSnapshot().state, 'SESSION_UNKNOWN');
+      assert.equal(hash, '#/profile');
+      return;
+    }
+    if (name.endsWith('-foreign') || name.endsWith('-foreign-same-user') || name.endsWith('-same-tab')) {
+      const sameTab = name.endsWith('-same-tab');
+      if (sameTab) {
+        controller.beginLogin();
+        assert.equal(auth.setAuth({ token: 'B', userId: 'user-B' }), true);
+        assert.equal(auth.commitAuthCandidate(auth.getAuthOwnerVersion()), true);
+      } else {
+        localStorage.setItem(auth.AUTH_STORAGE_KEY, JSON.stringify({ token: 'B',
+          userId: name.endsWith('-foreign-same-user') ? 'user-A' : 'user-B',
+          ownerVersion: crypto.randomUUID() }));
+      }
+      localStorage.setItem('bazardrive.ride_history.v1', '[{"secret":"B"}]');
+      user.set({ firstName: 'B' });
+      const replacement = read(auth.AUTH_STORAGE_KEY);
+      assert.equal((await coordinator.logout()).code, 'AUTH_STALE');
+      assert.equal(read(auth.AUTH_STORAGE_KEY), replacement, 'A retry must not erase B');
+      assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"B"}]');
+      assert.equal(user.get().firstName, 'B');
+      assert.notEqual(controller.getSnapshot().state, 'ANONYMOUS');
+      assert.equal(hash, '#/profile');
+    } else {
+      assert.equal((await coordinator.logout()).ok, true);
+      assert.equal(read(auth.AUTH_STORAGE_KEY), null);
+      assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), null);
+      assert.equal(user.get().firstName || null, null);
+      assert.equal(controller.getSnapshot().state, 'ANONYMOUS');
+      assert.equal(hash, '#/welcome');
+    }
+    assert.equal(posts, 1, 'repair must never repeat the committed server revoke');
+  } else if (name === 'absent-without-blocked-cleanup') {
+    assert.equal(result.code, 'AUTH_STALE');
+    assert.equal(auth.isLogoutAuthCurrent(ownedAuth), false);
+    assert.equal(auth.clearAuth({ expected: ownedAuth }), false,
+      'empty storage plus a bound marker is not enough without a prior blocked cleanup');
+    assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"A"}]');
+    assert.equal(hash, '#/profile');
+    assert.equal(posts, 1);
+  } else if (name.startsWith('foreign') || name === 'same-tab') {
     assert.equal(result.code, 'AUTH_STALE');
     assert.equal(JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY)).token, 'B');
     assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"A"}]');
@@ -279,7 +382,11 @@ if (process.argv[2] === '--storage-case') {
     await control.submit();
     assert.deepEqual(states, ['confirmed', 'pending', 'error', 'pending', 'success']);
   });
-  for (const name of ['success', 'same-tab', 'foreign', 'foreign-same-user', 'storage-denied', 'storage-noop']) {
+  for (const name of ['success', 'same-tab', 'foreign', 'foreign-same-user', 'storage-denied', 'storage-noop',
+    'storage-remove-success-read-throws', 'storage-remove-success-read-throws-foreign',
+    'storage-remove-success-read-throws-foreign-same-user', 'storage-remove-success-read-throws-same-tab',
+    'storage-remove-success-read-throws-unreadable-retry', 'storage-remove-success-read-throws-marker-mismatch',
+    'absent-without-blocked-cleanup']) {
     await check('real auth/controller/local boundary: ' + name, () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-case', name],
         { stdio: 'pipe' });

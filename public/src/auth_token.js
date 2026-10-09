@@ -207,6 +207,13 @@ export function setAuth({ token, userId, phone } = {}) {
 // replaced the origin-wide record, detach locally but preserve that replacement.
 // Explicit logout retains this lease across a failed removal. Raw readback is
 // needed on retry because failed removal deliberately blocks public getters.
+function ownsBlockedLogoutCleanup(expected) {
+  return blocked && !pendingWrite && !tabDetachMode && marker?.state === 'bound'
+    && typeof expected.token === 'string' && !!expected.token
+    && expected.userId === tabUserId && expected.ownerVersion === marker.ownerVersion
+    && markerMatches();
+}
+
 export function isLogoutAuthCurrent(expected) {
   if (!expected.token) {
     try {
@@ -216,21 +223,34 @@ export function isLogoutAuthCurrent(expected) {
         && getAuthOwnerVersion() === expected.ownerVersion;
     } catch { return false; }
   }
+  const ownedCleanup = ownsBlockedLogoutCleanup(expected);
   try {
     const raw = loadRaw();
+    // Absence after a blocked removal keeps cleanup ownership, not bearer authority.
+    if (ownedCleanup && Object.keys(raw).length === 0
+        && localStorage.getItem(STORAGE_KEY) === null) return true;
     return markerMatches() && recordOwned(raw) && !tabDetachMode
       && raw.token === expected.token && raw.userId === expected.userId
       && (raw.ownerVersion || null) === expected.ownerVersion;
-  } catch { return false; }
+  } catch { return ownedCleanup; }
 }
 
 export function clearAuth({ expected } = {}) {
+  const retryingOwnedCleanup = expected && ownsBlockedLogoutCleanup(expected);
   if (expected && !isLogoutAuthCurrent(expected)) return false;
   blocked = true;
   if (marker?.state === 'rejected') return AUTH_CLEAR_FOREIGN;
   if (marker && !markerMatches()) return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;
   try {
     const raw = loadRaw();
+    if (retryingOwnedCleanup && Object.keys(raw).length === 0
+        && localStorage.getItem(STORAGE_KEY) === null) {
+      blocked = false;
+      pendingWrite = null;
+      tabUserId = null;
+      tabDetachMode = 'own-cleared';
+      return true;
+    }
     const rawUserId = typeof raw.userId === 'string' && raw.userId ? raw.userId : null;
 
     if (Object.hasOwn(raw, 'ownerVersion') && !recordOwned(raw)) {

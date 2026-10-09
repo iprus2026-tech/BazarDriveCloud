@@ -87,7 +87,10 @@ export function createAuthLogout({
       return Promise.resolve(ok ? { ok: true } : failure('AUTH_STORAGE_FAILED'));
     }
     let run = repair;
-    if (run && !current(run)) { repair = null; run = null; }
+    if (run && !current(run)) {
+      repair = null;
+      return Promise.resolve(failure('AUTH_STALE'));
+    }
     if (!run) {
       const auth = captureAuth();
       run = { auth, controller: beginLogout(), epoch: ++epoch, revoked: false };
