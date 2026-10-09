@@ -43,6 +43,8 @@ export function createAuthSessionBootstrap({
   let handoffRemovalPending = false;
   let rejectedDetachPending = false;
   let bootActorPinned = false;
+  let logoutStoragePending = false;
+  let logoutContinuationsBlocked = false;
 
   function makeSnapshot(state, user = null, error = null) {
     return Object.freeze({ state, user, grants: 'UNKNOWN', readiness: 'UNKNOWN',
@@ -95,6 +97,8 @@ export function createAuthSessionBootstrap({
 
   // Router ownership + generation defeat A->B->A and competing login responses.
   function beginLogin({ isCurrent = () => true, resetAccount = () => {}, expectedRole = 'passenger' } = {}) {
+    logoutStoragePending = false;
+    logoutContinuationsBlocked = false;
     const authorityRole = ['passenger', 'driver'].includes(expectedRole) ? expectedRole : null;
     const attemptGeneration = ++loginAttemptSequence;
     ++sequence;
@@ -180,7 +184,7 @@ export function createAuthSessionBootstrap({
 
   async function resumeLogin() {
     const expected = handoff;
-    if (!expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
+    if (logoutContinuationsBlocked || !expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
     const result = await reconcile({ uiContinuation: true });
     if (handoff !== expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
     const ok = authorityConfirmed(expected, { requireUI: true });
@@ -189,7 +193,7 @@ export function createAuthSessionBootstrap({
   }
 
   function authorityConfirmed(expected, { requireUI = true } = {}) {
-    return !!expected && expected === handoff && (!requireUI || expected.ownsUI())
+    return !logoutContinuationsBlocked && !!expected && expected === handoff && (!requireUI || expected.ownsUI())
       && expected.authority && readToken() === expected.token && readUserId() === expected.userId
       && (expected.ownerVersion || null) === readOwnerVersion()
       && snapshot.state === 'AUTHENTICATED' && snapshot.user?.userId === expected.userId
@@ -384,6 +388,7 @@ export function createAuthSessionBootstrap({
     handoff = null;
     handoffRemovalPending = false;
     rejectedDetachPending = false;
+    logoutStoragePending = false;
     publish('ANONYMOUS');
     return true;
   }
@@ -398,6 +403,7 @@ export function createAuthSessionBootstrap({
       publish('LOCAL_DEMO_BOOT');
       return snapshot;
     }
+    if (logoutStoragePending) return fail('AUTH_STORAGE_FAILED');
     // Missing getters are not proof that durable tab detachment succeeded.
     if (rejectedDetachPending || (!bootActorPinned && tabRejected())) return detachRejectedSession();
     if (!bootActorPinned) {
@@ -499,6 +505,22 @@ export function createAuthSessionBootstrap({
     }
   }
 
+  function beginExplicitLogout() {
+    logoutContinuationsBlocked = true;
+    const generation = ++loginAttemptSequence;
+    ++sequence;
+    active?.cancel();
+    active = null;
+    return Object.freeze({ isCurrent: () => generation === loginAttemptSequence });
+  }
+
+  function failExplicitLogout(lease) {
+    if (!lease.isCurrent()) return false;
+    logoutStoragePending = true;
+    fail('AUTH_STORAGE_FAILED');
+    return true;
+  }
+
   return Object.freeze({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
@@ -506,6 +528,7 @@ export function createAuthSessionBootstrap({
     isLoginDetached, recoveryConfirmed, recoveryProjection, rebindRecoveryOwner,
     retainAuthenticatedCleanupOwner, finishRecovery,
     markLoginStale, abandonLogin, enterGuest, adoptAnonymousAfterExternalLogout,
+    beginExplicitLogout, failExplicitLogout,
     hasUncommittedLogin: () => handoff !== null,
   });
 }

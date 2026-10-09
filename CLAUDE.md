@@ -30,7 +30,10 @@ Current state (per BD-DOCS-042's per-route matrix): auth (all four endpoints,
 including current-session logout),
 order-writes, matching-writes (offers-create/select), and chat are real, DB-backed
 and merged, but **LIVE / PILOT-BLOCKED** — the PWA cutover remains guarded;
-B2 client logout orchestration is not yet wired.
+B2-A explicit Passenger/Driver Profile and backend-enabled Settings logout is
+wired server-first: confirmed current-session revoke precedes guarded local detach.
+Guest/Back-abandon (B2-B) and account switch (B2-C) still do not revoke server
+sessions. Backend-OFF Profile remains local; Settings remains demo-only.
 Order-reads, matching-reads, both ride-state routes, both history routes, and
 realtime-poll are plain **LIVE** (no pilot blocker). Availability, route-price,
 notifications, and safety remain dark `501` stubs. ADR BD-DOCS-041 predates this

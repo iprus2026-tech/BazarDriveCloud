@@ -9,6 +9,7 @@ import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
 import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from './auth_token.js';
 import { setLocalLogoutObserver } from './mock_auth.js';
+import { createAuthLogout } from './auth_logout.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
 import welcome    from './screens/welcome.js';
@@ -45,7 +46,7 @@ register('/route-picker', routePicker);
 register('/route-preview', routePreview);
 register('/order-map-draft', orderMapDraft);
 register('/rules',       rules);
-register('/profile',     profile);
+register('/profile', context => profile(context, { logout: options => authLogout.logout(options) }));
 let onboardingHandoffOwner = null;
 let pendingRecoveryTransfer = false;
 register('/onboarding', (context) => {
@@ -96,7 +97,7 @@ register('/receipt',     tripReceipt);
 // reads the id off location.hash itself.
 register('/order',       orderDetail);
 // BD-SETTINGS-01 — passenger #pfp-settings-btn + driver #pf2-gear open this.
-register('/settings',    settings);
+register('/settings', context => settings(context, { logout: options => authLogout.logout(options) }));
 // BD-OPS-03 — ScreenOps dev/docs dashboard. Intentionally NOT in the tabbar
 // (no #tabbar button); reached by typing /ops/screens or from the docs manual.
 register('/ops/screens', opsScreens);
@@ -155,6 +156,10 @@ const bootSession = createAuthSessionBootstrap({
     if (user.get().role !== 'guest') user.resetCacheOnly();
   },
 });
+const authLogout = createAuthLogout({
+  beginLogout: () => bootSession.beginExplicitLogout(),
+  onLocalFailure: lease => bootSession.failExplicitLogout(lease),
+});
 setLocalLogoutObserver(() => !isBackendEnabled()
   || bootSession.adoptAnonymousAfterExternalLogout());
 window.addEventListener('storage', (event) => {
@@ -194,7 +199,9 @@ function showBootSession(snapshot) {
   message.setAttribute('role', 'status');
   message.setAttribute('aria-live', 'polite');
   message.textContent = recovered ? 'Вход подтверждён. Можно продолжить.'
-    : unknown ? 'Не удалось проверить вход' : 'Проверяем вход…';
+    : unknown ? (snapshot.error?.code === 'AUTH_STORAGE_FAILED'
+      && authLogout.getSnapshot().phase === 'local-error'
+      ? 'Не удалось завершить выход на устройстве' : 'Не удалось проверить вход') : 'Проверяем вход…';
   content.appendChild(message);
   if (unknown) {
     const retry = document.createElement('button');
@@ -202,7 +209,10 @@ function showBootSession(snapshot) {
     retry.type = 'button';
     retry.className = 'bd-btn primary';
     retry.textContent = 'Повторить';
-    retry.addEventListener('click', () => { void bootSession.reconcile(); });
+    retry.addEventListener('click', () => {
+      if (authLogout.getSnapshot().phase === 'local-error') void authLogout.logout();
+      else void bootSession.reconcile();
+    });
     content.appendChild(retry);
   }
   if (recovered) {

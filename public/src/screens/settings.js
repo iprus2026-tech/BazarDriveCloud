@@ -1,10 +1,12 @@
 import { go } from '../router.js';
+import { isBackendEnabled } from '../api_config.js';
+import { createLogoutControl } from '../auth_logout.js';
 
 // BD-SETTINGS-01 — Settings screen. Net-new surface ported from the Cloud
 // Design render gate (st-*/bd-* prototype) into repo-native settings__*
 // classes that reuse the shipped bd-card / bd-scroll / bd-btn / bd-list-icon /
-// bd-section-h atoms. Mock/UI only: every control persists nothing, calls no
-// backend, registers no real push, and performs no real logout/delete. The
+// bd-section-h atoms. Only backend-enabled explicit logout is real; the
+// remaining preferences, push, payments and Delete Account stay demo-only. The
 // screen is reachable from both profile gears (passenger #pfp-settings-btn,
 // driver #pf2-gear) and reads ?role= to send «Назад» back to the right profile.
 
@@ -45,7 +47,7 @@ function langOptionsHtml() {
     </button>`).join('');
 }
 
-export default function settings() {
+export default function settings(renderContext, { logout } = {}) {
   const role = getParam('role') === 'driver' ? 'driver' : 'passenger';
   const stateParam = getParam('state');
 
@@ -215,7 +217,30 @@ export default function settings() {
   // ── Account rows (UI-only) ───────────────────────────────
   root.querySelector('#settings-profile').addEventListener('click', () => go(profileRoute(role)));
   root.querySelector('#settings-payments').addEventListener('click', () => toast('Способы оплаты будут доступны позже'));
-  root.querySelector('#settings-logout').addEventListener('click', () => toast('Демо-режим: выход не выполняется'));
+  const logoutButton = root.querySelector('#settings-logout');
+  if (!isBackendEnabled()) {
+    logoutButton.addEventListener('click', () => toast('Демо-режим: выход не выполняется'));
+  } else {
+    const label = logoutButton.querySelector('.settings__row-label');
+    const status = document.createElement('p');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.hidden = true;
+    root.appendChild(status);
+    const control = createLogoutControl({ logout,
+      isCurrent: () => renderContext ? renderContext.isCurrent() : true,
+      onState: state => {
+        logoutButton.disabled = state.phase === 'pending';
+        logoutButton.setAttribute('aria-busy', String(logoutButton.disabled));
+        status.hidden = !['pending', 'error'].includes(state.phase);
+        if (state.phase === 'confirmed') label.textContent = 'Подтвердить выход';
+        if (state.phase === 'error') label.textContent = 'Повторить выход';
+        status.textContent = state.phase === 'pending' ? 'Завершаем выход...'
+          : state.code === 'AUTH_STORAGE_FAILED' ? 'Не удалось очистить вход на устройстве. Повторите выход.'
+          : 'Не удалось завершить выход. Повторите попытку.';
+      } });
+    logoutButton.addEventListener('click', () => { void control.submit(); });
+  }
 
   // ── Delete account — reveal confirm, demo-only ───────────
   const deleteRow = root.querySelector('#settings-delete');

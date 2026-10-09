@@ -1180,6 +1180,87 @@ async function ownerVersionCase(name, saved) {
   }
 }
 
+async function explicitLogoutCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  user.set({ welcomeSeen: true, onboarded: true, role: 'passenger',
+    phoneVerified: true, firstName: 'Logout fixture' });
+  assert.equal(auth.setAuth({ token: 'logout-A', userId: 'user-A' }), true);
+  auth.commitAuthCandidate(auth.getAuthOwnerVersion());
+  const authBefore = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+  localStorage.setItem('bazardrive.ride_history.v1', '[{"secret":"A"}]');
+  globalThis.__BD_API_BASE__ = name === 'off' ? '' : 'https://api.invalid';
+  const revoke = deferred();
+  let posts = 0;
+  globalThis.fetch = (url, options) => {
+    if (url.endsWith('/auth/session')) return Promise.resolve(response({ user: {
+      ...userDTO('user-A'), activeRole: 'passenger' } }));
+    assert.equal(url, 'https://api.invalid/api/v1/auth/logout');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.Authorization, 'Bearer logout-A');
+    assert.equal('body' in options, false);
+    posts++;
+    return revoke.promise;
+  };
+  location.hash = '#/settings';
+  await import('../public/src/app.js');
+  await flush();
+  const button = document.getElementById('settings-logout');
+  assert.ok(button, 'real app mounts backend-enabled Settings');
+  button.click();
+  if (name === 'off') {
+    assert.equal(posts, 0);
+    assert.equal(location.hash, '#/settings');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), authBefore);
+    assert.equal(document.getElementById('settings-toast').hidden, false);
+  } else {
+    assert.equal(posts, 0, 'first click only confirms');
+    button.click();
+    button.click();
+    await flush();
+    assert.equal(posts, 1, 'one real shared coordinator POST');
+    assert.equal(button.disabled, true);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), authBefore);
+    assert.equal(location.hash, '#/settings');
+    const remove = localStorage.removeItem;
+    if (name === 'storage-failure') localStorage.removeItem = key => {
+      if (key === auth.AUTH_STORAGE_KEY) throw new Error('fixture storage denied');
+      remove(key);
+    };
+    revoke.resolve(name === 'lookup-failure'
+      ? response({ code: 'SESSION_LOOKUP_FAILED', retryable: true }, 503)
+      : response({ ok: true }));
+    await flush();
+    if (name === 'lookup-failure') {
+      assert.equal(location.hash, '#/settings');
+      assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), authBefore);
+      assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"A"}]');
+      assert.equal(button.disabled, false);
+      assert.match(button.querySelector('.settings__row-label').textContent, /Повторить/);
+    } else {
+      if (name === 'storage-failure') {
+        assert.equal(location.hash, '#/settings');
+        assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_UNKNOWN');
+        assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), authBefore);
+        localStorage.removeItem = remove;
+        document.getElementById('auth-boot-retry').click();
+        await flush();
+        assert.equal(posts, 1, 'retry uses prior confirmed revoke, not a new bearer');
+      }
+      assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), null);
+      assert.equal(auth.getAuthToken(), null);
+      assert.equal(location.hash, '#/welcome');
+    }
+  }
+  router.setScreenChromeMount(null);
+  router.setAdmissionGuard(null);
+  router.register('/logout-cleanup', () => new dom.Element());
+  router.go('/logout-cleanup');
+  await flush();
+}
+
 async function appCase(name) {
   const dom = installDOM({ parseMarkup: true });
   const { register, go, setScreenChromeMount } = await import('../public/src/router.js');
@@ -2086,6 +2167,9 @@ if (process.argv[2] === '--auth-ownership-failure-case') {
 } else if (process.argv[2] === '--dev-docs-case') {
   await devDocsRouteCase(process.argv[3]);
   console.log('PASS dev/docs router — ' + process.argv[3]);
+} else if (process.argv[2] === '--explicit-logout-case') {
+  await explicitLogoutCase(process.argv[3]);
+  console.log('PASS explicit app/Settings logout: ' + process.argv[3]);
 } else if (process.argv[2] === '--app-case') {
   await appCase(process.argv[3]);
   console.log('PASS app — ' + process.argv[3]);
@@ -2112,6 +2196,80 @@ if (process.argv[2] === '--auth-ownership-failure-case') {
   const fixture = overrides => create({ backendEnabled: () => true,
     detachAuth: () => true, tabRejected: () => false,
     readToken: () => 'fixture-token', requestSession: async () => ({ user: userDTO() }), ...overrides });
+
+  for (const scenario of ['success', 'lookup-failure', 'storage-failure', 'off']) {
+    await check('B2-A actual app/Settings logout: ' + scenario, () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--explicit-logout-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+
+  await check('B2-A logout fences pending OTP acceptance without clearing committed actor', async () => {
+    let token = 'A', userId = 'user-A', writes = 0;
+    const c = fixture({ readToken: () => token, readUserId: () => userId,
+      writeAuth: () => { writes++; return true; },
+      requestSession: async () => ({ user: userDTO('user-A') }) });
+    await c.reconcile();
+    const accept = c.beginLogin();
+    const lease = c.beginExplicitLogout();
+    const result = await accept({ token: 'B', user: { userId: 'user-B',
+      activeRole: 'passenger', phoneVerified: true, roles: ['passenger'] } });
+    assert.equal(result.code, 'AUTH_STALE');
+    assert.equal(writes, 0);
+    assert.equal(c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(lease.isCurrent(), true);
+    c.beginLogin();
+    assert.equal(lease.isCurrent(), false, 'new login supersedes old logout');
+  });
+  await check('B2-A logout cancels late session responses and publishes anonymous only after detach', async () => {
+    let token = 'A', userId = 'user-A';
+    let pending = null;
+    const c = fixture({ readToken: () => token, readUserId: () => userId,
+      requestSession: () => pending ? pending.promise : Promise.resolve({ user: userDTO('user-A') }) });
+    await c.reconcile();
+    pending = deferred();
+    const old = c.reconcile();
+    await flush();
+    c.beginExplicitLogout();
+    pending.resolve({ user: userDTO('user-A') });
+    await old;
+    assert.notEqual(c.getSnapshot().state, 'ANONYMOUS', 'revoke failure cannot claim local detach');
+    assert.equal(c.adoptAnonymousAfterExternalLogout(), false, 'retained bearer blocks anonymous commit');
+    token = null; userId = null;
+    assert.equal(c.adoptAnonymousAfterExternalLogout(), true);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+    await flush();
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS', 'old session response cannot restore actor');
+  });
+  await check('B2-A failed local detach remains UNKNOWN until explicit repair', async () => {
+    let token = 'A', userId = 'user-A';
+    const c = fixture({ readToken: () => token, readUserId: () => userId });
+    await c.reconcile();
+    const lease = c.beginExplicitLogout();
+    token = null; userId = null;
+    assert.equal(c.failExplicitLogout(lease), true);
+    assert.equal((await c.reconcile()).state, 'SESSION_UNKNOWN');
+    assert.equal(c.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(c.adoptAnonymousAfterExternalLogout(), true);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('B2-A logout fences a rebound recovery continuation without erasing its actor', async () => {
+    let token = null, userId = null, uiCurrent = true;
+    const c = fixture({ readToken: () => token, readUserId: () => userId,
+      writeAuth: next => { token = next.token; userId = next.userId; return true; },
+      resetAccount: () => true,
+      requestSession: async () => ({ user: { ...userDTO('user-A'), activeRole: 'passenger' } }) });
+    const accept = c.beginLogin({ isCurrent: () => uiCurrent });
+    assert.equal((await accept({ token: 'A', user: { userId: 'user-A',
+      activeRole: 'passenger', phoneVerified: true, roles: ['passenger'] } })).ok, true);
+    uiCurrent = false;
+    assert.ok(c.rebindRecoveryOwner(() => true));
+    c.beginExplicitLogout();
+    assert.equal((await c.resumeLogin()).code, 'AUTH_STALE');
+    assert.equal(c.finishLogin(), false);
+    assert.equal(c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(token, 'A');
+  });
 
   await check('explicit foreign OTP takeover clears account caches/profile before installing C', async () => {
     execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', 'foreign-cache-takeover'],

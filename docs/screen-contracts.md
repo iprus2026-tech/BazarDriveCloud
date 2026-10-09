@@ -189,6 +189,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Actions | Verify phone mock, edit profile, create ride, view inbox/history/favorites. |
 | Entry points | **Notification bell** `#pfp-notif-btn` (topbar) → `go('/inbox')` (BD-NOTIF-01, reuse the `/inbox` hub — no separate `/notifications` route). **History menu row** `#pfp-menu-history` → `scrollIntoView` of the inline trip-history section `#profile-history-section` (BD-HISTORY-P-01 — **not** `/feed`). **Settings gear** `#pfp-settings-btn` → `go('/settings')` (BD-SETTINGS-01, **shipped**). Pinned by `scripts/smoke-profile-notif-bell.mjs`, `scripts/smoke-profile-history-menu.mjs` and `scripts/smoke-settings.mjs`. |
 | Acceptance | Guest/passenger surfaces do not expose driver-only controls unless role switches. The guest view renders exactly one `.pf-guest-card` + the `#pf-onboard` → `/onboarding` CTA, and exposes no settings / logout / role-switch (correct — no session). Pinned positively by `scripts/smoke-profile-role-isolation.mjs` Scenario 6. |
+| Explicit logout (B2-A) | Passenger `#pfp-logout` and Driver `#pf2-act-logout` share the app-injected coordinator. Two-click confirmation, disabled pending state and accessible retry/status feedback. Backend ON: revoke owned current session first, then guarded local detach, ANONYMOUS and `/welcome`. Revoke uncertainty preserves credential/caches and current route; local removal failure stays fail-closed and retryable. Stale completion cannot clear newer ownership. Backend OFF keeps local logout. Role-view switching is not logout. |
 
 ### BD-PROFILE-02 - Driver dashboard profile
 
@@ -1317,12 +1318,12 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Route | `/settings` (shared shell; `?role=driver` only steers the «Назад» target — there is **no** separate passenger/driver settings route) |
 | File | `public/src/screens/settings.js` |
 | Entry points | Passenger `#pfp-settings-btn` → `go('/settings')`; driver `#pf2-gear` → `go('/settings?role=driver')`. Driver security pane stays reachable via its own `pf2-tab[data-pane="security"]` tab (not orphaned). |
-| Storage | **None — UI-only.** Controls persist nothing; no `fetch`, no `localStorage`, no native push registration (enforced by `scripts/smoke-settings.mjs`). |
-| Sections | **ПРИЛОЖЕНИЕ** — `Язык` (value «Русский» + chevron, `#settings-lang-row`), `Тема` (segmented Светлая/Тёмная/Системная, default Тёмная). **УВЕДОМЛЕНИЯ** — `Push-уведомления` toggle (`#settings-push-row`); `Звук` toggle (`#settings-sound-row`, revealed when push is on); delivery is mock. **АККАУНТ** — `Профиль` → `go(profileRoute(role))`, `Способы оплаты` (toast), `Выйти` (danger, demo toast), `Удалить аккаунт` (danger, `#settings-delete-confirm` confirm → demo toast). |
+| Storage | Preferences remain UI-only; no direct `fetch`, `localStorage` or native push registration. Backend-enabled explicit logout delegates to the shared guarded auth/cache boundary (B2-A). |
+| Sections | **ПРИЛОЖЕНИЕ** — `Язык` (value «Русский» + chevron, `#settings-lang-row`), `Тема` (segmented Светлая/Тёмная/Системная, default Тёмная). **УВЕДОМЛЕНИЯ** — `Push-уведомления` toggle (`#settings-push-row`); `Звук` toggle (`#settings-sound-row`, revealed when push is on); delivery is mock. **АККАУНТ** — `Профиль` → `go(profileRoute(role))`, `Способы оплаты` (toast), `Выйти` (danger, backend ON server-first; OFF demo toast), `Удалить аккаунт` (danger, `#settings-delete-confirm` confirm → demo toast). |
 | Main states | A default list · B language/theme controls · C push on + sound row revealed · D account actions (logout/delete confirm) · E save feedback (`Сохранить` → «Сохранено» toast `#settings-toast`) · F error notice (`?state=error` → `#settings-error` «Не удалось сохранить — попробуйте ещё раз»). |
-| Actions | `Сохранить` shows the «Сохранено» toast; all account actions are UI-only demo toasts/confirms; «Назад» (`#settings-back`) → role-correct profile. |
+| Actions | `Сохранить` shows the «Сохранено» toast; «Назад» (`#settings-back`) → role-correct profile. Backend ON `#settings-logout` shares Profile confirmation/pending/retry and server-first logout; backend OFF keeps the demo-only logout toast. Delete Account and payment actions remain demo-only. |
 | Precache | `public/src/screens/settings.js` is in the `public/sw.js` PRECACHE list. |
-| Acceptance | Reachable from both profile gears; no real logout/delete/push/payment/backend; driver security pane not orphaned. Pinned by `scripts/smoke-settings.mjs`. |
+| Acceptance | Reachable from both profile gears; B2-A backend-enabled logout is real, but delete/push/payment remain demo-only; driver security pane not orphaned. Pinned by `scripts/smoke-settings.mjs` and executable app/Settings cases in `scripts/smoke-auth-session-bootstrap.mjs`. Guest/Back/account-switch server revoke is not covered by B2-A. |
 
 ### BD-OPS-SCREENS-01 - ScreenOps
 
