@@ -5,6 +5,12 @@ import { execFileSync } from 'node:child_process';
 const root = process.cwd();
 const errors = [];
 
+try {
+  execFileSync(process.execPath, [path.join(root, 'scripts', 'smoke-auth-logout.mjs')], { stdio: 'pipe' });
+} catch (e) {
+  errors.push('smoke-auth-logout failed:\n' + (e.stdout?.toString() || '') + (e.stderr?.toString() || e.message));
+}
+
 function exists(p) {
   try { fs.accessSync(p); return true; } catch { return false; }
 }

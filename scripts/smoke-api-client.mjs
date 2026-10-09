@@ -116,6 +116,47 @@ expect('ApiError carries status/code/retryable and name=ApiError',
   sample.status === 400 && sample.code === 'VALIDATION' && sample.retryable === false && sample.name === 'ApiError');
 
 // Don't leak the override (each smoke runs in its own process, but be tidy).
+const auth = await import(new URL('../public/src/auth_token.js', import.meta.url));
+const values = new Map();
+const markers = new Map();
+globalThis.localStorage = { getItem: k => values.get(k) ?? null,
+  setItem: (k, v) => values.set(k, String(v)), removeItem: k => values.delete(k) };
+globalThis.sessionStorage = { getItem: k => markers.get(k) ?? null,
+  setItem: (k, v) => markers.set(k, String(v)), removeItem: k => markers.delete(k) };
+expect('logout fixture owns a versioned bearer', auth.setAuth({ token: 'logout-owned', userId: 'viewer' }));
+globalThis.fetch = async (url, opts) => {
+  captured = { url, opts };
+  return { ok: true, status: 200, text: async () => '{"ok":true}' };
+};
+const logoutBody = await cli.logoutSession();
+expect('logoutSession sends bodyless/queryless POST via owned bearer seam',
+  captured.url === 'https://api.example.com/api/v1/auth/logout'
+  && captured.opts.method === 'POST' && !('body' in captured.opts)
+  && !('Content-Type' in captured.opts.headers)
+  && captured.opts.headers.Authorization === 'Bearer logout-owned');
+expect('logoutSession accepts canonical success', logoutBody.ok === true);
+for (const [name, body, status] of [
+  ['null', 'null', 200], ['non-JSON', 'not JSON', 200],
+  ['false', '{"ok":false}', 200], ['array', '[{"ok":true}]', 200],
+  ['non-200', '{"ok":true}', 201],
+]) {
+  globalThis.fetch = async () => ({ ok: true, status, text: async () => body });
+  let error;
+  try { await cli.logoutSession(); } catch (e) { error = e; }
+  expect('logoutSession rejects ' + name + ' success as protocol failure',
+    error instanceof cli.ApiError && error.code === 'SESSION_PROTOCOL' && error.retryable);
+}
+const abort = new AbortController();
+globalThis.fetch = async (url, opts) => {
+  expect('logoutSession forwards AbortSignal without an auth override', opts.signal === abort.signal);
+  throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+};
+let logoutAbort;
+try { await cli.logoutSession({ signal: abort.signal }); } catch (e) { logoutAbort = e; }
+expect('logoutSession preserves distinct ABORTED API error', logoutAbort?.code === 'ABORTED');
+auth.clearAuth();
+delete globalThis.localStorage;
+delete globalThis.sessionStorage;
 delete globalThis.__BD_API_BASE__;
 
 // ── R13 (BD-API-SEAM-01): the DARK seam in mock_api.js + precache / VERSION ──

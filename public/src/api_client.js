@@ -1,10 +1,8 @@
 // public/src/api_client.js — BD-API-CLIENT-01 / R12 of #784 (cross-device cutover).
 //
 // Thin, token-attaching JSON fetch wrapper over the in-repo backend (/server, ADR
-// BD-DOCS-041). DARK today: imported by NOTHING, and apiFetch() throws immediately while
-// the backend is OFF (isBackendEnabled() === false), so it can never make a network call
-// until the cutover PRs wire it in behind the existing async seam (data_layer.js
-// loadResource).
+// BD-DOCS-041). Product callers use the guarded seam; apiFetch throws before
+// making a network call while the backend is OFF.
 //
 // On a non-2xx it rejects with ApiError carrying the server's UNIFORM problem shape
 // ({ error, code, retryable } — see server/src/plugins/error-handler.js). A thrown
@@ -33,7 +31,7 @@ export class ApiError extends Error {
 // Perform a JSON request against `<apiBase>/api/v1<path>`. ALWAYS resolves to the parsed
 // JSON body on 2xx, or REJECTS with ApiError (never returns a non-2xx). While the backend
 // is OFF this throws BACKEND_DISABLED before any fetch is attempted.
-export async function apiFetch(path, { method = 'GET', body, headers, signal } = {}) {
+export async function apiFetch(path, { method = 'GET', body, headers, signal, expectedStatus } = {}) {
   if (!isBackendEnabled()) {
     throw new ApiError({
       status: 0,
@@ -83,6 +81,9 @@ export async function apiFetch(path, { method = 'GET', body, headers, signal } =
       message: (payload && payload.error) || `request failed (${res.status})`,
     });
   }
+  if (expectedStatus !== undefined && res.status !== expectedStatus) {
+    throw new ApiError({ status: res.status, code: 'SESSION_PROTOCOL', retryable: true });
+  }
   return payload;
 }
 
@@ -94,9 +95,18 @@ async function readBody(res) {
   try { return JSON.parse(text); } catch { return { error: text }; }
 }
 
-// Typed helper — the one LIVE server endpoint today: GET /api/v1/auth/session -> { user }
+// Typed session read: GET /api/v1/auth/session -> { user }
 // (null when anonymous). The canonical example of how product reads get added later: one
 // small helper per resource, all funnelled through apiFetch.
 export function getSession({ signal } = {}) {
   return apiFetch('/auth/session', { signal });
+}
+
+export async function logoutSession({ signal } = {}) {
+  const payload = await apiFetch('/auth/logout', { method: 'POST', signal, expectedStatus: 200 });
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || payload.ok !== true) {
+    throw new ApiError({ code: 'SESSION_PROTOCOL', retryable: true });
+  }
+  return payload;
 }

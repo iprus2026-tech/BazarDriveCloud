@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-10-08
+revision: 2026-10-09
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -53,7 +53,7 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `GET /api/v1/health` | LIVE | Operational endpoint; no user session | No product tables; no I/O | Deployment liveness probe only | health route smoke |
 | `GET /api/v1/readyz` | LIVE | Operational endpoint; no user session | Reads PostgreSQL connectivity and migration state | Deployment readiness probe only | readiness + migration CI |
 | `GET /api/v1/auth/session` | LIVE / PILOT-BLOCKED | Resolves an optional bearer session; expiry/revocation policy remains a pilot gate | Reads `auth_session` only; the session row mirrors identity and verification fields, with no `users` join | `api_client.getSession()`; API base remains guarded/off by default | auth route/repository tests |
-| `POST /api/v1/auth/logout` | LIVE / PILOT-BLOCKED | Optional bearer; current session is server-resolved. No request body/query; clients cannot select `sessionId`, `userId` or `token` | Live bearer lookup reads `auth_session`; live logout updates only the resolved row's `revoked_at`. No sibling/global revocation | Server route live; B2 client logout orchestration is not yet wired | auth HTTP/repository tests |
+| `POST /api/v1/auth/logout` | LIVE / PILOT-BLOCKED | Optional bearer; current session is server-resolved. No request body/query; clients cannot select `sessionId`, `userId` or `token` | Live bearer lookup reads `auth_session`; live logout updates only the resolved row's `revoked_at`. No sibling/global revocation | B2-A explicit Passenger/Driver Profile and backend-enabled Settings use `api_client.logoutSession()` through the shared server-first coordinator; Guest/Back-abandon and account switch remain deferred | auth HTTP/repository tests; client logout/API/bootstrap/Profile/Settings smokes |
 | `POST /api/v1/auth/otp/request` | LIVE / PILOT-BLOCKED | Public request; unthrottled and without a production delivery provider | Writes hashed codes to `auth_otp` | guarded auth cutover; dev response may include `devCode` only in dev mode | OTP request tests + auth hardening issue owner |
 | `POST /api/v1/auth/otp/verify` | LIVE / PILOT-BLOCKED | Public verification; attempt cap enforced; final session lifecycle remains a pilot gate | Reads the latest live `auth_otp` and commits its attempt increment before the success transaction. On a correct code, one transaction consumes the OTP, upserts/verifies `users` and inserts `auth_session`; the separate attempt count therefore persists on failed verification | guarded auth/token cutover | OTP concurrency + session tests |
 | `GET /api/v1/orders` | LIVE | Public created-order read; optional viewer session only affects ownership projection | Reads `orders` | guarded `mock_api.listFeedPosts()` seam; API base off by default | orders route + API client smoke |
@@ -83,6 +83,17 @@ retains Fastify's parse error. Lookup/write failures return retryable `503`
 preserve the first revocation timestamp; new requests with the revoked bearer
 resolve no live session. Already-authorized in-flight requests are not canceled.
 Session listing, logout-all, rotation and device management remain deferred.
+
+B2-A explicit logout captures the tab-owned token/user/version and controller
+generation, fences pending auth continuations, then waits for a valid logout
+success before guarded local detach, anonymous admission and `/welcome`.
+Lookup/revoke 503, network, timeout/abort and protocol failures retain the owned
+credential and account caches without navigation. Failed local removal after
+revoke stays fail-closed with a local storage error and retry; it cannot roll
+back the committed revoke. Replacement credentials and stale UI continuations
+are fenced, but Web Storage compare/remove operations are not atomic.
+Backend-OFF Profile retains local logout; Settings retains its demo toast.
+Guest/Back-abandon (B2-B) and account switch (B2-C) still perform no server revoke.
 
 ### WhatsApp Business Account webhook — merged on `main` (BD-DOCS-051)
 

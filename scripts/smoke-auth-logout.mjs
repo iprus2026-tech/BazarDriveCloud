@@ -1,0 +1,289 @@
+// B2-A: injected transport, real ownership/removal boundary and disposed UI.
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createAuthLogout, createLogoutControl } from '../public/src/auth_logout.js';
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+async function flush() { for (let i = 0; i < 10; i++) await Promise.resolve(); }
+function storage() {
+  const map = new Map();
+  return { getItem: k => map.get(k) ?? null,
+    setItem: (k, v) => map.set(k, String(v)), removeItem: k => map.delete(k) };
+}
+
+function fixture(options = {}) {
+  let auth = { token: 'A', userId: 'user-A', ownerVersion: 'version-A' };
+  let generation = 0;
+  let anonymous = false;
+  let caches = 'account-A';
+  let navigated = false;
+  let signal = null;
+  const events = [];
+  let request = deferred();
+  const coordinator = createAuthLogout({
+    captureAuth: () => ({ ...auth }),
+    authCurrent: lease => JSON.stringify(lease) === JSON.stringify(auth),
+    backendEnabled: () => true,
+    beginLogout: () => {
+      const own = ++generation;
+      events.push('fence');
+      return { isCurrent: () => own === generation };
+    },
+    requestLogout: options => { signal = options.signal; events.push('server'); return request.promise; },
+    localLogout: ({ navigate = () => true } = {}) => {
+      events.push('local');
+      auth = { token: null, userId: null, ownerVersion: null };
+      caches = null;
+      anonymous = true;
+      events.push('anonymous');
+      navigated = navigate();
+      if (navigated) events.push('welcome');
+      return true;
+    },
+    ...options,
+  });
+  return { coordinator, get request() { return request; }, events,
+    nextRequest: () => { request = deferred(); },
+    getAuth: () => auth, caches: () => caches, anonymous: () => anonymous,
+    navigated: () => navigated,
+    signal: () => signal,
+    replace: next => { auth = next; },
+    newLogin: () => { generation++; },
+  };
+}
+
+async function realCase(name) {
+  globalThis.localStorage = storage();
+  globalThis.sessionStorage = storage();
+  let hash = '#/profile';
+  globalThis.location = { get hash() { return hash; },
+    set hash(v) { hash = v.startsWith('#') ? v : '#' + v; } };
+  globalThis.window = { location };
+  const auth = await import('../public/src/auth_token.js');
+  const { user } = await import('../public/src/state.js');
+  const { performLocalLogout, setLocalLogoutObserver } = await import('../public/src/mock_auth.js');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  assert.equal(auth.setAuth({ token: 'A', userId: 'user-A' }), true);
+  assert.equal(auth.commitAuthCandidate(auth.getAuthOwnerVersion()), true);
+  user.set({ role: 'passenger', onboarded: true, firstName: 'A' });
+  localStorage.setItem('bazardrive.ride_history.v1', '[{"secret":"A"}]');
+  const controller = createAuthSessionBootstrap({
+    backendEnabled: () => true,
+    requestSession: async () => ({ user: { userId: 'user-A', sessionId: 'session-A',
+      activeRole: 'passenger', phoneVerified: true } }),
+  });
+  await controller.reconcile();
+  setLocalLogoutObserver(() => controller.adoptAnonymousAfterExternalLogout());
+  const request = deferred();
+  let posts = 0;
+  const coordinator = createAuthLogout({
+    backendEnabled: () => true,
+    beginLogout: () => controller.beginExplicitLogout(),
+    onLocalFailure: lease => controller.failExplicitLogout(lease),
+    requestLogout: () => {
+      posts++;
+      assert.equal(auth.getAuthToken(), 'A', 'request must capture owned A, never B');
+      return request.promise;
+    },
+    localLogout: performLocalLogout,
+  });
+  const pending = coordinator.logout();
+  await flush();
+  assert.equal(posts, 1);
+  assert.equal(auth.getAuthToken(), 'A');
+  assert.equal(controller.getSnapshot().state, 'AUTHENTICATED');
+  if (name === 'same-tab') {
+    controller.beginLogin();
+    assert.equal(auth.setAuth({ token: 'B', userId: 'user-B' }), true);
+    auth.commitAuthCandidate(auth.getAuthOwnerVersion());
+  } else if (name === 'foreign' || name === 'foreign-same-user') {
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, JSON.stringify({ token: 'B',
+      userId: name === 'foreign' ? 'user-B' : 'user-A', ownerVersion: crypto.randomUUID() }));
+  }
+  const remove = localStorage.removeItem;
+  if (name === 'storage-denied' || name === 'storage-noop') {
+    localStorage.removeItem = key => {
+      if (key === auth.AUTH_STORAGE_KEY) {
+        if (name === 'storage-denied') throw new Error('storage denied');
+        return;
+      }
+      remove(key);
+    };
+  }
+  request.resolve({ ok: true });
+  const result = await pending;
+  if (name.startsWith('foreign') || name === 'same-tab') {
+    assert.equal(result.code, 'AUTH_STALE');
+    assert.equal(JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY)).token, 'B');
+    assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), '[{"secret":"A"}]');
+    assert.equal(hash, '#/profile');
+  } else if (name.startsWith('storage-')) {
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY)).token, 'A');
+    assert.equal(auth.getAuthToken(), null, 'failed removal blocks authority');
+    assert.equal(controller.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal((await controller.reconcile()).state, 'SESSION_UNKNOWN',
+      'blocked getter is not durable anonymous proof');
+    assert.equal(hash, '#/profile');
+    localStorage.removeItem = remove;
+    assert.equal((await coordinator.logout()).ok, true);
+    assert.equal(posts, 1, 'known successful revoke retries local detach only');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), null);
+    assert.equal(controller.getSnapshot().state, 'ANONYMOUS');
+    assert.equal(hash, '#/welcome');
+  } else {
+    assert.equal(result.ok, true);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), null);
+    assert.equal(controller.getSnapshot().state, 'ANONYMOUS');
+    assert.equal(localStorage.getItem('bazardrive.ride_history.v1'), null);
+    assert.equal(hash, '#/welcome');
+  }
+}
+
+if (process.argv[2] === '--storage-case') {
+  await realCase(process.argv[3]);
+} else {
+  let count = 0;
+  async function check(name, test) {
+    await test();
+    count++;
+    console.log('PASS ' + name);
+  }
+  await check('backend OFF uses existing local Profile boundary without server or fence', async () => {
+    const f = fixture({ backendEnabled: () => false });
+    assert.equal((await f.coordinator.logout()).ok, true);
+    assert.deepEqual(f.events, ['local', 'anonymous', 'welcome']);
+  });
+  await check('server-first, pending auth/caches retained, anonymous and welcome after detach', async () => {
+    const f = fixture();
+    const pending = f.coordinator.logout();
+    await flush();
+    assert.deepEqual(f.events, ['fence', 'server']);
+    assert.equal(f.getAuth().token, 'A');
+    assert.equal(f.caches(), 'account-A');
+    assert.equal(f.anonymous(), false);
+    assert.equal(f.navigated(), false);
+    f.request.resolve({ ok: true });
+    assert.equal((await pending).ok, true);
+    assert.deepEqual(f.events, ['fence', 'server', 'local', 'anonymous', 'welcome']);
+  });
+  for (const code of ['SESSION_LOOKUP_FAILED', 'SESSION_REVOKE_FAILED', 'NETWORK', 'ABORTED']) {
+    await check(code + ' preserves owned credential, caches and screen; retry succeeds', async () => {
+      const f = fixture();
+      const pending = f.coordinator.logout();
+      await flush();
+      f.request.reject({ code });
+      const result = await pending;
+      assert.equal(result.code, code);
+      assert.equal(result.retryable, true);
+      assert.equal(f.getAuth().token, 'A');
+      assert.equal(f.caches(), 'account-A');
+      assert.equal(f.anonymous(), false);
+      assert.equal(f.navigated(), false);
+      f.nextRequest();
+      const retry = f.coordinator.logout();
+      f.request.resolve({ ok: true });
+      assert.equal((await retry).ok, true);
+    });
+  }
+  await check('timeout settles abort-ignoring request and ignores late success', async () => {
+    const f = fixture({ timeoutMs: 5 });
+    assert.equal((await f.coordinator.logout()).code, 'LOGOUT_TIMEOUT');
+    assert.equal(f.signal().aborted, true);
+    f.request.resolve({ ok: true });
+    await flush();
+    assert.equal(f.getAuth().token, 'A');
+    assert.equal(f.caches(), 'account-A');
+    assert.equal(f.anonymous(), false);
+    assert.equal(f.navigated(), false);
+  });
+  for (const payload of [null, [], 'ok', {}, { ok: false }]) {
+    await check('invalid success ' + JSON.stringify(payload) + ' preserves actor', async () => {
+      const f = fixture();
+      const pending = f.coordinator.logout();
+      f.request.resolve(payload);
+      assert.equal((await pending).code, 'SESSION_PROTOCOL');
+      assert.equal(f.getAuth().token, 'A');
+      assert.equal(f.caches(), 'account-A');
+      assert.equal(f.navigated(), false);
+    });
+  }
+  await check('duplicate logout coalesces the same in-flight promise', async () => {
+    const f = fixture();
+    const a = f.coordinator.logout();
+    const b = f.coordinator.logout();
+    assert.equal(a, b);
+    await flush();
+    assert.equal(f.events.filter(e => e === 'server').length, 1);
+    f.request.resolve({ ok: true });
+    await a;
+  });
+  for (const kind of ['new-login', 'replacement', 'same-user-rotation']) {
+    await check('stale completion cannot erase ' + kind, async () => {
+      const f = fixture();
+      const pending = f.coordinator.logout();
+      await flush();
+      if (kind === 'new-login') f.newLogin();
+      else f.replace({ token: 'B', userId: kind === 'replacement' ? 'user-B' : 'user-A',
+        ownerVersion: 'version-B' });
+      f.request.resolve({ ok: true });
+      assert.equal((await pending).code, 'AUTH_STALE');
+      assert.equal(f.events.includes('local'), false);
+      assert.equal(f.navigated(), false);
+    });
+  }
+  await check('replacement before request creation is never sent', async () => {
+    const f = fixture();
+    const pending = f.coordinator.logout();
+    f.replace({ token: 'B', userId: 'user-B', ownerVersion: 'version-B' });
+    assert.equal((await pending).code, 'AUTH_STALE');
+    assert.equal(f.events.includes('server'), false);
+  });
+  await check('no owned bearer has no server dependency', async () => {
+    const f = fixture();
+    f.replace({ token: null, userId: null, ownerVersion: null });
+    assert.equal((await f.coordinator.logout()).ok, true);
+    assert.equal(f.events.includes('server'), false);
+  });
+  await check('disposed screen gets no late feedback and no forced navigation', async () => {
+    let mounted = true;
+    const states = [];
+    const f = fixture();
+    const control = createLogoutControl({ logout: f.coordinator.logout,
+      isCurrent: () => mounted, onState: s => states.push(s.phase) });
+    await control.submit();
+    const pending = control.submit();
+    await control.submit();
+    await flush();
+    assert.deepEqual(states, ['confirmed', 'pending']);
+    mounted = false;
+    f.request.resolve({ ok: true });
+    await pending;
+    assert.deepEqual(states, ['confirmed', 'pending']);
+    assert.equal(f.anonymous(), true);
+    assert.equal(f.navigated(), false);
+  });
+  await check('UI failure supports retry without duplicate submit', async () => {
+    const states = [];
+    let calls = 0;
+    const control = createLogoutControl({ logout: async () => (++calls === 1
+      ? { ok: false, code: 'NETWORK' } : { ok: true }),
+    onState: s => states.push(s.phase) });
+    await control.submit();
+    await control.submit();
+    await control.submit();
+    assert.deepEqual(states, ['confirmed', 'pending', 'error', 'pending', 'success']);
+  });
+  for (const name of ['success', 'same-tab', 'foreign', 'foreign-same-user', 'storage-denied', 'storage-noop']) {
+    await check('real auth/controller/local boundary: ' + name, () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-case', name],
+        { stdio: 'pipe' });
+    });
+  }
+  console.log('auth-logout: ' + count + ' behavioral checks PASS');
+}

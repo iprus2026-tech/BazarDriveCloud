@@ -205,7 +205,27 @@ export function setAuth({ token, userId, phone } = {}) {
 
 // Drop only the credential owned by this tab. If another tab has already
 // replaced the origin-wide record, detach locally but preserve that replacement.
-export function clearAuth() {
+// Explicit logout retains this lease across a failed removal. Raw readback is
+// needed on retry because failed removal deliberately blocks public getters.
+export function isLogoutAuthCurrent(expected) {
+  if (!expected.token) {
+    try {
+      const raw = loadRaw();
+      if (raw.token && recordOwned(raw) && !tabDetachMode && marker?.state !== 'rejected') return false;
+      return getAuthToken() === null && getAuthUserId() === null
+        && getAuthOwnerVersion() === expected.ownerVersion;
+    } catch { return false; }
+  }
+  try {
+    const raw = loadRaw();
+    return markerMatches() && recordOwned(raw) && !tabDetachMode
+      && raw.token === expected.token && raw.userId === expected.userId
+      && (raw.ownerVersion || null) === expected.ownerVersion;
+  } catch { return false; }
+}
+
+export function clearAuth({ expected } = {}) {
+  if (expected && !isLogoutAuthCurrent(expected)) return false;
   blocked = true;
   if (marker?.state === 'rejected') return AUTH_CLEAR_FOREIGN;
   if (marker && !markerMatches()) return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;

@@ -27,7 +27,7 @@ function expect(label, cond, detail = '') {
 expect('app.js imports the settings screen',
   /import\s+settings\s+from\s+'\.\/screens\/settings\.js'/.test(app));
 expect("app.js registers '/settings'",
-  /register\(\s*'\/settings'\s*,\s*settings\s*\)/.test(app));
+  /register\(\s*'\/settings'\s*,\s*context => settings\(context, \{ logout: options => authLogout.logout\(options\) \}\)/.test(app));
 
 // ── B. Screen module + role-awareness ──
 expect('settings.js has a default export',
@@ -62,11 +62,16 @@ expect('settings screen imports no data/backend layer',
   !/from\s+'\.\.\/mock_api/.test(screen)
   && !/from\s+'\.\.\/ride_state/.test(screen)
   && !/from\s+'\.\.\/data_layer/.test(screen));
-expect('settings screen performs no fetch / localStorage / real push registration',
+expect('settings delegates logout without direct fetch / localStorage / real push registration',
   !/\bfetch\s*\(/.test(screen)
   && !/localStorage/.test(screen)
   && !/Notification\b/.test(screen)
   && !/pushManager|serviceWorker/.test(screen));
+expect('Settings backend OFF retains demo logout; ON uses injected shared control',
+  /if \(!isBackendEnabled\(\)\)/.test(screen)
+  && screen.includes('Демо-режим: выход не выполняется')
+  && /createLogoutControl\(\{ logout,/.test(screen));
+expect('Delete Account remains demo-only', screen.includes('Демо-режим: аккаунт не удаляется'));
 
 // ── F. Service worker precache ──
 expect('sw.js precaches settings.js',

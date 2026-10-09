@@ -374,6 +374,29 @@ setSmokeRole('driver');
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────
+let explicitLogoutCalls = 0;
+const sharedLogout = async () => { explicitLogoutCalls++; return { ok: true }; };
+for (const role of ['passenger', 'driver']) {
+  reset();
+  user.set({ onboarded: true, role, phone: '9001234567', phoneVerified: true,
+    firstName: 'Logout test', vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'TEST' });
+  currentHash = '#/profile';
+  profile(undefined, { logout: sharedLogout });
+  const roleSwitch = clickHandlers.get(role === 'passenger' ? '#pfp-role-switch' : '#pf2-act-role-switch');
+  const before = explicitLogoutCalls;
+  roleSwitch();
+  expect(role + ' role switching never invokes logout', explicitLogoutCalls === before);
+  const submit = clickHandlers.get(role === 'passenger' ? '#pfp-logout' : '#pf2-act-logout');
+  expect(role + ' logout handler is present on actual rendered surface', typeof submit === 'function');
+  submit();
+  expect(role + ' first logout click only confirms', explicitLogoutCalls === before);
+  submit();
+  submit();
+  await Promise.resolve(); await Promise.resolve();
+  expect(role + ' logout uses same injected orchestration without duplicate submit',
+    explicitLogoutCalls === before + 1);
+}
+
 if (issues.length) {
   console.error('\nSMOKE FAILED:');
   for (const i of issues) console.error('  - ' + i);

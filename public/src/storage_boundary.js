@@ -117,11 +117,11 @@ function clearTripDemoMode() {
 // underlying clearXxx() helper is independently fail-soft (try/catch on
 // localStorage access) so partial storage failures cannot leave the
 // boundary half-applied.
-export function clearUserScopedStorage() {
+export function clearUserScopedStorage({ expectedAuth } = {}) {
   // Credential removal is the gate for the whole detach boundary. If the
   // bearer cannot be proven gone, preserve the rest of the account cache and
   // let the caller stay fail-closed instead of pretending logout succeeded.
-  const authClear = clearAuth();
+  const authClear = clearAuth({ expected: expectedAuth });
   if (authClear === false) return false;
   // A replacement tab owns the origin-wide actor. Preserve all of its shared
   // account-scoped caches instead of letting this stale tab wipe them.

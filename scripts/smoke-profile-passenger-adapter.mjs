@@ -89,6 +89,8 @@ function element() {
   const listeners = new Map();
   return {
     className:'', dataset:{}, classList:{add(){},remove(){}},
+    childNodes:[],
+    appendChild(node){ this.childNodes.push(node); node.parentNode=this; return node; },
     set innerHTML(v) { this._html=String(v); paints.push(String(v)); },
     get innerHTML() { return this._html || ''; },
     querySelector(selector){

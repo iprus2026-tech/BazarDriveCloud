@@ -25,6 +25,7 @@ import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
+import { createLogoutControl } from '../auth_logout.js';
 import {
   buildGarageVehicles,
   resolveActiveGarageVehicleId,
@@ -354,7 +355,27 @@ function passengerMenuRow(id, icon, title, subtitle, disabled = false) {
   </button>`;
 }
 
-function renderPassenger(root, u, model, isCurrent) {
+function wireExplicitLogout(root, button, label, logout, isCurrent) {
+  if (!button) return;
+  const status = document.createElement('p');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.hidden = true;
+  root.appendChild(status);
+  const control = createLogoutControl({ logout, isCurrent, onState: state => {
+    button.disabled = state.phase === 'pending';
+    button.setAttribute('aria-busy', String(button.disabled));
+    status.hidden = !['pending', 'error'].includes(state.phase);
+    if (state.phase === 'confirmed') label.textContent = 'Подтвердить выход';
+    if (state.phase === 'error') label.textContent = 'Повторить выход';
+    status.textContent = state.phase === 'pending' ? 'Завершаем выход...'
+      : state.code === 'AUTH_STORAGE_FAILED' ? 'Не удалось очистить вход на устройстве. Повторите выход.'
+      : 'Не удалось завершить выход. Повторите попытку.';
+  } });
+  button.addEventListener('click', () => { void control.submit(); });
+}
+
+function renderPassenger(root, u, model, isCurrent, logout, ownsScreen) {
   root.classList.add('pfp-experience');
   passengerModels.set(root, model);
   const hasDrafts = hasComposerDraft();
@@ -423,10 +444,7 @@ function renderPassenger(root, u, model, isCurrent) {
   root.querySelector('#pfp-menu-drafts')?.addEventListener('click', () => { if (hasComposerDraft()) go('/new'); });
   root.querySelector('#pfp-role-switch')?.addEventListener('click', () => { setSmokeRole('driver'); go('/profile'); });
   const logoutBtn = root.querySelector('#pfp-logout');
-  logoutBtn?.addEventListener('click', () => {
-    if (logoutBtn.dataset.confirm === 'pending') performLocalLogout();
-    else { logoutBtn.dataset.confirm = 'pending'; logoutBtn.querySelector('.pfp-menu-title').textContent = 'Нажмите ещё раз для подтверждения'; }
-  });
+  wireExplicitLogout(root, logoutBtn, logoutBtn?.querySelector('.pfp-menu-title'), logout, ownsScreen);
 }
 
 function wirePassengerContext(root, model, isCurrent) {
@@ -2981,7 +2999,7 @@ function refreshGarageReadinessHint(root) {
   oldHint.replaceWith(newHint);
 }
 
-function renderDriver(root, u) {
+function renderDriver(root, u, logout, ownsScreen) {
   // Render-time guard: if persisted driverOnline=true but readiness is no
   // longer satisfied (e.g. docs expired between sessions), demote to offline
   // before producing any HTML so toggle / status card cannot flash green.
@@ -3364,17 +3382,7 @@ function renderDriver(root, u) {
   });
 
   const logoutBtn = root.querySelector('#pf2-act-logout');
-  logoutBtn.addEventListener('click', () => {
-    if (logoutBtn.dataset.confirm === 'pending') {
-      // BD-AUTH-BOUNDARY-01 — driver logout goes through the same mock
-      // auth boundary as the passenger logout so any future local artefacts
-      // wiped on logout (ride history, demo overrides, …) stay in one place.
-      performLocalLogout();
-    } else {
-      logoutBtn.dataset.confirm = 'pending';
-      logoutBtn.querySelector('.pf2-action-row__label').textContent = 'Подтвердить выход';
-    }
-  });
+  wireExplicitLogout(root, logoutBtn, logoutBtn.querySelector('.pf2-action-row__label'), logout, ownsScreen);
 
   // IP pane is re-rendered when state changes (see refreshIpPane), so every
   // interactive control inside #pf2-pane-ip is wired through delegation. This
@@ -3580,9 +3588,10 @@ function renderDriver(root, u) {
 
 // ── Main factory ──────────────────────────────────────────────────────────────
 
-export default function profile(renderContext) {
+export default function profile(renderContext, { logout = performLocalLogout } = {}) {
   const root = document.createElement('section');
   root.className = 'screen screen--profile';
+  const ownsScreen = () => renderContext ? renderContext.isCurrent() : true;
   const u = user.get();
 
   // ?role= selects a view without changing the persisted role. Passenger data
@@ -3621,7 +3630,7 @@ export default function profile(renderContext) {
     // through to the live dashboard (where ?state=empty drives the payouts
     // empty state).
     if (stateParam === 'loading') renderDriverSkeleton(root);
-    else renderDriver(root, u);
+    else renderDriver(root, u, logout, ownsScreen);
   } else {
     const model = readPassengerProfile();
     // Router generation + account identity fence late completions, including
@@ -3633,7 +3642,7 @@ export default function profile(renderContext) {
       && JSON.stringify(user.get()) === accountSnapshot
       && getSmokeRole() === smokeRole && getSessionToken() === authSnapshot
       && isBackendEnabled() === model.backend;
-    renderPassenger(root, u, model, isCurrent);
+    renderPassenger(root, u, model, isCurrent, logout, ownsScreen);
     if (model.backend) {
       loadPassengerHistory(model).then(history => {
         if (!isCurrent()) return;

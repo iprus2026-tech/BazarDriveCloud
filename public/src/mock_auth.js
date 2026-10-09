@@ -1,7 +1,7 @@
 // BD-AUTH-BOUNDARY-01 — Centralized mock logout / local-reset boundary.
 //
-// There is no real auth or backend in this prototype: a "logout" just resets
-// the local mock user and clears any locally persisted artefacts that would
+// This boundary stays local; auth_logout.js settles explicit backend revoke
+// before calling it. Local cleanup resets the user and persisted artefacts that would
 // otherwise leak between users on the same browser/device (ride history,
 // active ride / session state, trip-response drafts, demo overrides, …).
 //
@@ -12,7 +12,7 @@
 // boundary module's `clearUserScopedStorage()` and exposing a clearXxx()
 // from the owning module, not every screen that has a logout button.
 //
-// Until real auth/backend exists this is intentionally "clear-on-boundary":
+// Local account caches remain intentionally "clear-on-boundary":
 // per-identity scoped history can be re-introduced once we have a stable
 // user id to scope keys under.
 
@@ -35,8 +35,8 @@ export function setLocalLogoutObserver(observer) {
 // BD-ROLE-05 — also clear the per-tab role override so a stale getSmokeRole()
 // value cannot outlive the user that set it.
 export function resetLocalSession({ allowForeignDetach = false,
-  clearAccountStateOnForeignDetach = false } = {}) {
-  const cleared = clearUserScopedStorage();
+  clearAccountStateOnForeignDetach = false, expectedAuth } = {}) {
+  const cleared = clearUserScopedStorage({ expectedAuth });
   if (cleared === false) return false;
   clearSmokeRole();
   if (cleared === AUTH_CLEAR_FOREIGN) {
@@ -54,9 +54,12 @@ export function resetLocalSession({ allowForeignDetach = false,
 // Full mock logout: clears local user-scoped state and navigates to the
 // welcome screen. This is the single boundary that passenger and driver
 // logout handlers should call.
-export function performLocalLogout() {
-  if (!resetLocalSession({ allowForeignDetach: true })) return false;
+export function performLocalLogout({ expectedAuth, isCurrent = () => true,
+  navigate = () => true } = {}) {
+  if (!isCurrent()) return false;
+  if (!resetLocalSession({ allowForeignDetach: true, expectedAuth })) return false;
+  const shouldNavigate = navigate();
   if (localLogoutObserver && localLogoutObserver() === false) return false;
-  go('/welcome');
+  if (shouldNavigate) go('/welcome');
   return true;
 }

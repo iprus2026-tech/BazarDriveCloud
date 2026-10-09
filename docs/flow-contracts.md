@@ -260,6 +260,19 @@ Do not add a new status just to mirror future backend wording unless the UI and 
 
 `public/src/storage_boundary.js` owns the clear-on-local-logout/reset routine for user-scoped data. Adding a new user-scoped key requires adding a clear helper or documenting why the key is global/device-scoped.
 
+B2-A explicit Passenger/Driver Profile and backend-enabled Settings logout use
+the app-injected `auth_logout.js` coordinator: capture owned bearer/user/version
+and controller generation, invalidate pending auth continuations, POST bodyless
+`/api/v1/auth/logout`, validate 200 `{ok:true}`, then perform guarded local
+detach through `performLocalLogout()`, publish ANONYMOUS and navigate to
+`/welcome`. Retryable/uncertain revoke failures retain auth and account caches
+on the current route. Post-revoke local removal failure stays fail-closed and
+retries the known-successful revoke's local detach; no rollback is attempted.
+Newer same-tab and foreign replacement credentials must survive stale completion.
+Web Storage is not an atomic compare-and-delete facility. Backend-OFF Profile
+remains local and Settings remains demo-only. Guest/Back-abandon (B2-B) and
+account switch (B2-C) remain local-only and do not yet revoke server sessions.
+
 ### Intentionally not user-scoped
 
 | Key | Reason |
