@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-09-12
+revision: 2026-10-08
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -53,6 +53,7 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `GET /api/v1/health` | LIVE | Operational endpoint; no user session | No product tables; no I/O | Deployment liveness probe only | health route smoke |
 | `GET /api/v1/readyz` | LIVE | Operational endpoint; no user session | Reads PostgreSQL connectivity and migration state | Deployment readiness probe only | readiness + migration CI |
 | `GET /api/v1/auth/session` | LIVE / PILOT-BLOCKED | Resolves an optional bearer session; expiry/revocation policy remains a pilot gate | Reads `auth_session` only; the session row mirrors identity and verification fields, with no `users` join | `api_client.getSession()`; API base remains guarded/off by default | auth route/repository tests |
+| `POST /api/v1/auth/logout` | LIVE / PILOT-BLOCKED | Optional bearer; current session is server-resolved. No request body/query; clients cannot select `sessionId`, `userId` or `token` | Live bearer lookup reads `auth_session`; live logout updates only the resolved row's `revoked_at`. No sibling/global revocation | Server route live; B2 client logout orchestration is not yet wired | auth HTTP/repository tests |
 | `POST /api/v1/auth/otp/request` | LIVE / PILOT-BLOCKED | Public request; unthrottled and without a production delivery provider | Writes hashed codes to `auth_otp` | guarded auth cutover; dev response may include `devCode` only in dev mode | OTP request tests + auth hardening issue owner |
 | `POST /api/v1/auth/otp/verify` | LIVE / PILOT-BLOCKED | Public verification; attempt cap enforced; final session lifecycle remains a pilot gate | Reads the latest live `auth_otp` and commits its attempt increment before the success transaction. On a correct code, one transaction consumes the OTP, upserts/verifies `users` and inserts `auth_session`; the separate attempt count therefore persists on failed verification | guarded auth/token cutover | OTP concurrency + session tests |
 | `GET /api/v1/orders` | LIVE | Public created-order read; optional viewer session only affects ownership projection | Reads `orders` | guarded `mock_api.listFeedPosts()` seam; API base off by default | orders route + API client smoke |
@@ -72,6 +73,16 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `ALL /api/v1/notifications/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future notifications track (outside #820 pilot) |
 | `ALL /api/v1/safety/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future safety track (outside #820 pilot) |
 | `GET /metrics` | DARK | Operational policy not frozen | None; returns `501 NOT_IMPLEMENTED` | no activation | observability follow-up |
+
+Current-session logout returns `200 {"ok":true}` for live, absent, unknown,
+expired and already-revoked bearers, including concurrent deletion after resolve.
+Zero-byte `application/json` framing is bodyless; actual bodies and query
+parameters fail `400 VALIDATION` before auth lookup. Malformed non-empty JSON
+retains Fastify's parse error. Lookup/write failures return retryable `503`
+`SESSION_LOOKUP_FAILED` / `SESSION_REVOKE_FAILED`, never false success. Retries
+preserve the first revocation timestamp; new requests with the revoked bearer
+resolve no live session. Already-authorized in-flight requests are not canceled.
+Session listing, logout-all, rotation and device management remain deferred.
 
 ### WhatsApp Business Account webhook — merged on `main` (BD-DOCS-051)
 
@@ -487,7 +498,7 @@ The route-owned machine-code inventory below is descriptive of the existing rout
 | Boundary | Current success envelope(s) | Current machine codes |
 |---|---|---|
 | Operational health/readiness | `{ status, service }`, `{ status, db }` (including readiness HTTP 503) | None; `/readyz` failure intentionally bypasses the product problem object |
-| Auth/session | `{ user }`, `{ ok, expiresInSeconds, devCode? }`, `{ token, user }` | `SESSION_LOOKUP_FAILED`, `INVALID_PHONE`, `OTP_INVALID`, `OTP_LOCKED`, plus uniform `VALIDATION` |
+| Auth/session | `{ user }`, `{ ok, expiresInSeconds, devCode? }`, `{ token, user }`, `{ ok: true }` | `SESSION_LOOKUP_FAILED`, `SESSION_REVOKE_FAILED`, `INVALID_PHONE`, `OTP_INVALID`, `OTP_LOCKED`, plus uniform `VALIDATION` |
 | Orders | `{ items }`, `{ order }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, plus uniform `VALIDATION` |
 | Matching/offers/select | `{ offer }`, `{ items }`, `{ order, offer, assignment, ride }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `ORDER_NOT_FOUND`, `CANNOT_OFFER_OWN_ORDER`, `ORDER_NOT_OPEN`, `FORBIDDEN`, `CANNOT_SELECT_SELF`, `OFFER_NOT_FOUND`, plus uniform `VALIDATION` |
 | Ride state | `{ ride }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `RIDE_NOT_FOUND`, `FORBIDDEN`, `INVALID_STATUS`, `RIDE_TERMINAL`, plus uniform `VALIDATION` |

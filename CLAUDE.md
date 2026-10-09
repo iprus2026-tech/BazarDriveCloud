@@ -26,9 +26,11 @@ static app with:
 The backend (`/server`) is a separate Node/Fastify + Postgres app (ADR BD-DOCS-041),
 gated by its own `server-ci` workflow (Postgres migration replay, `npm audit` + `npm
 test`, and a container smoke test hitting `/api/v1/health` and `/api/v1/readyz`).
-Current state (per BD-DOCS-042's per-route matrix): auth (all three endpoints),
+Current state (per BD-DOCS-042's per-route matrix): auth (all four endpoints,
+including current-session logout),
 order-writes, matching-writes (offers-create/select), and chat are real, DB-backed
-and merged, but **LIVE / PILOT-BLOCKED** — the PWA has not cut over to them yet.
+and merged, but **LIVE / PILOT-BLOCKED** — the PWA cutover remains guarded;
+B2 client logout orchestration is not yet wired.
 Order-reads, matching-reads, both ride-state routes, both history routes, and
 realtime-poll are plain **LIVE** (no pilot blocker). Availability, route-price,
 notifications, and safety remain dark `501` stubs. ADR BD-DOCS-041 predates this
