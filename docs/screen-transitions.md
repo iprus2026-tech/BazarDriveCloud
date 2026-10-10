@@ -71,8 +71,16 @@ Guest projection, pending-action consumption or navigation. Foreign/newer auth,
 including same-user rotation, survives; already-foreign Guest admission is
 tab-local and performs no revoke. Ordinary step Back and verify-phone-only Back
 retain existing navigation and do not revoke. Backend-OFF is unchanged.
-Late/unaccepted OTP cleanup (B2-B2), lost-response server cleanup guarantee and
-account switch (B2-C) remain deferred.
+### Late OTP response cleanup (B2-B2 R1)
+
+If a backend `/auth/otp/verify` succeeds after its onboarding attempt has already
+lost UI ownership, the response cannot install auth or resume onboarding. When
+the observed response carries a bearer, the client sends exactly that bearer to
+the existing bodyless `/auth/logout` endpoint and discards it. Any current or
+foreign installed bearer remains untouched; a malformed late response invents
+no revoke authority. Cleanup failure is contained without stale UI side effects.
+A verify response lost before the client observes it, failed-cleanup durability,
+and account switch (B2-C) remain deferred.
 
 ### Guest
 

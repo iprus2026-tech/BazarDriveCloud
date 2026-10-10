@@ -135,6 +135,40 @@ expect('logoutSession sends bodyless/queryless POST via owned bearer seam',
   && !('Content-Type' in captured.opts.headers)
   && captured.opts.headers.Authorization === 'Bearer logout-owned');
 expect('logoutSession accepts canonical success', logoutBody.ok === true);
+
+// B2-B2 R1: an unaccepted just-minted token is used only for its own logout.
+// The already-owned local bearer remains untouched.
+let cleanupFetches = 0;
+globalThis.fetch = async (url, opts) => {
+  cleanupFetches++;
+  captured = { url, opts };
+  return { ok: true, status: 200, text: async () => '{"ok":true}' };
+};
+const cleanupBody = await cli.revokeUnacceptedSession(' late-owned ');
+expect('revokeUnacceptedSession uses only the supplied late bearer on bodyless logout',
+  cleanupBody.ok === true
+  && cleanupFetches === 1
+  && captured.url === 'https://api.example.com/api/v1/auth/logout'
+  && captured.opts.method === 'POST'
+  && !('body' in captured.opts)
+  && !('Content-Type' in captured.opts.headers)
+  && captured.opts.headers.Authorization === 'Bearer late-owned');
+expect('revokeUnacceptedSession never replaces the current local bearer',
+  auth.getAuthToken() === 'logout-owned');
+
+cleanupFetches = 0;
+globalThis.fetch = async () => {
+  cleanupFetches++;
+  throw new Error('invalid cleanup token must not fetch');
+};
+let invalidCleanup;
+try { await cli.revokeUnacceptedSession('   '); } catch (e) { invalidCleanup = e; }
+expect('revokeUnacceptedSession rejects an empty token before fetch',
+  cleanupFetches === 0
+  && invalidCleanup instanceof cli.ApiError
+  && invalidCleanup.code === 'SESSION_PROTOCOL'
+  && invalidCleanup.retryable === false);
+
 for (const [name, body, status] of [
   ['null', 'null', 200], ['non-JSON', 'not JSON', 200],
   ['false', '{"ok":false}', 200], ['array', '[{"ok":true}]', 200],

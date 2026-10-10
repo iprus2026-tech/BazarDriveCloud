@@ -31,7 +31,9 @@ export class ApiError extends Error {
 // Perform a JSON request against `<apiBase>/api/v1<path>`. ALWAYS resolves to the parsed
 // JSON body on 2xx, or REJECTS with ApiError (never returns a non-2xx). While the backend
 // is OFF this throws BACKEND_DISABLED before any fetch is attempted.
-export async function apiFetch(path, { method = 'GET', body, headers, signal, expectedStatus } = {}) {
+async function apiFetchCore(path, {
+  method = 'GET', body, headers, signal, expectedStatus, sessionToken = getSessionToken(),
+} = {}) {
   if (!isBackendEnabled()) {
     throw new ApiError({
       status: 0,
@@ -45,7 +47,7 @@ export async function apiFetch(path, { method = 'GET', body, headers, signal, ex
   // '/api/v1auth/session'.
   const rel = path.startsWith('/') ? path : '/' + path;
   const url = getApiBase() + API_VERSION_PREFIX + rel;
-  const token = getSessionToken();
+  const token = sessionToken;
   const finalHeaders = {
     Accept: 'application/json',
     ...(body !== undefined ? { 'Content-Type': 'application/json' } : null),
@@ -87,6 +89,13 @@ export async function apiFetch(path, { method = 'GET', body, headers, signal, ex
   return payload;
 }
 
+// Public product requests never accept a caller-supplied bearer override.
+// The explicit-token path below is reserved for cleanup of a just-minted,
+// never-installed OTP session.
+export function apiFetch(path, { method = 'GET', body, headers, signal, expectedStatus } = {}) {
+  return apiFetchCore(path, { method, body, headers, signal, expectedStatus });
+}
+
 // Parse a JSON body; empty (204) -> null; a non-JSON body is surfaced as { error: <text> }
 // rather than throwing, so error mapping above stays robust.
 async function readBody(res) {
@@ -102,11 +111,34 @@ export function getSession({ signal } = {}) {
   return apiFetch('/auth/session', { signal });
 }
 
-export async function logoutSession({ signal } = {}) {
-  const payload = await apiFetch('/auth/logout', { method: 'POST', signal, expectedStatus: 200 });
+function validateLogoutSuccess(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)
       || payload.ok !== true) {
     throw new ApiError({ code: 'SESSION_PROTOCOL', retryable: true });
   }
   return payload;
+}
+
+export async function logoutSession({ signal } = {}) {
+  return validateLogoutSuccess(
+    await apiFetch('/auth/logout', { method: 'POST', signal, expectedStatus: 200 }),
+  );
+}
+
+// B2-B2 R1: revoke a successful OTP session that arrived after its onboarding
+// attempt lost UI ownership. The bearer is used only for this bodyless logout;
+// it is never installed into the local auth record.
+export async function revokeUnacceptedSession(token, { signal } = {}) {
+  const sessionToken = typeof token === 'string' ? token.trim() : '';
+  if (!sessionToken) {
+    throw new ApiError({ code: 'SESSION_PROTOCOL', retryable: false });
+  }
+  return validateLogoutSuccess(
+    await apiFetchCore('/auth/logout', {
+      method: 'POST',
+      signal,
+      expectedStatus: 200,
+      sessionToken,
+    }),
+  );
 }

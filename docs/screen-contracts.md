@@ -161,7 +161,8 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Backend Guest (B2-B1) | Already-owned stable/installed/recovered session: capture lease, revoke, durable auth detach, account reset, ANONYMOUS, Guest projection, consume pending action without executing it, then Feed. Anonymous/rejected/foreign paths invent no revoke authority; foreign Guest projection is cache-only. |
 | Actual abandonment (B2-B1) | Full-onboarding root Back with an unfinished owned handoff revokes before durable local cleanup, ANONYMOUS and Welcome. Pending action is retained. Ordinary step Back and verify-phone-only Back do not revoke; their existing targets are unchanged. Recovered incomplete actors do not require another OTP to detach. |
 | Detach pending/error | Guest/Back coalesce and disable pending controls. Revoke uncertainty retains credential/handoff/caches/pending action and offers inline retry; post-revoke AUTH_STORAGE_FAILED retains a local-only repair lease. Disposed screens cannot project Guest, consume pending action or navigate; newer/foreign token versions survive. Backend-OFF remains local/demo. |
-| Deferred boundaries | B2-B2 late/unaccepted OTP response cleanup, lost-response server cleanup guarantee and B2-C account switch are not implemented by B2-B1. |
+| Late OTP response cleanup (B2-B2 R1) | A successful `/auth/otp/verify` response that arrives after its attempt loses UI ownership is never installed. If it carries a bearer, that bearer alone is sent to bodyless `/auth/logout`; current/foreign auth survives. Malformed late responses create no revoke authority. |
+| Deferred boundaries | Lost/unobserved OTP responses, failed-cleanup server guarantee, and B2-C account switch remain deferred. |
 
 ### BD-ONBOARDING-01 - Welcome render gate
 

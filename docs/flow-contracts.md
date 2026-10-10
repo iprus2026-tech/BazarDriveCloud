@@ -283,9 +283,16 @@ Post-revoke local failures retain a repair lease without repeating revoke.
 Disposed/stale intents cannot project Guest, consume pending action or navigate;
 foreign/newer credentials (including same-user rotation) survive. Already-foreign
 Guest admission uses cache-only projection without wiping shared account state.
-Backend-OFF Guest/Back behavior is unchanged. Late/unaccepted OTP cleanup (B2-B2),
-account switch (B2-C), and a server guarantee for lost OTP-response tokens remain
-deferred; B2-B1 does not claim to prevent those orphan sessions.
+Backend-OFF Guest/Back behavior is unchanged.
+
+B2-B2 R1 covers the client-observed late-success case: if `/auth/otp/verify`
+returns a valid bearer after its onboarding attempt has lost UI ownership, the
+client sends that returned bearer directly to the existing bodyless
+`POST /api/v1/auth/logout` cleanup path and never installs it into local auth.
+The current/foreign installed bearer is not reused or replaced. Malformed late
+responses invent no cleanup authority. Cleanup is best-effort: a verify response
+lost before the client observes it, or a cleanup request that cannot complete,
+still needs a later server-side guarantee. Account switch (B2-C) remains deferred.
 
 ### Intentionally not user-scoped
 
