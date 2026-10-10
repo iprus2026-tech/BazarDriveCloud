@@ -270,8 +270,22 @@ on the current route. Post-revoke local removal failure stays fail-closed and
 retries the known-successful revoke's local detach; no rollback is attempted.
 Newer same-tab and foreign replacement credentials must survive stale completion.
 Web Storage is not an atomic compare-and-delete facility. Backend-OFF Profile
-remains local and Settings remains demo-only. Guest/Back-abandon (B2-B) and
-account switch (B2-C) remain local-only and do not yet revoke server sessions.
+remains local and Settings remains demo-only.
+
+B2-B1 reuses that coordinator for already-owned stable, installed handoff and
+recovered incomplete actors. Guest follows server revoke -> guarded durable auth
+detach -> account cleanup -> bootstrap ANONYMOUS -> Guest projection -> consume
+pending action without executing it -> Feed. Actual full-onboarding root
+abandonment uses the same cleanup ordering, retains pending action and enters
+Welcome. Ordinary step Back and verify-phone-only Back do not revoke.
+Revoke failures retain exact actor/handoff/caches/pending intent for Retry.
+Post-revoke local failures retain a repair lease without repeating revoke.
+Disposed/stale intents cannot project Guest, consume pending action or navigate;
+foreign/newer credentials (including same-user rotation) survive. Already-foreign
+Guest admission uses cache-only projection without wiping shared account state.
+Backend-OFF Guest/Back behavior is unchanged. Late/unaccepted OTP cleanup (B2-B2),
+account switch (B2-C), and a server guarantee for lost OTP-response tokens remain
+deferred; B2-B1 does not claim to prevent those orphan sessions.
 
 ### Intentionally not user-scoped
 

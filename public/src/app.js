@@ -1,4 +1,4 @@
-import { register, start, go, setPendingAction, setAdmissionGuard, isCurrentDevDocsRoute, setScreenChromeMount } from './router.js';
+import { register, start, go, setPendingAction, consumePendingAction, setAdmissionGuard, isCurrentDevDocsRoute, setScreenChromeMount } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
@@ -8,7 +8,7 @@ import { getSmokeRole, resolveRole } from './smoke_role.js';
 import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
 import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from './auth_token.js';
-import { setLocalLogoutObserver } from './mock_auth.js';
+import { setLocalLogoutObserver, resetLocalSession, AUTH_CLEAR_FOREIGN } from './mock_auth.js';
 import { createAuthLogout } from './auth_logout.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
@@ -74,8 +74,10 @@ register('/onboarding', (context) => {
   passengerConfirmed: () => bootSession.passengerConfirmed(),
   finishLogin: () => bootSession.finishLogin(),
   markLoginStale: () => bootSession.markLoginStale(),
-  abandonLogin: () => bootSession.abandonLogin(),
-  enterGuest: () => bootSession.enterGuest(),
+  detach(options) {
+    onboardingHandoffOwner = context;
+    return onboardingDetach.logout(options);
+  },
   hasUncommittedLogin: () => bootSession.hasUncommittedLogin(),
   recoveredLogin,
   });
@@ -160,6 +162,25 @@ const authLogout = createAuthLogout({
   beginLogout: () => bootSession.beginExplicitLogout(),
   onLocalFailure: lease => bootSession.failExplicitLogout(lease),
 });
+const onboardingDetach = createAuthLogout({
+  retainFailures: true,
+  beginLogout: auth => bootSession.beginOnboardingDetach(auth),
+  onLocalFailure: lease => bootSession.failExplicitLogout(lease),
+  localLogout({ expectedAuth, isCurrent, navigate, controller, intent }) {
+    if (!isCurrent()) return false;
+    const result = resetLocalSession({ allowForeignDetach: true, expectedAuth });
+    if (result === false || !bootSession.commitOnboardingDetach(controller)) return false;
+    // Safety cleanup survives disposal. Projection, pending intent and routing do not.
+    if (!navigate()) return true;
+    if (intent === 'guest') {
+      if (result === AUTH_CLEAR_FOREIGN) user.setCacheOnly({ welcomeSeen: true, role: 'guest' });
+      else user.set({ welcomeSeen: true, role: 'guest' });
+      consumePendingAction();
+      go('/feed');
+    } else go('/welcome');
+    return true;
+  },
+});
 setLocalLogoutObserver(() => !isBackendEnabled()
   || bootSession.adoptAnonymousAfterExternalLogout());
 window.addEventListener('storage', (event) => {
@@ -200,7 +221,7 @@ function showBootSession(snapshot) {
   message.setAttribute('aria-live', 'polite');
   message.textContent = recovered ? 'Вход подтверждён. Можно продолжить.'
     : unknown ? (snapshot.error?.code === 'AUTH_STORAGE_FAILED'
-      && authLogout.getSnapshot().phase === 'local-error'
+      && [authLogout, onboardingDetach].some(c => c.getSnapshot().phase === 'local-error')
       ? 'Не удалось завершить выход на устройстве' : 'Не удалось проверить вход') : 'Проверяем вход…';
   content.appendChild(message);
   if (unknown) {
@@ -211,6 +232,9 @@ function showBootSession(snapshot) {
     retry.textContent = 'Повторить';
     retry.addEventListener('click', () => {
       if (authLogout.getSnapshot().phase === 'local-error') void authLogout.logout();
+      else if (['error', 'local-error'].includes(onboardingDetach.getSnapshot().phase)) {
+        void onboardingDetach.logout({ isCurrent: () => false });
+      }
       else void bootSession.reconcile();
     });
     content.appendChild(retry);

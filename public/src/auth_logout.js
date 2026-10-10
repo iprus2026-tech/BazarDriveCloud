@@ -1,4 +1,4 @@
-// B2-A: explicit logout only. Guest, abandon and account switch remain local.
+// Shared server-first detach. Late/unaccepted OTP and account switch are deferred.
 import { isBackendEnabled } from './api_config.js';
 import { logoutSession } from './api_client.js';
 import { getAuthToken, getAuthUserId, getAuthOwnerVersion,
@@ -15,6 +15,7 @@ export function createAuthLogout({
   localLogout = performLocalLogout,
   onLocalFailure = () => {},
   timeoutMs = 10000,
+  retainFailures = false,
 } = {}) {
   let active = null;
   let epoch = 0;
@@ -29,6 +30,11 @@ export function createAuthLogout({
 
   function current(run) {
     return run.epoch === epoch && run.controller.isCurrent() && authCurrent(run.auth);
+  }
+
+  function failRun(run, code) {
+    if (retainFailures && current(run)) repair = run;
+    return failure(code);
   }
 
   async function settle(run, isCurrent) {
@@ -48,14 +54,14 @@ export function createAuthLogout({
           .then(payload => ({ payload }), error => ({ code: error?.code || 'NETWORK' }));
         const result = await Promise.race([request, timeout]);
         if (!current(run)) return failure('AUTH_STALE');
-        if (result.code) return failure(result.code);
+        if (result.code) return failRun(run, result.code);
         const p = result.payload;
         if (!p || typeof p !== 'object' || Array.isArray(p) || p.ok !== true) {
-          return failure('SESSION_PROTOCOL');
+          return failRun(run, 'SESSION_PROTOCOL');
         }
         run.revoked = true;
       } catch (error) {
-        return failure(current(run) ? error?.code || 'NETWORK' : 'AUTH_STALE');
+        return failRun(run, current(run) ? error?.code || 'NETWORK' : 'AUTH_STALE');
       } finally {
         clearTimeout(timer);
       }
@@ -64,7 +70,8 @@ export function createAuthLogout({
     let completed = false;
     try {
       completed = localLogout({ expectedAuth: run.auth,
-        isCurrent: () => current(run), navigate: isCurrent });
+        isCurrent: () => current(run), navigate: isCurrent,
+        controller: run.controller, intent: run.intent });
     } catch {}
     if (completed !== true) {
       if (!run.controller.isCurrent() || !authCurrent(run.auth)) return failure('AUTH_STALE');
@@ -80,7 +87,7 @@ export function createAuthLogout({
     return Object.freeze({ ok: true });
   }
 
-  function logout({ isCurrent = () => true } = {}) {
+  function logout({ isCurrent = () => true, intent = null } = {}) {
     if (active) return active;
     if (!backendEnabled()) {
       const ok = localLogout() === true;
@@ -91,9 +98,12 @@ export function createAuthLogout({
       repair = null;
       return Promise.resolve(failure('AUTH_STALE'));
     }
+    if (run && intent !== null && run.intent !== intent) {
+      return Promise.resolve({ ok: false, code: 'AUTH_DETACH_PENDING', retryable: true });
+    }
     if (!run) {
       const auth = captureAuth();
-      run = { auth, controller: beginLogout(), epoch: ++epoch, revoked: false };
+      run = { auth, controller: beginLogout(auth), epoch: ++epoch, revoked: false, intent };
     }
     snapshot = Object.freeze({ phase: 'pending', error: null });
     active = Promise.resolve().then(() => settle(run, isCurrent))

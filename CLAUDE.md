@@ -32,8 +32,12 @@ order-writes, matching-writes (offers-create/select), and chat are real, DB-back
 and merged, but **LIVE / PILOT-BLOCKED** — the PWA cutover remains guarded;
 B2-A explicit Passenger/Driver Profile and backend-enabled Settings logout is
 wired server-first: confirmed current-session revoke precedes guarded local detach.
-Guest/Back-abandon (B2-B) and account switch (B2-C) still do not revoke server
-sessions. Backend-OFF Profile remains local; Settings remains demo-only.
+B2-B1 Guest and actual full-onboarding root abandonment also revoke already-owned
+stable/installed/recovered sessions before local detach. Ordinary step Back and
+verify-phone-only Back do not revoke. Late/unaccepted OTP cleanup (B2-B2) and
+account switch (B2-C) remain deferred; lost OTP responses need a later server
+cleanup contract. Backend-OFF behavior is unchanged: Profile remains local,
+Settings remains demo-only, and Guest/Back keep their local/demo paths.
 Order-reads, matching-reads, both ride-state routes, both history routes, and
 realtime-poll are plain **LIVE** (no pilot blocker). Availability, route-price,
 notifications, and safety remain dark `501` stubs. ADR BD-DOCS-041 predates this

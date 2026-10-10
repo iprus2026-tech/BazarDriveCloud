@@ -208,7 +208,8 @@ export function setAuth({ token, userId, phone } = {}) {
 // Explicit logout retains this lease across a failed removal. Raw readback is
 // needed on retry because failed removal deliberately blocks public getters.
 function ownsBlockedLogoutCleanup(expected) {
-  return blocked && !pendingWrite && !tabDetachMode && marker?.state === 'bound'
+  return blocked && !pendingWrite && !tabDetachMode
+    && ['bound', 'candidate'].includes(marker?.state)
     && typeof expected.token === 'string' && !!expected.token
     && expected.userId === tabUserId && expected.ownerVersion === marker.ownerVersion
     && markerMatches();
@@ -260,11 +261,13 @@ export function clearAuth({ expected } = {}) {
         && !(tabDetachMode === 'own-cleared' && !raw.token && !rawUserId)) {
       return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;
     }
-    if (marker?.state === 'candidate') {
+    if (marker?.state === 'candidate' && !expected) {
       // An unconfirmed login can be abandoned without compare-and-delete of
-      // shared storage. Explicit Guest performs a cache-only detach.
+      // shared storage. Legacy local-only cleanup remains a cache-only detach.
       return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;
     }
+    // An explicit server-first detach supplies the exact captured lease. Only
+    // that path may remove an installed candidate and retain removal repair.
 
     if (pendingWrite && (raw.token || rawUserId)
         && (raw.token !== pendingWrite.token || rawUserId !== pendingWrite.userId)) {

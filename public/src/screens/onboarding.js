@@ -3,7 +3,7 @@ import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { isBackendEnabled } from '../api_config.js';
 import { apiFetch } from '../api_client.js';
-import { resetLocalSession, AUTH_CLEAR_FOREIGN } from '../mock_auth.js';
+import { resetLocalSession } from '../mock_auth.js';
 import { clearSmokeRole } from '../smoke_role.js';
 
 // ── Inline SVG constants ─────────────────────────────────────────────────────
@@ -536,6 +536,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   let accountSwitchedDuringLogin = false;
   let accountBoundaryResetDuringLogin = false;
   let rebuildProfileAfterVerify = false;
+  let detachSubmitting = false;
 
   const ownsScreen = () => renderContext.isCurrent();
   const expectedAuthRole = () => (verifyPhoneOnly && !rebuildProfileAfterVerify)
@@ -777,8 +778,26 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     render();
   }
 
-  function back() {
+  async function detach(intent) {
+    if (!ownsScreen() || detachSubmitting) return;
+    detachSubmitting = true;
+    const buttons = ['ob-back', 'ob-next'].map(id => root.querySelector('#' + id))
+      .filter(Boolean).map(button => ({ button, disabled: button.disabled }));
+    for (const { button } of buttons) button.disabled = true;
+    setStepError('Завершаем вход…');
+    let result;
+    try { result = await auth?.detach?.({ intent, isCurrent: ownsScreen }); }
+    catch { result = { ok: false, code: 'NETWORK' }; }
     if (!ownsScreen()) return;
+    detachSubmitting = false;
+    for (const { button, disabled } of buttons) button.disabled = disabled;
+    if (result?.ok !== true) {
+      setStepError('Не удалось безопасно завершить вход. Повторите попытку.');
+    }
+  }
+
+  function back() {
+    if (!ownsScreen() || detachSubmitting) return;
     if (isBackendEnabled() && currentStep() === 'otp') invalidateOtpAttempt();
     clearOtpAdvanceTimer();
     if (step === 0) {
@@ -786,14 +805,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       if (isBackendEnabled() && fullOnboardingFlow) {
         const hadHandoff = auth?.hasUncommittedLogin?.() === true;
         if (hadHandoff) {
-          if (auth?.abandonLogin?.() !== true) {
-            setStepError('Не удалось безопасно завершить вход. Повторите попытку.');
-            return;
-          }
-          if (resetLocalSession({ allowForeignDetach: true }) === false) {
-            setStepError('Не удалось очистить локальную сессию. Повторите попытку.');
-            return;
-          }
+          void detach('abandon');
+          return;
         }
       }
       go(fullOnboardingFlow ? '/welcome' : verifyReturnRoute());
@@ -900,6 +913,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       case 'role':
         root.querySelectorAll('.ob-role-card').forEach((card) => {
           card.addEventListener('click', () => {
+            if (detachSubmitting) return;
             draft.role = card.dataset.role;
             root.querySelectorAll('.ob-role-card').forEach((c) => {
               c.classList.remove('ob-role-card--selected');
@@ -921,29 +935,13 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
 
         if (nextBtn) {
           nextBtn.addEventListener('click', () => {
-            if (!draft.role) return;
+            if (!draft.role || detachSubmitting) return;
             if (draft.role === 'guest') {
-              // Guest is a clean anonymous boundary. Drop any authenticated handoff
-              // and all user-scoped local data before entering the public surface.
               if (isBackendEnabled()) {
-                if (auth?.enterGuest?.() !== true) {
-                  setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
-                  return;
-                }
-                const resetResult = resetLocalSession({ allowForeignDetach: true });
-                if (resetResult === false) {
-                  setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
-                  return;
-                }
-                invalidateOtpAttempt();
-                if (resetResult === AUTH_CLEAR_FOREIGN) {
-                  user.setCacheOnly({ welcomeSeen: true, role: 'guest' });
-                } else {
-                  user.set({ welcomeSeen: true, role: 'guest' });
-                }
-              } else {
-                user.set({ welcomeSeen: true, role: 'guest' });
+                void detach('guest');
+                return;
               }
+              user.set({ welcomeSeen: true, role: 'guest' });
               consumePendingAction();
               go('/feed');
               return;

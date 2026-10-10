@@ -53,7 +53,7 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `GET /api/v1/health` | LIVE | Operational endpoint; no user session | No product tables; no I/O | Deployment liveness probe only | health route smoke |
 | `GET /api/v1/readyz` | LIVE | Operational endpoint; no user session | Reads PostgreSQL connectivity and migration state | Deployment readiness probe only | readiness + migration CI |
 | `GET /api/v1/auth/session` | LIVE / PILOT-BLOCKED | Resolves an optional bearer session; expiry/revocation policy remains a pilot gate | Reads `auth_session` only; the session row mirrors identity and verification fields, with no `users` join | `api_client.getSession()`; API base remains guarded/off by default | auth route/repository tests |
-| `POST /api/v1/auth/logout` | LIVE / PILOT-BLOCKED | Optional bearer; current session is server-resolved. No request body/query; clients cannot select `sessionId`, `userId` or `token` | Live bearer lookup reads `auth_session`; live logout updates only the resolved row's `revoked_at`. No sibling/global revocation | B2-A explicit Passenger/Driver Profile and backend-enabled Settings use `api_client.logoutSession()` through the shared server-first coordinator; Guest/Back-abandon and account switch remain deferred | auth HTTP/repository tests; client logout/API/bootstrap/Profile/Settings smokes |
+| `POST /api/v1/auth/logout` | LIVE / PILOT-BLOCKED | Optional bearer; current session is server-resolved. No request body/query; clients cannot select `sessionId`, `userId` or `token` | Live bearer lookup reads `auth_session`; live logout updates only the resolved row's `revoked_at`. No sibling/global revocation | B2-A explicit Profile/Settings and B2-B1 already-owned Guest/actual full-onboarding root abandon use `api_client.logoutSession()` through the shared server-first coordinator; late/unaccepted OTP cleanup and account switch remain deferred | auth HTTP/repository tests; client logout/API/bootstrap/Profile/Settings smokes |
 | `POST /api/v1/auth/otp/request` | LIVE / PILOT-BLOCKED | Public request; unthrottled and without a production delivery provider | Writes hashed codes to `auth_otp` | guarded auth cutover; dev response may include `devCode` only in dev mode | OTP request tests + auth hardening issue owner |
 | `POST /api/v1/auth/otp/verify` | LIVE / PILOT-BLOCKED | Public verification; attempt cap enforced; final session lifecycle remains a pilot gate | Reads the latest live `auth_otp` and commits its attempt increment before the success transaction. On a correct code, one transaction consumes the OTP, upserts/verifies `users` and inserts `auth_session`; the separate attempt count therefore persists on failed verification | guarded auth/token cutover | OTP concurrency + session tests |
 | `GET /api/v1/orders` | LIVE | Public created-order read; optional viewer session only affects ownership projection | Reads `orders` | guarded `mock_api.listFeedPosts()` seam; API base off by default | orders route + API client smoke |
@@ -93,7 +93,19 @@ revoke stays fail-closed with a local storage error and retry; it cannot roll
 back the committed revoke. Replacement credentials and stale UI continuations
 are fenced, but Web Storage compare/remove operations are not atomic.
 Backend-OFF Profile retains local logout; Settings retains its demo toast.
-Guest/Back-abandon (B2-B) and account switch (B2-C) still perform no server revoke.
+B2-B1 Guest and actual full-onboarding root abandonment revoke the already-owned
+stable, installed handoff or recovered incomplete session first. The bootstrap
+retains its cleanup lease on revoke uncertainty; post-revoke storage repair does
+not repeat the successful revoke. Guest follows durable detach, account cleanup
+and ANONYMOUS, then consumes (never executes) pending action and enters Feed.
+Actual abandonment retains pending action and enters Welcome. Ordinary step Back
+and verify-phone-only Back retain their existing navigation without revoke.
+Foreign replacement/same-user rotation cannot be revoked, cleared or overwritten;
+an already-foreign Guest detach uses only this tab's cached projection.
+Backend-OFF Guest/Back remain unchanged. B2-B2 cleanup of late/unaccepted OTP
+responses and B2-C account switching remain deferred. A minted session whose
+response token is lost needs a later server cleanup contract; B2-B1 makes no
+orphan-prevention claim for that case.
 
 ### WhatsApp Business Account webhook — merged on `main` (BD-DOCS-051)
 

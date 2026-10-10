@@ -392,5 +392,77 @@ if (process.argv[2] === '--storage-case') {
         { stdio: 'pipe' });
     });
   }
+  await check('B2-B1 injected Guest commit is server-first and carries fixed intent', async () => {
+    let guest = false;
+    const f = fixture({ retainFailures: true,
+      localLogout: ({ expectedAuth, isCurrent, navigate, intent }) => {
+        assert.equal(expectedAuth.token, 'A'); assert.equal(isCurrent(), true);
+        assert.equal(intent, 'guest'); assert.equal(navigate(), true);
+        guest = true; return true;
+      } });
+    const pending = f.coordinator.logout({ intent: 'guest' });
+    assert.equal(pending, f.coordinator.logout({ intent: 'guest' }));
+    await flush(); assert.equal(guest, false); assert.equal(f.getAuth().token, 'A');
+    f.request.resolve({ ok: true }); assert.equal((await pending).ok, true);
+    assert.equal(guest, true); assert.equal(f.events.filter(e => e === 'server').length, 1);
+    assert.equal(f.events.includes('welcome'), false);
+  });
+  for (const code of ['SESSION_LOOKUP_FAILED', 'SESSION_REVOKE_FAILED', 'NETWORK', 'ABORTED']) {
+    await check('B2-B1 immutable retry lease after ' + code, async () => {
+      const f = fixture({ retainFailures: true });
+      const pending = f.coordinator.logout({ intent: 'guest' });
+      await flush(); f.request.reject({ code });
+      assert.equal((await pending).code, code);
+      assert.equal(f.getAuth().token, 'A'); assert.equal(f.caches(), 'account-A');
+      assert.equal(f.anonymous(), false); assert.equal(f.navigated(), false);
+      assert.equal((await f.coordinator.logout({ intent: 'abandon' })).code, 'AUTH_DETACH_PENDING');
+      f.nextRequest();
+      const retry = f.coordinator.logout({ intent: 'guest' });
+      await flush(); f.request.resolve({ ok: true }); assert.equal((await retry).ok, true);
+      assert.equal(f.events.filter(e => e === 'fence').length, 1, 'do not recapture actor on retry');
+    });
+  }
+  for (const kind of ['replacement', 'same-user-rotation', 'new-login']) {
+    await check('B2-B1 failed request retry cannot capture ' + kind, async () => {
+      const f = fixture({ retainFailures: true });
+      const pending = f.coordinator.logout({ intent: 'guest' });
+      await flush(); f.request.reject({ code: 'NETWORK' }); await pending;
+      if (kind === 'new-login') f.newLogin();
+      else f.replace({ token: 'B', userId: kind === 'replacement' ? 'user-B' : 'user-A',
+        ownerVersion: 'version-B' });
+      assert.equal((await f.coordinator.logout({ intent: 'guest' })).code, 'AUTH_STALE');
+      assert.equal(f.events.filter(e => e === 'server').length, 1);
+      assert.equal(f.events.includes('local'), false);
+    });
+  }
+  await check('B2-B1 local repair retains Guest intent without repeating server revoke', async () => {
+    let commits = 0;
+    const f = fixture({ retainFailures: true, localLogout: ({ intent }) => {
+      assert.equal(intent, 'guest'); return ++commits > 1;
+    } });
+    const pending = f.coordinator.logout({ intent: 'guest' });
+    f.request.resolve({ ok: true });
+    assert.equal((await pending).code, 'AUTH_STORAGE_FAILED');
+    assert.equal((await f.coordinator.logout({ intent: 'guest' })).ok, true);
+    assert.equal(commits, 2); assert.equal(f.events.filter(e => e === 'server').length, 1);
+  });
+  await check('B2-B1 disposed Guest intent permits cleanup but not projection/navigation', async () => {
+    let mounted = true, cleaned = false, guest = false;
+    const f = fixture({ retainFailures: true, localLogout: ({ navigate }) => {
+      cleaned = true; if (navigate()) guest = true; return true;
+    } });
+    const pending = f.coordinator.logout({ intent: 'guest', isCurrent: () => mounted });
+    await flush(); mounted = false; f.request.resolve({ ok: true }); await pending;
+    assert.equal(cleaned, true); assert.equal(guest, false);
+  });
+  await check('B2-B1 timeout retains intent and does not accept late success', async () => {
+    const f = fixture({ retainFailures: true, timeoutMs: 5 });
+    assert.equal((await f.coordinator.logout({ intent: 'guest' })).code, 'LOGOUT_TIMEOUT');
+    f.request.resolve({ ok: true }); await flush();
+    assert.equal(f.anonymous(), false); assert.equal(f.getAuth().token, 'A');
+    f.nextRequest(); const retry = f.coordinator.logout({ intent: 'guest' });
+    f.request.resolve({ ok: true }); assert.equal((await retry).ok, true);
+    assert.equal(f.events.filter(e => e === 'fence').length, 1);
+  });
   console.log('auth-logout: ' + count + ' behavioral checks PASS');
 }
