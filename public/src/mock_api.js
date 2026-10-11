@@ -687,17 +687,21 @@ export async function pollOfferOutcome(orderId) {
 
 // WRITE a status transition. Idempotent (same-status is a server no-op), terminal-freeze
 // (409 RIDE_TERMINAL), participant-gated. Returns the updated serializeRide.
+function buildRideStatusPatchBody(status, cancel) {
+  const body = { status };
+  if (cancel && typeof cancel === 'object' && !Array.isArray(cancel)) {
+    const reason = typeof cancel.reason === 'string' ? cancel.reason.trim() : '';
+    const comment = typeof cancel.comment === 'string' ? cancel.comment.trim() : '';
+    if (reason) body.cancel = { reason, ...(comment ? { comment } : {}) };
+  }
+  return body;
+}
+
 export async function patchRideStatus(tripId, status, { signal, cancel } = {}) {
   if (isBackendEnabled()) {
-    const body = { status };
-    if (cancel && typeof cancel === 'object' && !Array.isArray(cancel)) {
-      const reason = typeof cancel.reason === 'string' ? cancel.reason.trim() : '';
-      const comment = typeof cancel.comment === 'string' ? cancel.comment.trim() : '';
-      if (reason) body.cancel = { reason, ...(comment ? { comment } : {}) };
-    }
     const r = await apiFetch(`/ride-state/rides/${encodeURIComponent(tripId)}/status`, {
       method: 'PATCH',
-      body,
+      body: buildRideStatusPatchBody(status, cancel),
       signal,
     });
     return (r && r.ride) || null;
