@@ -687,11 +687,12 @@ export async function pollOfferOutcome(orderId) {
 
 // WRITE a status transition. Idempotent (same-status is a server no-op), terminal-freeze
 // (409 RIDE_TERMINAL), participant-gated. Returns the updated serializeRide.
-export async function patchRideStatus(tripId, status) {
+export async function patchRideStatus(tripId, status, { signal } = {}) {
   if (isBackendEnabled()) {
     const r = await apiFetch(`/ride-state/rides/${encodeURIComponent(tripId)}/status`, {
       method: 'PATCH',
       body: { status },
+      signal,
     });
     return (r && r.ride) || null;
   }

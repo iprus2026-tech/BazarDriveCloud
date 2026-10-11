@@ -251,7 +251,8 @@
 // v371: B2-A server-first explicit logout and its precached coordinator.
 // v373: server-first Guest and actual onboarding abandon for installed sessions.
 // v374 (BD-AUTH-SESSION-01-829-B2-B2-R1): refresh precached auth/onboarding runtime for late OTP cleanup.
-const VERSION    = 'v374';
+// v375: wait for server-confirmed driver cancellation and reconcile uncertain outcomes.
+const VERSION    = 'v375';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

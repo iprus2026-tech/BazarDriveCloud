@@ -363,16 +363,16 @@ expect('earnings terminal never persists CANCELED / NO_SHOW from the completed s
 // path stays a UI-only toast that never persists ride state.
 const accepted = functionBody(screen, 'renderAccepted') || '';
 expect('renderAccepted() body resolved', accepted.length > 0);
-expect('ACCEPTED stage opens the cancel sheet via #ar-cancel-accepted',
-  /ar-cancel-accepted['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(accepted));
+expect('ACCEPTED stage enters the shared cancellation flow via #ar-cancel-accepted',
+  /ar-cancel-accepted['"]\)[\s\S]{0,300}\bopenDriverCancellation\b/.test(accepted));
 const enRoute = functionBody(screen, 'renderEnRoute') || '';
 expect('renderEnRoute() body resolved', enRoute.length > 0);
-expect('DRIVER_EN_ROUTE stage opens the cancel sheet via #ar-cancel',
-  /ar-cancel['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(enRoute));
+expect('DRIVER_EN_ROUTE stage enters the shared cancellation flow via #ar-cancel',
+  /ar-cancel['"]\)[\s\S]{0,300}\bopenDriverCancellation\b/.test(enRoute));
 const approaching = functionBody(screen, 'renderApproaching') || '';
 expect('renderApproaching() body resolved', approaching.length > 0);
-expect('DRIVER_APPROACHING_PICKUP stage opens the cancel sheet via #ar-cancel',
-  /ar-cancel['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(approaching));
+expect('DRIVER_APPROACHING_PICKUP stage enters the shared cancellation flow via #ar-cancel',
+  /ar-cancel['"]\)[\s\S]{0,300}\bopenDriverCancellation\b/.test(approaching));
 const waiting = functionBody(screen, 'renderWaiting') || '';
 expect('renderWaiting() body resolved', waiting.length > 0);
 // BD-RIDE-D-NOSHOW-01 / BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — #ar-no-show opens the
