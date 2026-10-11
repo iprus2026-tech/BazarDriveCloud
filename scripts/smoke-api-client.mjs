@@ -43,6 +43,11 @@ expect('api_client builds the URL from API_VERSION_PREFIX (not a re-hardcoded pa
   /API_VERSION_PREFIX/.test(cliSrc));
 expect('api_client has the Authorization: Bearer attach path',
   /Authorization/.test(cliSrc) && /Bearer/.test(cliSrc));
+expect('apiFetchCore resolves the default token only after the backend-OFF guard',
+  !/sessionToken\s*=\s*getSessionToken\(\)/.test(cliSrc)
+  && cliSrc.indexOf('if (!isBackendEnabled())') >= 0
+  && cliSrc.indexOf('sessionToken === undefined ? getSessionToken() : sessionToken')
+     > cliSrc.indexOf('if (!isBackendEnabled())'));
 
 // ── Behavioural: import the pure modules and exercise the contract ──
 delete globalThis.__BD_API_BASE__;

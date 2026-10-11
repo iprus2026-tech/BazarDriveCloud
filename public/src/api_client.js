@@ -32,7 +32,7 @@ export class ApiError extends Error {
 // JSON body on 2xx, or REJECTS with ApiError (never returns a non-2xx). While the backend
 // is OFF this throws BACKEND_DISABLED before any fetch is attempted.
 async function apiFetchCore(path, {
-  method = 'GET', body, headers, signal, expectedStatus, sessionToken = getSessionToken(),
+  method = 'GET', body, headers, signal, expectedStatus, sessionToken,
 } = {}) {
   if (!isBackendEnabled()) {
     throw new ApiError({
@@ -47,7 +47,7 @@ async function apiFetchCore(path, {
   // '/api/v1auth/session'.
   const rel = path.startsWith('/') ? path : '/' + path;
   const url = getApiBase() + API_VERSION_PREFIX + rel;
-  const token = sessionToken;
+  const token = sessionToken === undefined ? getSessionToken() : sessionToken;
   const finalHeaders = {
     Accept: 'application/json',
     ...(body !== undefined ? { 'Content-Type': 'application/json' } : null),
