@@ -395,7 +395,7 @@ const ACCEPTED_AT = '2026-10-11T09:00:00.000Z';
 const CANCELED_AT = '2026-10-11T09:03:00.000Z';
 const ORDERS_KEY = 'bazardrive.ride_orders.v1';
 
-function rideFixture(status = 'DRIVER_EN_ROUTE') {
+function rideFixture(status = 'DRIVER_EN_ROUTE', cancel = {}) {
   return {
     ...serializeRide({
       trip_id: TRIP_ID, role: 'driver', status,
@@ -407,9 +407,10 @@ function rideFixture(status = 'DRIVER_EN_ROUTE') {
       updated_at: ['CANCELED', 'NO_SHOW', 'COMPLETED'].includes(status) ? CANCELED_AT : ACCEPTED_AT,
       completed_at: status === 'COMPLETED' ? CANCELED_AT : null,
       canceled_at: ['CANCELED', 'NO_SHOW'].includes(status) ? CANCELED_AT : null,
-      // Ordinary status PATCH does not record the locally selected reason.
-      cancel_by: status === 'NO_SHOW' ? 'driver' : null,
-      cancel_reason: status === 'NO_SHOW' ? 'passenger_no_show' : null,
+      cancel_by: status === 'NO_SHOW' ? 'driver' : (status === 'CANCELED' ? (cancel.by ?? 'driver') : null),
+      cancel_reason: status === 'NO_SHOW'
+        ? 'passenger_no_show'
+        : (status === 'CANCELED' ? (cancel.reason ?? 'other') : null),
     }),
     orderId: ORDER_ID,
   };
@@ -539,7 +540,7 @@ async function commandChecks() {
   await check('lost PATCH acknowledgement plus GET CANCELED commits server clocks with exactly one PATCH', async () => {
     const h = commandHarness();
     h.patchQueue.push(() => Promise.reject(problem('NETWORK')));
-    h.getQueue.push(() => Promise.resolve(rideFixture('CANCELED')));
+    h.getQueue.push(() => Promise.resolve(rideFixture('CANCELED', { reason: 'wrong_pickup' })));
     const result = await observe(h.api.commit('wrong_pickup'));
     assert.equal(result.error, null);
     assert.equal(result.value.status, 'CANCELED');
@@ -547,7 +548,8 @@ async function commandChecks() {
     assert.equal(h.calls.get.length, 1);
     assert.equal(h.calls.legacySync.length, 0);
     assert.equal(h.stored().timestamps.canceledAt, CANCELED_AT);
-    assert.equal(h.stored().cancel.reason, null, 'the confirmed empty server reason wins over the attempted reason');
+    assert.equal(h.stored().cancel.by, 'driver');
+    assert.equal(h.stored().cancel.reason, 'wrong_pickup', 'the persisted server reason survives recovery');
     assert.equal(h.order().status, 'CANCELED');
     assert.equal(h.order().statusUpdatedAt, CANCELED_AT);
   });
@@ -943,7 +945,7 @@ async function commandChecks() {
     assert.equal(h.stored().status, 'DRIVER_EN_ROUTE');
   });
 
-  await check('patchRideStatus forwards the optional AbortSignal without breaking its existing two-argument call', async () => {
+  await check('patchRideStatus forwards AbortSignal and cancellation metadata without accepting actor', async () => {
     const calls = [];
     const context = vm.createContext({
       isBackendEnabled: () => true,
@@ -952,10 +954,17 @@ async function commandChecks() {
     vm.runInContext(`${sourceFunction(apiSource, 'patchRideStatus')}\nglobalThis.patch = patchRideStatus;`, context);
     assert.equal((await context.patch(TRIP_ID, 'CANCELED')).status, 'CANCELED');
     const controller = new AbortController();
-    await context.patch(TRIP_ID, 'CANCELED', { signal: controller.signal });
+    await context.patch(TRIP_ID, 'CANCELED', {
+      signal: controller.signal,
+      cancel: { reason: 'other', comment: 'Engine stopped', by: 'passenger' },
+    });
     assert.equal(calls.length, 2);
     assert.equal(calls[0][1].signal, undefined);
     assert.equal(calls[1][1].signal, controller.signal);
+    assert.deepEqual(calls[1][1].body, {
+      status: 'CANCELED',
+      cancel: { reason: 'other', comment: 'Engine stopped' },
+    });
   });
 }
 
