@@ -859,7 +859,13 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     try {
       const result = await Promise.race([
         write
-          ? patchRideStatus(operation.tripId, RIDE_STATUS.CANCELED, { signal: controller.signal })
+          ? patchRideStatus(operation.tripId, RIDE_STATUS.CANCELED, {
+            signal: controller.signal,
+            cancel: {
+              reason: operation.reasonCode,
+              ...(operation.comment ? { comment: operation.comment } : {}),
+            },
+          })
           : getRideFromBackend(operation.tripId, { signal: controller.signal }),
         aborted,
       ]);
@@ -908,7 +914,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   // Only this coordinator owns cancellation state. The sheet awaits a confirmed
   // CANCELED ride; uncertainty is kept separately from the ride lifecycle. It
   // cannot authorize another PATCH until a server read resolves that uncertainty.
-  async function runDriverCancelOperation(reasonCode, write) {
+  async function runDriverCancelOperation(reasonCode, customText, write) {
     if (!canUseDriverCancellation()) throw driverCancelError('RIDE_CANCEL_STALE');
     // A stuck non-terminal writer must not block cancellation indefinitely.
     // Its late callbacks lose ownership; the server's terminal freeze prevents
@@ -928,7 +934,12 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       return ride;
     }
 
-    const operation = { tripId: ride.tripId, controller: null };
+    const operation = {
+      tripId: ride.tripId,
+      reasonCode,
+      comment: reasonCode === 'other' && typeof customText === 'string' ? customText.trim() : '',
+      controller: null,
+    };
     clearDriverStatusWrite();
     driverCancelOperation = operation;
     driverCancelNeedsReconcile = true;
@@ -991,14 +1002,14 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     }
   }
 
-  function commitDriverCancel(reasonCode) {
+  function commitDriverCancel(reasonCode, customText = '') {
     if (driverCancelNeedsReconcile) return checkDriverCancelStatus();
     driverCancelReason = reasonCode;
-    return runDriverCancelOperation(reasonCode, true);
+    return runDriverCancelOperation(reasonCode, customText, true);
   }
 
   function checkDriverCancelStatus() {
-    return runDriverCancelOperation(driverCancelReason, false);
+    return runDriverCancelOperation(driverCancelReason, '', false);
   }
 
   function openDriverCancellation() {
