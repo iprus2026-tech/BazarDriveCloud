@@ -2,7 +2,7 @@ import { user, REQUIRED_DOCS } from '../state.js';
 import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { isBackendEnabled } from '../api_config.js';
-import { apiFetch } from '../api_client.js';
+import { apiFetch, revokeUnacceptedSession } from '../api_client.js';
 import { resetLocalSession } from '../mock_auth.js';
 import { clearSmokeRole } from '../smoke_role.js';
 
@@ -635,7 +635,16 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           },
         });
         const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
-        if (!ownsAttempt(attempt)) return;
+        if (!ownsAttempt(attempt)) {
+          const lateToken = typeof r?.token === 'string' ? r.token.trim() : '';
+          if (lateToken) {
+            // Best-effort cleanup only. The response was observed, so revoke the
+            // newly minted session without ever installing it as local authority.
+            // A lost response or failed cleanup still needs a later server guarantee.
+            try { await revokeUnacceptedSession(lateToken); } catch {}
+          }
+          return;
+        }
         result = await accept(r, phone);
         if (!ownsAttempt(attempt)) return;
         verifiedResponseReceived = result.handoffInstalled === true;

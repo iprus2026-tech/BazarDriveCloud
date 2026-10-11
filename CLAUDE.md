@@ -34,9 +34,11 @@ B2-A explicit Passenger/Driver Profile and backend-enabled Settings logout is
 wired server-first: confirmed current-session revoke precedes guarded local detach.
 B2-B1 Guest and actual full-onboarding root abandonment also revoke already-owned
 stable/installed/recovered sessions before local detach. Ordinary step Back and
-verify-phone-only Back do not revoke. Late/unaccepted OTP cleanup (B2-B2) and
-account switch (B2-C) remain deferred; lost OTP responses need a later server
-cleanup contract. Backend-OFF behavior is unchanged: Profile remains local,
+verify-phone-only Back do not revoke. B2-B2 R1 best-effort revokes a successful,
+client-observed OTP bearer when that onboarding attempt has already lost UI
+ownership, without installing the bearer locally. A lost verify response or a
+failed cleanup still needs a later server guarantee. Account switch (B2-C)
+remains deferred. Backend-OFF behavior is unchanged: Profile remains local,
 Settings remains demo-only, and Guest/Back keep their local/demo paths.
 Order-reads, matching-reads, both ride-state routes, both history routes, and
 realtime-poll are plain **LIVE** (no pilot blocker). Availability, route-price,
