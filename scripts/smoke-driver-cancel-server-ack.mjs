@@ -884,8 +884,8 @@ async function commandChecks() {
     const result = await attempt;
     assert.equal(result.error, null);
     assert.equal(result.value.status, 'CANCELED');
-    assert.equal(result.value.cancel.reason, null, 'confirmed null clears the stale local reason');
-    assert.equal(h.stored().cancel.by, null, 'confirmed null clears the stale local cancel actor');
+    assert.equal(result.value.cancel.reason, 'other', 'server-confirmed reason replaces the stale local reason');
+    assert.equal(h.stored().cancel.by, 'driver', 'server-confirmed actor replaces the stale local actor');
     assert.equal(h.stored().timestamps.canceledAt, CANCELED_AT);
     assert.equal(h.order().statusUpdatedAt, CANCELED_AT);
     assert.equal(h.calls.patch.length, 1);
@@ -951,7 +951,10 @@ async function commandChecks() {
       isBackendEnabled: () => true,
       apiFetch: async (...args) => { calls.push(args); return { ride: rideFixture('CANCELED') }; },
     });
-    vm.runInContext(`${sourceFunction(apiSource, 'patchRideStatus')}\nglobalThis.patch = patchRideStatus;`, context);
+    vm.runInContext(
+      `${sourceFunction(apiSource, 'buildRideStatusPatchBody')}\n${sourceFunction(apiSource, 'patchRideStatus')}\nglobalThis.patch = patchRideStatus;`,
+      context,
+    );
     assert.equal((await context.patch(TRIP_ID, 'CANCELED')).status, 'CANCELED');
     const controller = new AbortController();
     await context.patch(TRIP_ID, 'CANCELED', {
@@ -961,10 +964,10 @@ async function commandChecks() {
     assert.equal(calls.length, 2);
     assert.equal(calls[0][1].signal, undefined);
     assert.equal(calls[1][1].signal, controller.signal);
-    assert.deepEqual(calls[1][1].body, {
+    assert.equal(JSON.stringify(calls[1][1].body), JSON.stringify({
       status: 'CANCELED',
       cancel: { reason: 'other', comment: 'Engine stopped' },
-    });
+    }));
   });
 }
 
