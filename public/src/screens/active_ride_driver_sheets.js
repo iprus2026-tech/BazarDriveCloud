@@ -67,6 +67,7 @@ export const DRIVER_CANCEL_REASONS = [
 export const DRIVER_CANCEL_REASON_LABEL_BY_CODE = Object.fromEntries(
   DRIVER_CANCEL_REASONS.map(([code, label]) => [code, label]),
 );
+const DRIVER_CANCEL_COMMENT_MAX = 500;
 
 // BD-RIDE-D-07 redesign — per-reason leading glyph (18×18, stroke 1.8) that
 // fills each reason row's icon box. Ported verbatim from the render gate:
@@ -156,7 +157,7 @@ export function renderDriverCancelSheet(selected = '') {
       <div class="driver-cancel-sheet__options" role="radiogroup" aria-label="Причина отмены">${cancelOptionsHtml(selected)}</div>
       <div class="driver-cancel-sheet__custom">
         <label class="driver-cancel-sheet__custom-label" for="driver-cancel-custom">Опишите причину</label>
-        <textarea class="driver-cancel-sheet__textarea" id="driver-cancel-custom" rows="2" placeholder="Расскажите, что случилось"></textarea>
+        <textarea class="driver-cancel-sheet__textarea" id="driver-cancel-custom" rows="2" maxlength="${DRIVER_CANCEL_COMMENT_MAX}" placeholder="Расскажите, что случилось"></textarea>
       </div>
       <div class="driver-cancel-sheet__error" id="driver-cancel-error" role="alert">
         <span class="driver-cancel-sheet__error-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
@@ -397,11 +398,20 @@ function bindCancelEvents(overlay, options) {
   confirm.addEventListener('click', async () => {
     if (!ownsSheet() || pending || overlay.dataset.stage === 'canceled') return;
     if (!checking && !selected) { overlay.dataset.stage = 'validation_error'; return; }
+    const reasonCode = selected;
+    const customText = customInput ? customInput.value.trim() : '';
+    if (!checking && reasonCode === 'other' && customText.length > DRIVER_CANCEL_COMMENT_MAX) {
+      overlay.dataset.stage = 'reason_selected';
+      if (requestError) {
+        requestError.textContent = `Комментарий не должен превышать ${DRIVER_CANCEL_COMMENT_MAX} символов.`;
+        requestError.hidden = false;
+      }
+      customInput?.focus();
+      return;
+    }
     overlay.dataset.stage = 'loading';
     setPending(true);
     if (requestError) requestError.hidden = true;
-    const reasonCode = selected;
-    const customText = customInput ? customInput.value.trim() : '';
     try {
       const action = checking ? options.onCheckStatus : options.onConfirm;
       if (typeof action !== 'function') throw Object.assign(new Error(), { code: 'RIDE_CANCEL_UNKNOWN' });
