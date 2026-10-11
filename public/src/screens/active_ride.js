@@ -832,6 +832,13 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     return Object.assign(new Error(code), { code });
   }
 
+  function isDefinitiveDriverCancelRejection(error) {
+    const status = Number(error?.status);
+    return Number.isInteger(status)
+      && status >= 400 && status < 500
+      && status !== 408 && status !== 425;
+  }
+
   function canUseDriverCancellation() {
     if (driverFixtureMode || !currentViewIsUsable()) return false;
     if (!backendRead) return !isBackendEnabled();
@@ -916,6 +923,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   // cannot authorize another PATCH until a server read resolves that uncertainty.
   async function runDriverCancelOperation(reasonCode, customText, write) {
     if (!canUseDriverCancellation()) throw driverCancelError('RIDE_CANCEL_STALE');
+    const inheritedUnknown = driverCancelNeedsReconcile;
     // A stuck non-terminal writer must not block cancellation indefinitely.
     // Its late callbacks lose ownership; the server's terminal freeze prevents
     // a late active-status write from reopening a confirmed cancellation.
@@ -938,6 +946,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       tripId: ride.tripId,
       reasonCode,
       comment: reasonCode === 'other' && typeof customText === 'string' ? customText.trim() : '',
+      ambiguousWrite: !write && inheritedUnknown,
       controller: null,
     };
     clearDriverStatusWrite();
@@ -954,8 +963,9 @@ export default function activeRide({ isCurrent = () => true } = {}) {
           if (!isDriverCancelSnapshot(serverRide, operation) || serverRide.status !== RIDE_STATUS.CANCELED) {
             throw driverCancelError('RIDE_CANCEL_ACK_INVALID');
           }
-        } catch {
+        } catch (writeError) {
           if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
+          operation.ambiguousWrite = !isDefinitiveDriverCancelRejection(writeError);
           serverRide = await requestDriverCancel(operation, false);
         }
       } else {
@@ -963,6 +973,15 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       }
       if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
       if (!isDriverCancelSnapshot(serverRide, operation)) throw driverCancelError('RIDE_CANCEL_ACK_INVALID');
+
+      // A transport timeout/loss does not order the server transaction. An immediate GET may
+      // still see the pre-commit active row while the original cancellation later commits.
+      // Keep the mounted screen in reconciliation-only mode until a terminal snapshot arrives.
+      if (operation.ambiguousWrite && !isTerminalRideStatus(serverRide.status)) {
+        pendingStatus = null;
+        driverCancelNeedsReconcile = true;
+        throw driverCancelError('RIDE_CANCEL_UNKNOWN');
+      }
 
       pendingStatus = null;
       driverCancelNeedsReconcile = false;
