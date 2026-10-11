@@ -279,6 +279,20 @@ async function sheetChecks() {
     assert.equal(h.state.releaseCount, 1);
   });
 
+  await check('sheet blocks custom cancellation comments over the 500-character server limit', async () => {
+    let calls = 0;
+    const h = sheetHarness({ onConfirm: () => { calls += 1; return Promise.resolve(confirmed()); } });
+    const custom = h.$('#driver-cancel-custom');
+    assert.equal(custom.getAttribute('maxlength'), '500');
+    custom.value = 'x'.repeat(501);
+    await h.$('#driver-cancel-confirm').fire();
+    assert.equal(calls, 0);
+    assert.equal(h.overlay.dataset.stage, 'reason_selected');
+    assert.equal(h.$('#driver-cancel-request-error').hidden, false);
+    assert.match(h.$('#driver-cancel-request-error').textContent, /500/);
+    assert.ok(custom.focusCount > 0);
+  });
+
   await check('sheet keeps reason and comment after confirmed refusal and permits a deliberate retry', async () => {
     let calls = 0;
     const h = sheetHarness({ onConfirm: () => {
@@ -518,9 +532,9 @@ const noAuthorityWrites = (h) => {
 };
 
 async function commandChecks() {
-  await check('PATCH refusal plus GET active preserves the active ride and allows a deliberate retry', async () => {
+  await check('definitive PATCH rejection plus GET active preserves the ride and allows a deliberate retry', async () => {
     const h = commandHarness();
-    h.patchQueue.push(() => Promise.reject(problem('UNAVAILABLE', 503)));
+    h.patchQueue.push(() => Promise.reject(problem('INVALID_CANCEL_REASON', 400)));
     h.getQueue.push(() => Promise.resolve(rideFixture()));
     assertRefused(await observe(h.api.commit('car_problem')), 'RIDE_CANCEL_NOT_CONFIRMED');
     assert.equal(h.stored().status, 'DRIVER_EN_ROUTE');
@@ -529,12 +543,33 @@ async function commandChecks() {
     assert.equal(h.calls.patch.length, 1);
     assert.equal(h.calls.get.length, 1);
     assert.equal(h.calls.legacySync.length, 0);
-    h.patchQueue.push(() => Promise.resolve(rideFixture('CANCELED')));
+    h.patchQueue.push(() => Promise.resolve(rideFixture('CANCELED', { reason: 'car_problem' })));
     const next = await observe(h.api.commit('car_problem'));
     assert.equal(next.error, null);
     assert.equal(next.value.status, 'CANCELED');
     assert.equal(h.calls.patch.length, 2);
     assert.equal(h.calls.get.length, 1);
+  });
+
+  await check('ambiguous PATCH failure plus active GET stays reconciliation-only and never retries the write', async () => {
+    const h = commandHarness();
+    h.patchQueue.push(() => Promise.reject(problem('NETWORK')));
+    h.getQueue.push(() => Promise.resolve(rideFixture()));
+    assertRefused(await observe(h.api.commit('car_problem')), 'RIDE_CANCEL_UNKNOWN');
+    assert.equal(h.api.inspect().driverCancelNeedsReconcile, true);
+    assert.equal(h.stored().status, 'DRIVER_EN_ROUTE');
+    assert.equal(h.calls.patch.length, 1);
+    assert.equal(h.calls.get.length, 1);
+    h.getQueue.push(() => Promise.resolve(rideFixture()));
+    assertRefused(await observe(h.api.check()), 'RIDE_CANCEL_UNKNOWN');
+    assert.equal(h.calls.patch.length, 1, 'status checks never repeat an ambiguous cancellation write');
+    assert.equal(h.calls.get.length, 2);
+    assert.equal(h.api.inspect().driverCancelNeedsReconcile, true);
+    h.getQueue.push(() => Promise.resolve(rideFixture('CANCELED', { reason: 'car_problem' })));
+    const confirmedCancel = await h.api.check();
+    assert.equal(confirmedCancel.status, 'CANCELED');
+    assert.equal(h.api.inspect().driverCancelNeedsReconcile, false);
+    assert.equal(h.calls.patch.length, 1);
   });
 
   await check('lost PATCH acknowledgement plus GET CANCELED commits server clocks with exactly one PATCH', async () => {
@@ -627,13 +662,14 @@ async function commandChecks() {
     });
   }
 
-  await check('a valid active PATCH body is not cancellation; a verified GET resolves the uncertainty', async () => {
+  await check('a non-cancel PATCH body keeps uncertainty after an active GET because commit ordering is unknown', async () => {
     const h = commandHarness();
     h.patchQueue.push(() => Promise.resolve(rideFixture()));
     h.getQueue.push(() => Promise.resolve(rideFixture()));
-    assertRefused(await observe(h.api.commit('car_problem')), 'RIDE_CANCEL_NOT_CONFIRMED');
+    assertRefused(await observe(h.api.commit('car_problem')), 'RIDE_CANCEL_UNKNOWN');
     assert.equal(h.calls.get.length, 1);
     assert.equal(h.stored().status, 'DRIVER_EN_ROUTE');
+    assert.equal(h.api.inspect().driverCancelNeedsReconcile, true);
   });
 
   await check('a partial active GET cannot settle uncertainty or replace the stored ride clocks', async () => {
