@@ -523,7 +523,10 @@ test('recovery gate: real DRIVER_EN_ROUTE PATCH transitions (including sparse IN
     orderIds.push(order.id);
     tripIds.push(tripId);
 
-    const patchRes = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: target }, bearer(drvS));
+    const patchPayload = target === 'CANCELED'
+      ? { status: target, cancel: { reason: 'car_problem' } }
+      : { status: target };
+    const patchRes = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, patchPayload, bearer(drvS));
     assert.equal(patchRes.statusCode, 200, `PATCH DRIVER_EN_ROUTE -> ${target} is permitted by the API today (no sequential-progression gate)`);
 
     const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
@@ -906,7 +909,10 @@ test('recovery gate: every terminal-timestamp contradiction fails closed (409) o
     } else {
       // COMPLETED / CANCELED / IN_PROGRESS via the real PATCH chokepoint, then corrupt with
       // the extra terminal column directly (the PATCH itself only ever stamps its own column).
-      const res = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status }, bearer(drvS));
+      const patchPayload = status === 'CANCELED'
+        ? { status, cancel: { reason: 'car_problem' } }
+        : { status };
+      const res = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, patchPayload, bearer(drvS));
       assert.equal(res.statusCode, 200, `PATCH -> ${status} succeeds`);
       await cleanup.query(`UPDATE rides SET ${extraCol} = now() WHERE trip_id = $1`, [tripId]);
     }
