@@ -250,7 +250,8 @@
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
 // v371: B2-A server-first explicit logout and its precached coordinator.
 // v373: server-first Guest and actual onboarding abandon for installed sessions.
-const VERSION    = 'v373';
+// v374 (BD-AUTH-SESSION-01-829-B2-B2-R1): refresh precached auth/onboarding runtime for late OTP cleanup.
+const VERSION    = 'v374';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

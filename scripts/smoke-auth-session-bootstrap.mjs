@@ -2015,7 +2015,7 @@ async function onboardingDetachCase(name) {
   location.hash = kind === 'verifyonly' ? '#/onboarding?step=phone' : '#/onboarding';
   let pending = deferred();
   const lateVerify = deferred();
-  let posts = 0, verifies = 0, feed = 0, welcome = 0;
+  let posts = 0, cleanupPosts = 0, verifies = 0, feed = 0, welcome = 0;
   const originalSet = user.set;
   user.set = patch => {
     if (patch.role === 'guest' && !off) assert.equal(auth.getAuthToken(), null);
@@ -2023,6 +2023,12 @@ async function onboardingDetachCase(name) {
   };
   globalThis.fetch = async (url, options) => {
     if (url.endsWith('/auth/logout')) {
+      if (options.headers.Authorization === 'Bearer late-S') {
+        cleanupPosts++;
+        assert.equal('body' in options, false, 'late cleanup is bodyless');
+        assert.notEqual(auth.getAuthToken(), 'late-S', 'late token is never installed');
+        return response({ ok: true });
+      }
       posts++;
       assert.equal(options.headers.Authorization, 'Bearer A', 'never revoke B');
       assert.equal(auth.getAuthToken(), 'A', 'bearer retained before revoke');
@@ -2171,11 +2177,16 @@ async function onboardingDetachCase(name) {
     }
   } else assert.equal(posts, 0, 'local/foreign/OFF paths never invent revoke authority');
   if (kind === 'deferred') {
-    lateVerify.resolve(response({ token: 'late-S', user: { userId: 's', roles: ['passenger'],
-      activeRole: 'passenger', phoneVerified: true } }));
-    await flush();
-    assert.equal(posts, 0, 'DEFERRED B2-B2: unaccepted late OTP token is not cleaned by B2-B1');
-    assert.equal(auth.getAuthToken(), null, 'late response cannot install authority');
+    const malformed = name.includes('malformed');
+    lateVerify.resolve(response(malformed
+      ? { user: { userId: 's', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } }
+      : { token: 'late-S', user: { userId: 's', roles: ['passenger'],
+          activeRole: 'passenger', phoneVerified: true } }));
+    await flush(); await flush();
+    assert.equal(cleanupPosts, malformed ? 0 : 1,
+      'B2-B2 R1 revokes only a client-observed late response carrying a bearer');
+    assert.equal(posts, 0, 'late cleanup never reuses the owned-detach bearer path');
+    if (!preforeign) assert.equal(auth.getAuthToken(), null, 'late response cannot install authority');
   }
   if (preforeign) {
     assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), sharedB);
@@ -3260,7 +3271,8 @@ if (process.argv[2] === '--onboarding-detach-case') {
     'stable-guest-ambiguous-foreign', 'stable-guest-ambiguous-rotation', 'stable-guest-foreign',
     'stable-guest-rotation', 'handoff-abandon-foreign', 'stable-guest-preforeign', 'stable-guest-prerotation',
     'handoff-abandon-preforeign', 'stable-guest-disposed', 'handoff-abandon-disposed', 'anonymous-guest',
-    'off-guest', 'anonymous-abandon', 'requested-back', 'verifyonly-back', 'deferred-guest']) {
+    'off-guest', 'anonymous-abandon', 'requested-back', 'verifyonly-back', 'deferred-guest',
+    'deferred-guest-preforeign', 'deferred-guest-malformed']) {
     await check('B2-B1 actual app/onboarding: ' + scenario, () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--onboarding-detach-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
