@@ -320,6 +320,25 @@ export async function patchRideStatus(db, { id, status, timestampColumn = null, 
   return rows[0] ?? null;
 }
 
+// Ordinary participant cancellation. The service derives actorRole from the authenticated
+// participant and validates the reason before entering this repository. Status, actor, reason,
+// optional free-text comment and server timestamp are committed in one UPDATE; terminal freeze
+// and the surrounding row lock make the first successful cancellation metadata immutable.
+export async function patchRideCanceled(db, { id, actorRole, reason = null, comment = null }) {
+  const { rows } = await db.query(
+    `UPDATE rides
+        SET status = 'CANCELED',
+            cancel_by = $2,
+            cancel_reason = $3,
+            cancel_comment = $4,
+            canceled_at = now()
+      WHERE id = $1
+      RETURNING *`,
+    [id, actorRole, reason, comment],
+  );
+  return rows[0] ?? null;
+}
+
 // V2-04C1 — server-owned Driver No-Show write. The service calls this only after
 // locking the ride and validating driver authority + WAITING_PASSENGER source state.
 // Actor/reason are intentionally NOT request parameters: the backend derives them.
