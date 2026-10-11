@@ -11,7 +11,10 @@
 // rows + tests exercise this, and the client read cutover is R15.
 import { RIDE_STATUS, isValidRideStatus, TERMINAL_RIDE_STATUSES, STATUS_TIMESTAMP_FIELD } from '../../domain/ride-status.js';
 import { serializeRide, serializeRecoveredRide } from '../../serialize.js';
-import { findRideByTripId, lockRideByTripId, patchRideStatus, patchRideNoShow, findRecoveryBundleByTripId } from '../../repositories/rides.js';
+import {
+  findRideByTripId, lockRideByTripId, patchRideStatus, patchRideCanceled,
+  patchRideNoShow, findRecoveryBundleByTripId,
+} from '../../repositories/rides.js';
 import { insertStatusChangeEvent } from '../../repositories/ride_events.js';
 import { insertRideStatusNotificationOutbox } from '../../repositories/notification_outbox.js';
 import { validateRecoveryLinkage, validateStandaloneCandidate } from '../../domain/select-recovery-linkage.js';
@@ -28,6 +31,14 @@ const TS_KEY_TO_COLUMN = {
   completedAt: 'completed_at',
   canceledAt: 'canceled_at',
 };
+
+const DRIVER_CANCEL_REASONS = new Set([
+  'passenger_no_show', 'wrong_pickup', 'car_problem',
+  'unsafe_situation', 'cannot_reach_passenger', 'other',
+]);
+const PASSENGER_CANCEL_REASONS = new Set([
+  'driver_far', 'changed_mind', 'route_error', 'cannot_leave', 'other',
+]);
 
 // Which side the authenticated viewer is on for this ride (the actor of a transition), or null
 // when the viewer is neither participant. Demo/SIM rides with null participant FKs => null.
@@ -113,7 +124,17 @@ export default async function rideStateService(app) {
         type: 'object',
         required: ['status'],
         additionalProperties: false,
-        properties: { status: { type: 'string', minLength: 1, maxLength: 40 } },
+        properties: {
+          status: { type: 'string', minLength: 1, maxLength: 40 },
+          cancel: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              reason: { type: 'string', minLength: 1, maxLength: 80 },
+              comment: { type: 'string', maxLength: 500 },
+            },
+          },
+        },
       },
     },
   }, async (req, reply) => {
@@ -122,6 +143,9 @@ export default async function rideStateService(app) {
     if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
     const { status } = req.body;
     if (!isValidRideStatus(status)) return problem(reply, 400, 'INVALID_STATUS', 'unknown ride status');
+    if (req.body.cancel && status !== RIDE_STATUS.CANCELED) {
+      return problem(reply, 400, 'INVALID_CANCEL_METADATA', 'cancel metadata is only valid for CANCELED');
+    }
 
     const result = await app.db.tx(async (client) => {
       const ride = await lockRideByTripId(client, req.params.tripId);
@@ -152,6 +176,37 @@ export default async function rideStateService(app) {
           actorUserId: viewer.userId,
           actorRole: role,
           toStatus: RIDE_STATUS.NO_SHOW,
+        });
+        return { ok: { ride: updated } };
+      }
+
+      if (status === RIDE_STATUS.CANCELED) {
+        if (ride.status === RIDE_STATUS.CANCELED) return { ok: { ride } };
+        if (TERMINAL_RIDE_STATUSES.has(ride.status)) {
+          return { err: [409, 'RIDE_TERMINAL', `ride is terminal (${ride.status})`] };
+        }
+
+        const rawReason = typeof req.body.cancel?.reason === 'string' ? req.body.cancel.reason.trim() : '';
+        const allowedReasons = role === 'driver' ? DRIVER_CANCEL_REASONS : PASSENGER_CANCEL_REASONS;
+        if (role === 'driver' && !rawReason) {
+          return { err: [400, 'CANCEL_REASON_REQUIRED', 'driver cancellation reason is required'] };
+        }
+        if (rawReason && !allowedReasons.has(rawReason)) {
+          return { err: [400, 'INVALID_CANCEL_REASON', 'unknown cancellation reason'] };
+        }
+        const rawComment = typeof req.body.cancel?.comment === 'string' ? req.body.cancel.comment.trim() : '';
+        const comment = rawReason === 'other' && rawComment ? rawComment : null;
+        const updated = await patchRideCanceled(client, {
+          id: ride.id,
+          actorRole: role,
+          reason: rawReason || null,
+          comment,
+        });
+        await appendStatusChangeSource(client, {
+          ride,
+          actorUserId: viewer.userId,
+          actorRole: role,
+          toStatus: RIDE_STATUS.CANCELED,
         });
         return { ok: { ride: updated } };
       }

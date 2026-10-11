@@ -54,12 +54,13 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   const tripId = `trip-r06-${process.pid}`;
   const noShowTripId = `trip-r06-noshow-${process.pid}`;
   const noShowWrongTripId = `trip-r06-noshow-wrong-${process.pid}`;
+  const cancelTripId = `trip-r06-cancel-${process.pid}`;
   const cleanup = new pg.Client({ connectionString: DATABASE_URL });
   await cleanup.connect();
   t.after(async () => {
     // append-only timeline: drop test rows with triggers/FK checks off (CI superuser), best-effort.
     await cleanup.query("SET session_replication_role = 'replica'").catch(() => {});
-    for (const id of [tripId, noShowTripId, noShowWrongTripId]) {
+    for (const id of [tripId, noShowTripId, noShowWrongTripId, cancelTripId]) {
       await cleanup.query(
         "DELETE FROM notification_outbox WHERE immutable_envelope #>> '{aggregate,key}' = $1",
         [id],
@@ -181,6 +182,84 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
       payload: { fromStatus, toStatus },
     }, 'immutable envelope is the exact privacy allowlist');
   });
+
+  // Ordinary driver CANCELED: reason/comment are request data, but actor/timestamp are server-owned.
+  await cleanup.query(
+    `INSERT INTO rides (trip_id, status, role, driver_user_id, passenger_user_id, driver_name)
+       VALUES ($1, 'DRIVER_EN_ROUTE', 'driver', $2, $3, 'Иван')`,
+    [cancelTripId, drvS.user.userId, paxS.user.userId],
+  );
+
+  const missingReason = await patch(
+    app,
+    `/api/v1/ride-state/rides/${cancelTripId}/status`,
+    { status: 'CANCELED' },
+    bearer(drvS),
+  );
+  assert.equal(missingReason.statusCode, 400);
+  assert.equal(missingReason.json().code, 'CANCEL_REASON_REQUIRED');
+  assert.deepEqual(
+    await writeCounts(cleanup, cancelTripId),
+    { ride_events: 0, notification_outbox: 0 },
+    'missing driver reason writes nothing',
+  );
+
+  const spoofActor = await patch(
+    app,
+    `/api/v1/ride-state/rides/${cancelTripId}/status`,
+    { status: 'CANCELED', cancel: { reason: 'wrong_pickup', by: 'passenger' } },
+    bearer(drvS),
+  );
+  assert.equal(spoofActor.statusCode, 400, 'client cannot submit cancel actor');
+
+  const canceled = await patch(
+    app,
+    `/api/v1/ride-state/rides/${cancelTripId}/status`,
+    { status: 'CANCELED', cancel: { reason: 'other', comment: 'Gate is locked' } },
+    bearer(drvS),
+  );
+  assert.equal(canceled.statusCode, 200);
+  assert.equal(canceled.json().ride.status, 'CANCELED');
+  assert.equal(canceled.json().ride.cancel.by, 'driver');
+  assert.equal(canceled.json().ride.cancel.reason, 'other');
+  assert.ok(canceled.json().ride.timestamps.canceledAt, 'ordinary cancellation stamps canceledAt');
+  const cancelDb = (await cleanup.query(
+    'SELECT cancel_by, cancel_reason, cancel_comment, canceled_at FROM rides WHERE trip_id = $1',
+    [cancelTripId],
+  )).rows[0];
+  assert.equal(cancelDb.cancel_by, 'driver');
+  assert.equal(cancelDb.cancel_reason, 'other');
+  assert.equal(cancelDb.cancel_comment, 'Gate is locked');
+  assert.ok(cancelDb.canceled_at);
+  const canceledAt = canceled.json().ride.timestamps.canceledAt;
+
+  const canceledRead = await get(app, `/api/v1/ride-state/rides/${cancelTripId}`, bearer(drvS));
+  assert.equal(canceledRead.statusCode, 200);
+  assert.equal(canceledRead.json().ride.cancel.by, 'driver');
+  assert.equal(canceledRead.json().ride.cancel.reason, 'other');
+  assert.equal(canceledRead.json().ride.timestamps.canceledAt, canceledAt);
+
+  const canceledRetry = await patch(
+    app,
+    `/api/v1/ride-state/rides/${cancelTripId}/status`,
+    { status: 'CANCELED', cancel: { reason: 'car_problem' } },
+    bearer(drvS),
+  );
+  assert.equal(canceledRetry.statusCode, 200);
+  assert.equal(canceledRetry.json().ride.cancel.reason, 'other', 'retry cannot overwrite first reason');
+  assert.equal(canceledRetry.json().ride.timestamps.canceledAt, canceledAt, 'retry cannot re-stamp cancellation');
+  const cancelDbAfterRetry = (await cleanup.query(
+    'SELECT cancel_by, cancel_reason, cancel_comment FROM rides WHERE trip_id = $1',
+    [cancelTripId],
+  )).rows[0];
+  assert.deepEqual(cancelDbAfterRetry, {
+    cancel_by: 'driver', cancel_reason: 'other', cancel_comment: 'Gate is locked',
+  });
+  assert.deepEqual(
+    await writeCounts(cleanup, cancelTripId),
+    { ride_events: 1, notification_outbox: 1 },
+    'ordinary cancellation writes one transition pair; retry writes none',
+  );
 
   // V2-04C1: backend-owned NO_SHOW authority. Seed a waiting ride for the assigned driver.
   await cleanup.query(

@@ -167,7 +167,7 @@ expect('refetchRideAndRender: terminal status clears noShowFlowOpen and always r
 expect('refetchRideAndRender: non-terminal still defers to an open sub-flow',
   /else if\s*\(!noShowFlowOpen\)\s*\{\s*renderSheet\(true\);\s*\}/.test(refetchBody));
 
-const pollOnceBody = (screen.match(/async function pollRideOnce\(\)[\s\S]{0,1700}/) || [''])[0];
+const pollOnceBody = (screen.match(/async function pollRideOnce\(\)[\s\S]*?(?=\n  function startRidePoll\()/) || [''])[0];
 expect('pollRideOnce is defined', Boolean(pollOnceBody));
 expect('pollRideOnce: terminal status clears noShowFlowOpen and always renders',
   /if\s*\(isTerminalRideStatus\(ride\.status\)\)\s*\{\s*noShowFlowOpen = false;\s*renderSheet\(true\);\s*\}/.test(pollOnceBody));

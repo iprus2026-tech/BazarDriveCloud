@@ -24,6 +24,7 @@ import {
   findActiveRide,
   saveActiveRide,
   isTerminalRideStatus,
+  isValidRideStatus,
 } from '../ride_state.js';
 import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
 import {
@@ -39,8 +40,12 @@ import {
   getRideFromBackend,
   patchRideStatus,
   pollRide,
+  reconcileCanonicalOrderFromAuthoritativeTerminalRide,
 } from '../mock_api.js';
-import { isBackendEnabled } from '../api_config.js';
+import { getApiBase, isBackendEnabled } from '../api_config.js';
+import {
+  getAuthToken, getAuthUserId, getAuthOwnerVersion, isAuthCandidate, isAuthTabRejected,
+} from '../auth_token.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
   saveRideHistoryEntry,
@@ -422,7 +427,7 @@ function buildDriverEarningsPayload(ride) {
   };
 }
 
-export default function activeRide() {
+export default function activeRide({ isCurrent = () => true } = {}) {
   const query = getHashQuery();
   const role = query.get('role') || (resolveRole(user.get()) === 'driver' ? 'driver' : 'passenger');
   if (role !== 'driver') return renderPassenger();
@@ -485,6 +490,15 @@ export default function activeRide() {
   }
 
   const backendRead = !driverFixtureMode && isBackendEnabled();
+  // Keep the mounted screen bound to its original account and credential install.
+  // Reinstalling even the same bearer changes ownerVersion; cleanup-only auth
+  // ownership must never grant permission to continue a product request.
+  const driverActor = backendRead ? {
+    apiBase: getApiBase(),
+    token: getAuthToken(),
+    userId: getAuthUserId(),
+    ownerVersion: getAuthOwnerVersion(),
+  } : null;
   if (!backendRead && !driverFixtureMode) {
     ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
   }
@@ -499,6 +513,10 @@ export default function activeRide() {
   let rideRefetchController = null;
   let rideRefetchTimeoutId = null;
   let pendingStatus = null;
+  let driverStatusOperation = null;
+  let driverCancelOperation = null;
+  let driverCancelNeedsReconcile = false;
+  let driverCancelReason = '';
   // BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — true while the no-show sub-flow owns `sheet`
   // (its own submitting/result/failure views), so a background reconciliation doesn't
   // re-render the parent sheet out from under it. See refetchRideAndRender().
@@ -508,7 +526,12 @@ export default function activeRide() {
   let hasMounted = false;
 
   function currentViewIsUsable() {
-    if (destroyed) return false;
+    if (destroyed || !isCurrent()) return false;
+    if (backendRead && (!isBackendEnabled()
+        || getApiBase() !== driverActor.apiBase
+        || getAuthToken() !== driverActor.token
+        || getAuthUserId() !== driverActor.userId
+        || getAuthOwnerVersion() !== driverActor.ownerVersion)) return false;
     if (root.isConnected) {
       hasMounted = true;
       return true;
@@ -595,7 +618,8 @@ export default function activeRide() {
   }
 
   async function refetchRideAndRender() {
-    if (driverReadState !== DRIVER_RIDE_READ_STATE.LOADED || driverFixtureMode || destroyed) return;
+    if (driverReadState !== DRIVER_RIDE_READ_STATE.LOADED || driverFixtureMode
+        || driverCancelOperation || driverCancelNeedsReconcile || !currentViewIsUsable()) return;
     if (ridePollController) ridePollController.abort();
     clearRideRefetch();
     const controller = new AbortController();
@@ -631,11 +655,29 @@ export default function activeRide() {
     }
   }
 
+  function clearDriverStatusWrite() {
+    const operation = driverStatusOperation;
+    driverStatusOperation = null;
+    if (operation) operation.controller.abort();
+  }
+
   function syncRideStatusToBackend(nextStatus) {
+    clearDriverStatusWrite();
+    const operation = { tripId: ride.tripId, status: nextStatus, controller: new AbortController() };
+    driverStatusOperation = operation;
     pendingStatus = nextStatus;
-    patchRideStatus(ride.tripId, nextStatus)
-      .then(() => { pendingStatus = null; refetchRideAndRender(); })
+    const ownsWrite = () => driverStatusOperation === operation && pendingStatus === operation.status
+      && ride.tripId === operation.tripId && currentViewIsUsable();
+    patchRideStatus(operation.tripId, nextStatus, { signal: operation.controller.signal })
+      .then(() => {
+        if (!ownsWrite()) return;
+        driverStatusOperation = null;
+        pendingStatus = null;
+        refetchRideAndRender();
+      })
       .catch((err) => {
+        if (!ownsWrite()) return;
+        driverStatusOperation = null;
         pendingStatus = null;
         showNotice(err && err.code === 'RIDE_TERMINAL'
           ? 'Поездка уже завершена'
@@ -713,11 +755,13 @@ export default function activeRide() {
   }
 
   async function pollRideOnce() {
-    if (ridePollInFlight || destroyed || pendingStatus || driverReadState !== DRIVER_RIDE_READ_STATE.LOADED) return;
+    if (ridePollInFlight || destroyed || pendingStatus || driverCancelNeedsReconcile
+        || driverReadState !== DRIVER_RIDE_READ_STATE.LOADED) return;
     if (!root.isConnected) {
       if (hasMounted) teardownDriverRead();
       return;
     }
+    if (!currentViewIsUsable()) { teardownDriverRead(); return; }
     ridePollInFlight = true;
     const controller = new AbortController();
     ridePollController = controller;
@@ -764,6 +808,11 @@ export default function activeRide() {
   }
 
   function persistDriverRideStatus(nextStatus, patch = {}) {
+    if (!currentViewIsUsable() || driverCancelOperation) return ride;
+    if (driverCancelNeedsReconcile) {
+      showNotice('Исход отмены пока неизвестен. Откройте отмену и проверьте статус поездки.');
+      return ride;
+    }
     if (!findActiveRide(ride.tripId)) saveActiveRide(ride);
     const nextRide = updateActiveRideStatus(ride.tripId, nextStatus, patch);
     if (nextRide && nextRide.status === nextStatus) {
@@ -776,6 +825,225 @@ export default function activeRide() {
   function persistDriverCancel(nextStatus, reasonCode) {
     return persistDriverRideStatus(nextStatus, {
       cancel: { by: 'driver', reason: reasonCode || 'other' },
+    });
+  }
+
+  function driverCancelError(code) {
+    return Object.assign(new Error(code), { code });
+  }
+
+  function isDefinitiveDriverCancelRejection(error) {
+    const status = Number(error?.status);
+    return Number.isInteger(status)
+      && status >= 400 && status < 500
+      && status !== 408 && status !== 425;
+  }
+
+  function canUseDriverCancellation() {
+    if (driverFixtureMode || !currentViewIsUsable()) return false;
+    if (!backendRead) return !isBackendEnabled();
+    return Boolean(driverActor.token && driverActor.userId)
+      && !isAuthCandidate() && !isAuthTabRejected();
+  }
+
+  function ownsDriverCancelOperation(operation) {
+    return driverCancelOperation === operation && ride.tripId === operation.tripId
+      && canUseDriverCancellation();
+  }
+
+  // A timeout ends our wait, not the server transaction. The next request must
+  // be a read under the same actor, with a fresh signal. Even a transport that
+  // ignores abort cannot apply its late result after Promise.race has settled.
+  async function requestDriverCancel(operation, write) {
+    if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
+    const controller = new AbortController();
+    operation.controller = controller;
+    let rejectAborted;
+    const aborted = new Promise((resolve, reject) => { rejectAborted = reject; });
+    const onAbort = () => rejectAborted(driverCancelError('RIDE_CANCEL_UNKNOWN'));
+    controller.signal.addEventListener('abort', onAbort, { once: true });
+    const timeout = setTimeout(() => controller.abort(), DRIVER_RIDE_POLL_TIMEOUT_MS);
+    try {
+      const result = await Promise.race([
+        write
+          ? patchRideStatus(operation.tripId, RIDE_STATUS.CANCELED, {
+            signal: controller.signal,
+            cancel: {
+              reason: operation.reasonCode,
+              ...(operation.comment ? { comment: operation.comment } : {}),
+            },
+          })
+          : getRideFromBackend(operation.tripId, { signal: controller.signal }),
+        aborted,
+      ]);
+      if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
+      if (controller.signal.aborted) throw driverCancelError('RIDE_CANCEL_UNKNOWN');
+      return result;
+    } finally {
+      clearTimeout(timeout);
+      controller.signal.removeEventListener('abort', onAbort);
+      if (operation.controller === controller) operation.controller = null;
+    }
+  }
+
+  function isDriverCancelSnapshot(serverRide, operation) {
+    if (!serverRide || serverRide.tripId !== operation.tripId || !isValidRideStatus(serverRide.status)) return false;
+    const isObject = (value) => value != null && typeof value === 'object' && !Array.isArray(value);
+    if (![null, 'driver', 'passenger'].includes(serverRide.role)) return false;
+    const nullableFields = {
+      passenger: ['name', 'initials', 'rating', 'phoneMasked'],
+      driver: ['name', 'initials', 'rating', 'car'],
+      route: ['pickupLabel', 'dropoffLabel', 'etaToPickup', 'etaToDestination'],
+      order: ['offerPrice'],
+      cancel: ['by', 'reason'],
+    };
+    if (!Object.entries(nullableFields).every(([key, fields]) => isObject(serverRide[key])
+      && fields.every((field) => Object.hasOwn(serverRide[key], field)
+        && (serverRide[key][field] === null || typeof serverRide[key][field] === 'string')))) return false;
+    if (![null, 'driver', 'passenger', 'system'].includes(serverRide.cancel.by)) return false;
+    if (!isObject(serverRide.timestamps)) return false;
+    const timestamps = serverRide.timestamps;
+    const isTimestamp = (value) => {
+      if (typeof value !== 'string') return false;
+      const ms = Date.parse(value);
+      return Number.isFinite(ms) && new Date(ms).toISOString() === value;
+    };
+    if (!isTimestamp(timestamps.createdAt) || !isTimestamp(timestamps.updatedAt)) return false;
+    // serializeRide always includes every lifecycle key. Unreached stages may
+    // be null; a partial read must not erase clocks or authorize another PATCH.
+    if (!['acceptedAt', 'approachingAt', 'arrivedAt', 'startedAt', 'completedAt', 'canceledAt']
+      .every((key) => Object.hasOwn(timestamps, key) && (timestamps[key] === null || isTimestamp(timestamps[key])))) return false;
+    if (!isTerminalRideStatus(serverRide.status)) return true;
+    const timestamp = serverRide.status === RIDE_STATUS.COMPLETED ? 'completedAt' : 'canceledAt';
+    return isTimestamp(timestamps[timestamp]);
+  }
+
+  // Only this coordinator owns cancellation state. The sheet awaits a confirmed
+  // CANCELED ride; uncertainty is kept separately from the ride lifecycle. It
+  // cannot authorize another PATCH until a server read resolves that uncertainty.
+  async function runDriverCancelOperation(reasonCode, customText, write) {
+    if (!canUseDriverCancellation()) throw driverCancelError('RIDE_CANCEL_STALE');
+    const inheritedUnknown = driverCancelNeedsReconcile;
+    // A stuck non-terminal writer must not block cancellation indefinitely.
+    // Its late callbacks lose ownership; the server's terminal freeze prevents
+    // a late active-status write from reopening a confirmed cancellation.
+    const canTakeStatusWrite = driverStatusOperation && !isTerminalRideStatus(pendingStatus)
+      && driverStatusOperation.status === pendingStatus && driverStatusOperation.tripId === ride.tripId;
+    if (driverCancelOperation || (pendingStatus && !canTakeStatusWrite)) throw driverCancelError('RIDE_CANCEL_BUSY');
+    const storedRide = findActiveRide(ride.tripId);
+    if (write && (isTerminalRideStatus(ride.status) || isTerminalRideStatus(storedRide?.status))) {
+      if (storedRide && isTerminalRideStatus(storedRide.status)) ride = storedRide;
+      throw driverCancelError('RIDE_CANCEL_TERMINAL');
+    }
+    if (!backendRide) {
+      if (!write) throw driverCancelError('RIDE_CANCEL_NOT_CONFIRMED');
+      ride = persistDriverCancel(RIDE_STATUS.CANCELED, reasonCode);
+      if (ride.status !== RIDE_STATUS.CANCELED) throw driverCancelError('RIDE_CANCEL_TERMINAL');
+      return ride;
+    }
+
+    const operation = {
+      tripId: ride.tripId,
+      reasonCode,
+      comment: reasonCode === 'other' && typeof customText === 'string' ? customText.trim() : '',
+      ambiguousWrite: !write && inheritedUnknown,
+      controller: null,
+    };
+    clearDriverStatusWrite();
+    driverCancelOperation = operation;
+    driverCancelNeedsReconcile = true;
+    pendingStatus = RIDE_STATUS.CANCELED;
+    stopRidePoll();
+    clearRideRefetch();
+    try {
+      let serverRide;
+      if (write) {
+        try {
+          serverRide = await requestDriverCancel(operation, true);
+          if (!isDriverCancelSnapshot(serverRide, operation) || serverRide.status !== RIDE_STATUS.CANCELED) {
+            throw driverCancelError('RIDE_CANCEL_ACK_INVALID');
+          }
+        } catch (writeError) {
+          if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
+          operation.ambiguousWrite = !isDefinitiveDriverCancelRejection(writeError);
+          serverRide = await requestDriverCancel(operation, false);
+        }
+      } else {
+        serverRide = await requestDriverCancel(operation, false);
+      }
+      if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
+      if (!isDriverCancelSnapshot(serverRide, operation)) throw driverCancelError('RIDE_CANCEL_ACK_INVALID');
+
+      // A transport timeout/loss does not order the server transaction. An immediate GET may
+      // still see the pre-commit active row while the original cancellation later commits.
+      // Keep the mounted screen in reconciliation-only mode until a terminal snapshot arrives.
+      if (operation.ambiguousWrite && !isTerminalRideStatus(serverRide.status)) {
+        pendingStatus = null;
+        driverCancelNeedsReconcile = true;
+        throw driverCancelError('RIDE_CANCEL_UNKNOWN');
+      }
+
+      pendingStatus = null;
+      driverCancelNeedsReconcile = false;
+      // A different local terminal remains frozen. For the same status, accept
+      // the server's actor and clocks instead of confirming local guesses.
+      const frozen = findActiveRide(operation.tripId);
+      if (frozen && isTerminalRideStatus(frozen.status) && frozen.status !== serverRide.status) {
+        ride = frozen;
+      } else {
+        ride = saveActiveRide({
+          ...mergeServerRide(serverRide),
+          status: serverRide.status,
+          cancel: { by: null, reason: null, ...(serverRide.cancel || {}) },
+          timestamps: { ...(serverRide.timestamps || {}) },
+        });
+      }
+      if (ride.status !== serverRide.status) throw driverCancelError('RIDE_CANCEL_TERMINAL');
+      if (isTerminalRideStatus(ride.status)) {
+        reconcileCanonicalOrderFromAuthoritativeTerminalRide(serverRide, operation.tripId);
+      } else {
+        syncCanonicalOrderStatus(ride, ride.status);
+      }
+      if (ride.status === RIDE_STATUS.CANCELED) return ride;
+      if (isTerminalRideStatus(ride.status)) throw driverCancelError('RIDE_CANCEL_TERMINAL');
+      throw driverCancelError('RIDE_CANCEL_NOT_CONFIRMED');
+    } catch (error) {
+      if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
+      if (['RIDE_CANCEL_NOT_CONFIRMED', 'RIDE_CANCEL_TERMINAL'].includes(error?.code)) throw error;
+      driverCancelNeedsReconcile = true;
+      throw driverCancelError('RIDE_CANCEL_UNKNOWN');
+    } finally {
+      if (driverCancelOperation === operation) {
+        driverCancelOperation = null;
+        pendingStatus = null;
+        if (currentViewIsUsable() && !driverCancelNeedsReconcile && !isTerminalRideStatus(ride.status)) startRidePoll();
+      }
+    }
+  }
+
+  function commitDriverCancel(reasonCode, customText = '') {
+    if (driverCancelNeedsReconcile) return checkDriverCancelStatus();
+    driverCancelReason = reasonCode;
+    return runDriverCancelOperation(reasonCode, customText, true);
+  }
+
+  function checkDriverCancelStatus() {
+    return runDriverCancelOperation(driverCancelReason, '', false);
+  }
+
+  function openDriverCancellation() {
+    if (!canUseDriverCancellation()) return;
+    openDriverCancelSheet(root, {
+      reason: driverCancelReason,
+      needsReconciliation: driverCancelNeedsReconcile,
+      isCurrent: canUseDriverCancellation,
+      onConfirm: commitDriverCancel,
+      onCheckStatus: checkDriverCancelStatus,
+      onClose: () => {
+        if (!currentViewIsUsable()) return;
+        renderSheet();
+        if (driverCancelNeedsReconcile) showNotice('Исход отмены пока неизвестен. Откройте отмену и проверьте статус поездки.');
+      },
     });
   }
 
@@ -884,7 +1152,8 @@ export default function activeRide() {
     mapShell.dataset.status = ride.status;
     setMapBanner('');
     setDriverMapReadVisibility(true);
-    if (ride.status === RIDE_STATUS.NEW_ORDER) renderNewOrder();
+    if (driverCancelNeedsReconcile && !driverCancelOperation) renderDriverCancelUnknown();
+    else if (ride.status === RIDE_STATUS.NEW_ORDER) renderNewOrder();
     else if (ride.status === RIDE_STATUS.ACCEPTED) renderAccepted();
     else if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) renderEnRoute();
     else if (ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) renderApproaching();
@@ -898,6 +1167,27 @@ export default function activeRide() {
       const nextFocused = document.getElementById(focusedId);
       if (nextFocused && sheet.contains(nextFocused)) nextFocused.focus({ preventScroll: true });
     }
+  }
+
+  function renderDriverCancelUnknown() {
+    sheet.innerHTML = `
+      <div class="active-ride-passenger__read-state active-ride__driver-read-state" aria-labelledby="ar-cancel-unknown-title">
+        <div class="active-ride-passenger__read-title" id="ar-cancel-unknown-title">Статус отмены неизвестен</div>
+        <div class="active-ride-passenger__read-copy">Проверьте результат отмены. Пока он неизвестен, действия с поездкой недоступны.</div>
+        <button type="button" class="bd-btn ghost" id="ar-check-cancel">Проверить статус</button>
+      </div>`;
+    const check = sheet.querySelector('#ar-check-cancel');
+    check.addEventListener('click', async () => {
+      if (driverCancelOperation || !canUseDriverCancellation()) return;
+      check.disabled = true;
+      try {
+        await checkDriverCancelStatus();
+      } catch (error) {
+        if (!currentViewIsUsable() || error?.code === 'RIDE_CANCEL_STALE') return;
+        if (error?.code === 'RIDE_CANCEL_NOT_CONFIRMED') showNotice('Поездка остаётся активной. Отмена не подтверждена.');
+      }
+      if (currentViewIsUsable()) renderSheet(true);
+    });
   }
 
   function renderDriverReadLoading() {
@@ -1011,7 +1301,7 @@ export default function activeRide() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Заказ принят</div>${optionalRouteText('active-ride__sheet-sub', ride.route?.pickupLabel)}</div>${pickupEtaHtml(ride.order?.pickupEta || ride.route?.etaToPickup)}</div>${routeRows()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start-pickup">Поехать к пассажиру</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-accepted">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel-accepted">Отменить</button></div></div>`;
     sheet.querySelector('#ar-start-pickup').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
     sheet.querySelector('#ar-open-chat-accepted').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=driver`));
-    sheet.querySelector('#ar-cancel-accepted').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
+    sheet.querySelector('#ar-cancel-accepted').addEventListener('click', openDriverCancellation);
     bindPassengerActions();
   }
 
@@ -1025,7 +1315,7 @@ export default function activeRide() {
       renderSheet();
     });
     sheet.querySelector('#ar-open-chat-enroute').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=driver`));
-    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
+    sheet.querySelector('#ar-cancel').addEventListener('click', openDriverCancellation);
     bindPassengerActions();
   }
 
@@ -1034,7 +1324,7 @@ export default function activeRide() {
     sheet.querySelector('#ar-nav-btn')?.addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-arrived').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.WAITING_PASSENGER); renderSheet(); });
     sheet.querySelector('#ar-open-chat-approaching').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=driver`));
-    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
+    sheet.querySelector('#ar-cancel').addEventListener('click', openDriverCancellation);
     bindPassengerActions();
   }
 
@@ -1316,10 +1606,10 @@ export default function activeRide() {
       body = `${passengerName} отменил поездку после того, как вы её приняли.`;
     } else if (backendRide && !cancel.by) {
       title = 'Заказ отменён';
-      body = 'Поездка отменена. Пассажиру отправлено уведомление.';
+      body = 'Поездка отменена.';
     } else {
       title = 'Заказ отменён';
-      body = 'Вы отменили заказ. Пассажиру отправлено уведомление.';
+      body = 'Вы отменили заказ.';
     }
     const reasonRow = reasonLabel
       ? `<div class="active-ride__cancel-row"><span class="active-ride__cancel-label">Причина</span><span class="active-ride__cancel-value">${escapeHtml(reasonLabel)}</span></div>`
@@ -1343,6 +1633,9 @@ export default function activeRide() {
   function teardownDriverRead() {
     if (destroyed) return;
     destroyed = true;
+    clearDriverStatusWrite();
+    if (driverCancelOperation?.controller) driverCancelOperation.controller.abort();
+    driverCancelOperation = null;
     initialReadManager.cancel();
     stopRidePoll();
     clearRideRefetch();
@@ -1362,7 +1655,7 @@ export default function activeRide() {
   queueMicrotask(() => { if (root.isConnected) hasMounted = true; });
 
   async function runInitialDriverRead() {
-    if (!backendRead || driverFixtureMode || destroyed) return;
+    if (!backendRead || driverFixtureMode || !currentViewIsUsable()) return;
     stopRidePoll();
     setDriverReadState(DRIVER_RIDE_READ_STATE.LOADING);
     const result = await initialReadManager.run();
@@ -1411,5 +1704,5 @@ export default function activeRide() {
     setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
   }
 
-  return root;
+  return { view: root, dispose: teardownDriverRead };
 }

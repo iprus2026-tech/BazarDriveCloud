@@ -9,7 +9,7 @@
 //
 // This module owns ONLY the sheet UI and its in-sheet state machines. It
 // never persists ride state, calls a backend, dials a number or dispatches
-// a real SOS — every "live" action is a safe demo stub. Persistence
+// a real SOS. Cancel confirmation awaits the screen's result; persistence
 // (CANCELED / NO_SHOW status + canonical ride-order sync) stays in the
 // driver screen's onConfirm callback so the data layer keeps a single
 // owner. The problem sheet never changes ride status at all.
@@ -67,6 +67,7 @@ export const DRIVER_CANCEL_REASONS = [
 export const DRIVER_CANCEL_REASON_LABEL_BY_CODE = Object.fromEntries(
   DRIVER_CANCEL_REASONS.map(([code, label]) => [code, label]),
 );
+const DRIVER_CANCEL_COMMENT_MAX = 500;
 
 // BD-RIDE-D-07 redesign — per-reason leading glyph (18×18, stroke 1.8) that
 // fills each reason row's icon box. Ported verbatim from the render gate:
@@ -129,7 +130,8 @@ function sheetShell(kind, titleId, eyebrow, title, bodyHtml, headRight = CLOSE_X
 //   "canceled"         — terminal in-sheet card
 // overlay.dataset.custom === "true" reveals the custom-reason textarea.
 // onConfirm(reasonCode, customText) is the data-layer hook owned by the
-// driver screen; outcomeLabel keeps the no-show vs cancel copy accurate.
+// driver screen and resolves with the confirmed ride. onCheckStatus reads an
+// uncertain result without submitting another cancellation.
 function cancelOptionsHtml(selected) {
   return DRIVER_CANCEL_REASONS.map(([value, label, meta]) => {
     const on = selected === value;
@@ -151,16 +153,17 @@ function cancelOptionsHtml(selected) {
 export function renderDriverCancelSheet(selected = '') {
   const body = `
     <div class="active-ride-driver-sheet__form driver-cancel-sheet__form">
-      <p class="driver-cancel-sheet__lead">Выберите причину. Пассажир получит уведомление об отмене.</p>
+      <p class="driver-cancel-sheet__lead">Выберите причину отмены.</p>
       <div class="driver-cancel-sheet__options" role="radiogroup" aria-label="Причина отмены">${cancelOptionsHtml(selected)}</div>
       <div class="driver-cancel-sheet__custom">
         <label class="driver-cancel-sheet__custom-label" for="driver-cancel-custom">Опишите причину</label>
-        <textarea class="driver-cancel-sheet__textarea" id="driver-cancel-custom" rows="2" placeholder="Расскажите, что случилось"></textarea>
+        <textarea class="driver-cancel-sheet__textarea" id="driver-cancel-custom" rows="2" maxlength="${DRIVER_CANCEL_COMMENT_MAX}" placeholder="Расскажите, что случилось"></textarea>
       </div>
       <div class="driver-cancel-sheet__error" id="driver-cancel-error" role="alert">
         <span class="driver-cancel-sheet__error-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
         Выберите причину отмены, чтобы продолжить
       </div>
+      <p class="driver-cancel-sheet__lead" id="driver-cancel-request-error" role="alert" hidden></p>
       <div class="active-ride-driver-sheet__actions driver-cancel-sheet__cta">
         <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" data-driver-sheet-close="true">Вернуться к поездке</button>
         <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--danger" id="driver-cancel-confirm">
@@ -172,7 +175,7 @@ export function renderDriverCancelSheet(selected = '') {
     <div class="driver-cancel-sheet__done" role="status" aria-live="polite">
       <div class="driver-cancel-sheet__done-icon" aria-hidden="true">${CLOSE_RING_SVG}</div>
       <div class="driver-cancel-sheet__done-title" id="driver-cancel-done-title">Поездка отменена</div>
-      <div class="driver-cancel-sheet__done-text" id="driver-cancel-done-text">Мы закрыли этот заказ. Пассажиру отправлено уведомление.</div>
+      <div class="driver-cancel-sheet__done-text" id="driver-cancel-done-text">Поездка отменена.</div>
       <div class="driver-cancel-sheet__done-reason" id="driver-cancel-done-reason"></div>
       <div class="driver-cancel-sheet__done-actions">
         <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent" id="driver-cancel-back-feed">Вернуться в ленту</button>
@@ -347,14 +350,31 @@ function bindSheetChrome(overlay, options) {
 }
 
 function bindCancelEvents(overlay, options) {
-  const resolveOutcome = typeof options.outcomeLabel === 'function'
-    ? options.outcomeLabel
-    : () => (options.outcomeLabel || 'CANCELED');
   let selected = DRIVER_CANCEL_REASONS.some(([v]) => v === options.reason) ? options.reason : '';
+  let checking = Boolean(options.needsReconciliation);
+  let pending = false;
+  const ownsSheet = () => overlay.isConnected
+    && (typeof options.isCurrent !== 'function' || options.isCurrent());
 
   const optionBtns = Array.from(overlay.querySelectorAll('.driver-cancel-sheet__option'));
   const confirm = overlay.querySelector('#driver-cancel-confirm');
   const customInput = overlay.querySelector('#driver-cancel-custom');
+  const requestError = overlay.querySelector('#driver-cancel-request-error');
+  const confirmLabel = confirm.querySelector('.active-ride-driver-sheet__btn-default');
+  const closeBtns = Array.from(overlay.querySelectorAll('button[data-driver-sheet-close="true"]'));
+  const doneBtns = [overlay.querySelector('#driver-cancel-back-feed'), overlay.querySelector('#driver-cancel-close-done')];
+
+  function setPending(value) {
+    pending = value;
+    const done = overlay.dataset.stage === 'canceled';
+    optionBtns.forEach((btn) => { btn.disabled = value || checking || done; });
+    if (customInput) customInput.disabled = value || checking || done;
+    confirm.disabled = value || done;
+    confirm.setAttribute('aria-busy', value ? 'true' : 'false');
+    closeBtns.forEach((btn) => { btn.disabled = value || done; });
+    doneBtns.forEach((btn) => { if (btn) btn.disabled = !done; });
+    if (confirmLabel) confirmLabel.textContent = checking ? 'Проверить статус' : 'Отменить заказ';
+  }
 
   function syncSelection() {
     optionBtns.forEach((btn) => {
@@ -368,46 +388,89 @@ function bindCancelEvents(overlay, options) {
   }
 
   optionBtns.forEach((btn) => btn.addEventListener('click', () => {
+    if (!ownsSheet() || pending || checking || overlay.dataset.stage === 'canceled') return;
     selected = btn.dataset.value || '';
+    if (requestError) requestError.hidden = true;
     syncSelection();
     if (selected === 'other' && customInput) customInput.focus();
   }));
 
-  confirm.addEventListener('click', () => {
-    if (overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'canceled') return;
-    if (!selected) { overlay.dataset.stage = 'validation_error'; return; }
-    overlay.dataset.stage = 'loading';
+  confirm.addEventListener('click', async () => {
+    if (!ownsSheet() || pending || overlay.dataset.stage === 'canceled') return;
+    if (!checking && !selected) { overlay.dataset.stage = 'validation_error'; return; }
+    const reasonCode = selected;
     const customText = customInput ? customInput.value.trim() : '';
-    // Persist immediately so the cancel is durable even if the brief
-    // loading delay is interrupted; the screen owns the data layer.
-    if (typeof options.onConfirm === 'function') options.onConfirm(selected, customText);
-    const outcome = resolveOutcome(selected);
-    const noShow = outcome === 'NO_SHOW';
-    const reasonLabel = DRIVER_CANCEL_REASON_LABEL_BY_CODE[selected] || '';
-    setTimeout(() => {
+    if (!checking && reasonCode === 'other' && customText.length > DRIVER_CANCEL_COMMENT_MAX) {
+      overlay.dataset.stage = 'reason_selected';
+      if (requestError) {
+        requestError.textContent = `Комментарий не должен превышать ${DRIVER_CANCEL_COMMENT_MAX} символов.`;
+        requestError.hidden = false;
+      }
+      customInput?.focus();
+      return;
+    }
+    overlay.dataset.stage = 'loading';
+    setPending(true);
+    if (requestError) requestError.hidden = true;
+    try {
+      const action = checking ? options.onCheckStatus : options.onConfirm;
+      if (typeof action !== 'function') throw Object.assign(new Error(), { code: 'RIDE_CANCEL_UNKNOWN' });
+      const result = await action(reasonCode, customText);
+      if (!ownsSheet()) return;
+      if (!result || !['CANCELED', 'NO_SHOW'].includes(result.status)) {
+        throw Object.assign(new Error(), { code: 'RIDE_CANCEL_UNKNOWN' });
+      }
+      const noShow = result.status === 'NO_SHOW';
+      const reasonLabel = DRIVER_CANCEL_REASON_LABEL_BY_CODE[result.cancel?.reason] || '';
       const title = overlay.querySelector('#driver-cancel-done-title');
       const text = overlay.querySelector('#driver-cancel-done-text');
       const reasonRow = overlay.querySelector('#driver-cancel-done-reason');
       if (title) title.textContent = noShow ? 'Пассажир не вышел' : 'Поездка отменена';
       if (text) {
         text.textContent = noShow
-          ? 'Заказ закрыт со статусом «пассажир не вышел». Пассажиру отправлено уведомление.'
-          : 'Мы закрыли этот заказ. Пассажиру отправлено уведомление.';
+          ? 'Заказ закрыт со статусом «пассажир не вышел».'
+          : 'Поездка отменена.';
       }
       if (reasonRow) reasonRow.textContent = reasonLabel ? `Причина: ${reasonLabel}` : '';
       overlay.dataset.stage = 'canceled';
-    }, 600);
+      setPending(false);
+      doneBtns[0]?.focus();
+    } catch (error) {
+      if (!ownsSheet() || error?.code === 'RIDE_CANCEL_STALE') return;
+      if (error?.code === 'RIDE_CANCEL_TERMINAL') {
+        overlay.__closeSheet && overlay.__closeSheet();
+        return;
+      }
+      checking = !['RIDE_CANCEL_NOT_CONFIRMED', 'RIDE_CANCEL_BUSY'].includes(error?.code);
+      overlay.dataset.stage = selected ? 'reason_selected' : 'default';
+      if (requestError) {
+        requestError.textContent = checking
+          ? 'Не удалось узнать, отменена ли поездка. Проверьте статус перед повторной отменой.'
+          : error?.code === 'RIDE_CANCEL_BUSY'
+            ? 'Дождитесь обновления статуса поездки и повторите попытку.'
+            : 'Отмена не подтверждена. Поездка остаётся активной. Можно повторить попытку.';
+        requestError.hidden = false;
+      }
+      setPending(false);
+    }
   });
 
   overlay.querySelector('#driver-cancel-back-feed').addEventListener('click', () => {
+    if (!ownsSheet() || overlay.dataset.stage !== 'canceled') return;
     overlay.__closeSheet && overlay.__closeSheet();
     go('/feed');
   });
   overlay.querySelector('#driver-cancel-close-done').addEventListener('click', () => {
+    if (!ownsSheet() || overlay.dataset.stage !== 'canceled') return;
     overlay.__closeSheet && overlay.__closeSheet();
   });
 
   syncSelection();
+  setPending(false);
+  if (checking && requestError) {
+    requestError.textContent = 'Исход отмены пока неизвестен. Проверьте статус поездки.';
+    requestError.hidden = false;
+  }
 }
 
 function bindProblemEvents(overlay, options) {
@@ -488,8 +551,7 @@ function openDriverSheet(root, kind, markup, options) {
 }
 
 // BD-RIDE-D-07 — open the driver cancel sheet. onConfirm(code, customText)
-// is the persistence hook; outcomeLabel ('CANCELED' | 'NO_SHOW' or a
-// function of the code) keeps the terminal-card copy accurate.
+// is the persistence hook and resolves only with the confirmed ride.
 export function openDriverCancelSheet(root, options = {}) {
   return openDriverSheet(root, 'cancel', renderDriverCancelSheet(options.reason || ''), options);
 }

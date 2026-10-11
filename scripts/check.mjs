@@ -503,6 +503,18 @@ if (exists(activeRideCancelTerminalSmoke)) {
   }
 }
 
+// Ordinary driver cancellation: confirmed server result, reconciliation and
+// actor ownership; includes controlled network failures and the sheet promise.
+const driverCancelServerAckSmoke = path.join(root, 'scripts', 'smoke-driver-cancel-server-ack.mjs');
+if (exists(driverCancelServerAckSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverCancelServerAckSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-cancel-server-ack.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt
