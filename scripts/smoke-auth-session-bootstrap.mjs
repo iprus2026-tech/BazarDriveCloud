@@ -1351,6 +1351,68 @@ async function appCase(name) {
   go('/boot-cleanup'); await flush();
 }
 
+// #1043 (D2) — a confirmed session with a profile that is not onboarded and
+// has welcomeSeen:false must settle on /onboarding, whatever the entry route.
+// This is the state a role-rejected OTP login (#1044) leaves after its account
+// reset, followed by a reload. app.js sends every other path to /onboarding;
+// the router's welcome guard must not send /onboarding back to /welcome. A
+// redirect loop throws from the bounded hash setter instead of hanging the case.
+async function appAuthenticatedIncompleteCase(entry) {
+  const dom = installDOM({ parseMarkup: true });
+  location.hash = '#/' + entry;
+  const hashWrites = [];
+  const hashAccessor = Object.getOwnPropertyDescriptor(location, 'hash');
+  Object.defineProperty(location, 'hash', {
+    configurable: true,
+    get: hashAccessor.get,
+    set(value) {
+      hashWrites.push(value);
+      if (hashWrites.length > 50) {
+        throw new Error('redirect loop: ' + hashWrites.slice(-6).join(' -> '));
+      }
+      hashAccessor.set.call(location, value);
+    },
+  });
+  const { register, go, setScreenChromeMount } = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  user.set({ welcomeSeen: false, onboarded: false, role: null });
+  localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'fixture-token', userId: 'cached-id' }));
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  const sessionRequests = [];
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/v1/auth/session')) {
+      sessionRequests.push(url);
+      return response({ user: userDTO() });
+    }
+    return response({ code: 'NOT_FOUND' }, 404);
+  };
+  const errors = [];
+  const originalError = console.error, originalWarn = console.warn;
+  console.error = (...args) => errors.push(args.join(' '));
+  console.warn = (...args) => errors.push(args.join(' '));
+  await import('../public/src/app.js');
+  await flush(); await flush();
+  assert.equal(sessionRequests.length, 1, 'the saved bearer is reconciled once');
+  assert.equal(location.hash, '#/onboarding', `${entry} settles on /onboarding`);
+  const settled = hashWrites.length;
+  assert.ok(settled <= 2, `at most one redirect, saw ${settled}: ${hashWrites.join(' -> ')}`);
+  assert.equal(dom.elements.app.children[0]?.dataset?.authBootState, undefined,
+    'the session gate has handed over to the onboarding screen');
+  // No delayed bounce: further turns leave the route alone.
+  await flush(); await flush();
+  assert.equal(location.hash, '#/onboarding');
+  assert.equal(hashWrites.length, settled, 'no further redirects after settling');
+  // The onboarding guard stays in force for product routes.
+  go('/driver-map'); await flush();
+  assert.equal(location.hash, '#/onboarding', 'a product route still lands on /onboarding');
+  assert.deepEqual(errors, [], 'no console errors/warnings');
+  console.error = originalError; console.warn = originalWarn;
+  setScreenChromeMount(null);
+  register('/boot-cleanup', () => new dom.Element());
+  user.set({ onboarded: true, welcomeSeen: true });
+  go('/boot-cleanup'); await flush();
+}
+
 async function devDocsRouteCase(name) {
   const dom = installDOM();
   const router = await import('../public/src/router.js');
@@ -2389,6 +2451,9 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--app-case') {
   await appCase(process.argv[3]);
   console.log('PASS app — ' + process.argv[3]);
+} else if (process.argv[2] === '--app-authenticated-incomplete-case') {
+  await appAuthenticatedIncompleteCase(process.argv[3]);
+  console.log('PASS app authenticated-incomplete entry — ' + process.argv[3]);
 } else {
   const { createAuthSessionBootstrap: createRuntime, sessionRouteAdmission: admit } =
     await import('../public/src/auth_session_bootstrap.js');
@@ -3308,6 +3373,14 @@ if (process.argv[2] === '--onboarding-detach-case') {
     assert.equal(admit(s, '/driver-map'), '/onboarding');
     assert.equal(admit(s, '/welcome'), true);
   });
+  await check('B2: AUTHENTICATED keeps the auth entry clear of the welcome guard (#1043)', async () => {
+    const c = fixture({ requestSession: async () => ({ user: userDTO() }) });
+    const s = await c.reconcile();
+    assert.equal(s.state, 'AUTHENTICATED');
+    assert.deepEqual(admit(s, '/onboarding'), { skipWelcome: true });
+    assert.equal(admit(s, '/welcome'), true);
+    assert.equal(admit(s, '/driver-map'), true);
+  });
   await check('C: confirmed DTO is immutable identity only', async () => {
     const dto = { ...userDTO(), roles: ['driver'], readiness: true };
     const c = fixture({ requestSession: async () => ({ user: dto }) });
@@ -3423,6 +3496,12 @@ if (process.argv[2] === '--onboarding-detach-case') {
   for (const scenario of ['off', 'no-token', 'valid', 'anonymous', 'anonymous-passenger', 'retry-503', 'retry-network', 'retry-malformed']) {
     await check('actual app/router integration: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['welcome', 'onboarding', 'boot-proof']) {
+    await check('actual app: authenticated-incomplete profile settles on /onboarding, no welcome loop (#1043): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-authenticated-incomplete-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
