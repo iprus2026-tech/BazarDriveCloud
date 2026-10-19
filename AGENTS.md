@@ -94,7 +94,7 @@ Server-specific checks:
 
 ```bash
 cd server && npm test
-cd server && npm audit --omit=dev --audit-level=high
+cd server && npm audit --omit=dev --audit-level=moderate
 ```
 
 Docs-site checks:

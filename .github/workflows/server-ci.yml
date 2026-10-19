@@ -278,7 +278,7 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --omit=dev --audit-level=moderate
       # Prove readiness fails closed on the immediately preceding installed schema. 0008 is
       # reserved by the frozen vehicle block-state contract but does not exist in this branch;
       # therefore 0001..0007 are the complete physical pre-0009 schema today.
