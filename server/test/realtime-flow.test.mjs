@@ -67,15 +67,20 @@ test('realtime poll: DB-cursor delta over the ride timeline + participant gating
   const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Иван' }, bearer(drvS))).json().offer;
   const tripId = (await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: off.driverId }, bearer(paxS))).json().ride.tripId;
   tripIds.push(tripId);
-  await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: 'IN_PROGRESS' }, bearer(drvS));
+  // The driver walks the forward-only chain to IN_PROGRESS (BD-RIDE-AUTHORITY-01B-B: no skips).
+  const toInProgress = ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS'];
+  for (const status of toInProgress) {
+    const step = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status }, bearer(drvS));
+    assert.equal(step.statusCode, 200, `driver -> ${status}`);
+  }
 
-  // first poll (no cursor): the IN_PROGRESS transition event + current status + a cursor.
+  // first poll (no cursor): the three transition events in order + current status + a cursor.
   const p1 = await get(app, pollUrl(tripId), bearer(paxS));
   assert.equal(p1.statusCode, 200);
   assert.equal(p1.json().status, 'IN_PROGRESS');
-  assert.equal(p1.json().events.length, 1, 'one status_change since the bootstrap');
-  assert.equal(p1.json().events[0].type, 'status_change');
-  assert.equal(p1.json().events[0].payload.to, 'IN_PROGRESS');
+  assert.equal(p1.json().events.length, 3, 'three status_change events since the bootstrap');
+  assert.ok(p1.json().events.every((e) => e.type === 'status_change'));
+  assert.deepEqual(p1.json().events.map((e) => e.payload.to), toInProgress);
   assert.ok(p1.json().cursor, 'a cursor is returned');
 
   // poll with that cursor: nothing new, cursor unchanged.

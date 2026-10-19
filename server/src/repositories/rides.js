@@ -170,6 +170,11 @@ export async function lockConflictRideForSelection(db, { tripId, orderId }) {
 // row, or exceeding its own last-write instant) without asserting an inter-stage ordering
 // nothing in the contract promises.
 //
+// BD-RIDE-AUTHORITY-01B-B: the server write path is now forward-only along NEXT_STATUS
+// (domain/ride-transition-authority.js), so NEW rows can no longer re-enter a stage. Rows written
+// before that slice may still carry skips and backward re-stamps, so this bound deliberately stays
+// as tolerant as above; tightening it is out of scope until only forward-only rows exist.
+//
 // Lower bound for the 5 post-accept columns is accepted_at, NOT created_at (#938 Codex finding
 // E): every live write path bootstraps accepted_at FIRST (bootstrapRide, inside the /select
 // tx), before any status PATCH can stamp approaching/arrived/started/completed/canceled — so a

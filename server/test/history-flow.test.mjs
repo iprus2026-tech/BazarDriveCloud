@@ -70,8 +70,12 @@ test('history: complete a ride -> GET /history (both roles) + write-once receipt
   tripIds.push(tripId);
   // a receipt before completion is refused (post-completion document only).
   assert.equal((await post(app, '/api/v1/history/receipts', { tripId, fare: 800, commission: -120, tip: 0, net: 680 }, bearer(drvS))).statusCode, 409, 'no receipt before the ride is COMPLETED');
-  const done = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: 'COMPLETED' }, bearer(drvS));
-  assert.equal(done.statusCode, 200);
+  // The driver walks the forward-only chain (BD-RIDE-AUTHORITY-01B-B: no skips).
+  let done;
+  for (const status of ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS', 'COMPLETED']) {
+    done = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status }, bearer(drvS));
+    assert.equal(done.statusCode, 200, `driver -> ${status}`);
+  }
   assert.equal(done.json().ride.status, 'COMPLETED');
 
   // passenger history: one COMPLETED entry; counterparty = the driver; fare = the agreed bid; no receipt.
