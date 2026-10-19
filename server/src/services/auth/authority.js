@@ -1,5 +1,7 @@
-// Dark current-account authority: no route wiring or session/account mutations.
-// This is a read snapshot, not a reusable permit for a later protected mutation.
+// Current-account authority: no session/account mutations. Wired into POST /matching/offers
+// (BD-RIDE-AUTHORITY-01B-A); the remaining protected mutations stay pending under #830.
+// This is a read snapshot, not a reusable permit for a later protected mutation — callers
+// resolve it on the same transaction client as the mutation it guards.
 import { findUserAuthorityById } from '../../repositories/users.js';
 
 const deny = (reason, retryable = false) => ({ ok: false, reason, retryable });

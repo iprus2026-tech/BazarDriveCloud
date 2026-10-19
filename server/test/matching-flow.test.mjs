@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { grantDriverRole } from './helpers/driver-grant.mjs';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -54,16 +55,26 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
     { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
 
-  // unknown order -> 404; anonymous offer -> 401.
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: 'order-nope' }, bearer(paxS))).statusCode, 404);
+  // anonymous offer -> 401; a passenger-only session is refused before any order lookup
+  // (BD-RIDE-AUTHORITY-01B-A) — for a real and for an unknown order alike.
   assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id })).statusCode, 401);
-  // a passenger cannot offer on their OWN order (Codex #790) — no self-candidate is created.
-  const selfOffer = await post(app, '/api/v1/matching/offers', { orderId: order.id }, bearer(paxS));
+  for (const orderId of [order.id, 'order-nope']) {
+    const paxOffer = await post(app, '/api/v1/matching/offers', { orderId }, bearer(paxS));
+    assert.equal(paxOffer.statusCode, 403, `passenger offer on ${orderId} is refused`);
+    assert.equal(paxOffer.json().code, 'DRIVER_ROLE_REQUIRED');
+  }
+
+  // a granted driver: unknown order -> 404; the driver cannot offer on their OWN order (Codex #790).
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
+  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: 'order-nope' }, bearer(drvS))).statusCode, 404);
+  const drvOrder = (await post(app, '/api/v1/orders',
+    { pickup: { label: 'Гараж' }, dropoff: { label: 'Вокзал' } }, bearer(drvS))).json().order;
+  orderIds.push(drvOrder.id);
+  const selfOffer = await post(app, '/api/v1/matching/offers', { orderId: drvOrder.id }, bearer(drvS));
   assert.equal(selfOffer.statusCode, 403, 'self-offer is forbidden');
   assert.equal(selfOffer.json().code, 'CANNOT_OFFER_OWN_ORDER');
 
-  // driver offers on the order.
-  const drvS = await mintSession(app, drv);
+  // driver offers on the passenger's order.
   const off1res = await post(app, '/api/v1/matching/offers',
     { orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,9', etaMin: 5, price: 850, message: 'еду' }, bearer(drvS));
   assert.equal(off1res.statusCode, 201);
@@ -95,4 +106,65 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
   // /select went LIVE in R05 — an empty body now validates (400), not 501; the full transactional
   // accept is covered by select-flow.test.mjs.
   assert.equal((await post(app, '/api/v1/matching/select', {}, bearer(paxS))).statusCode, 400);
+});
+
+// BD-RIDE-AUTHORITY-01B-A (docs/ride-state-receipt-authority-contract.md §2): the offer route reads
+// the CURRENT grant on every request, so the session role alone is never enough.
+test('offer role gate: only a granted, active, verified driver may offer', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const tag = String(process.pid).padStart(7, '0');
+  const pax = `+1584${tag}`;
+  const dual = `+1585${tag}`;
+  const drv = `+1586${tag}`;
+  const cleanup = new pg.Client({ connectionString: DATABASE_URL });
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    for (const p of [pax, dual, drv]) {
+      await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
+      await cleanup.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const offer = (s, orderId) => post(app, '/api/v1/matching/offers', { orderId, price: 700 }, bearer(s));
+  const offerCount = async (legacyId) => (await cleanup.query(
+    'SELECT count(*)::int AS n FROM offers o JOIN orders r ON r.id = o.order_id WHERE r.legacy_id = $1', [legacyId],
+  )).rows[0].n;
+  const expectRefused = async (res, label) => {
+    assert.equal(res.statusCode, 403, label);
+    assert.deepEqual(res.json(),
+      { error: 'a granted, active driver role is required', code: 'DRIVER_ROLE_REQUIRED', retryable: false }, label);
+  };
+
+  const paxS = await mintSession(app, pax);
+  const order = (await post(app, '/api/v1/orders',
+    { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
+  orderIds.push(order.id);
+
+  // a dual-role account whose session is active as passenger is refused.
+  const dualS = await grantDriverRole(cleanup, await mintSession(app, dual), { activeRole: 'passenger' });
+  await expectRefused(await offer(dualS, order.id), 'dual-role session active as passenger');
+
+  // a granted, active driver offers.
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
+  const accepted = await offer(drvS, order.id);
+  assert.equal(accepted.statusCode, 201);
+  assert.equal(accepted.json().offer.driverId, drvS.user.userId);
+
+  // the grant is revoked after the session was issued: the next request is refused.
+  await cleanup.query("UPDATE users SET roles = ARRAY['passenger']::text[], active_role = 'passenger' WHERE id = $1", [drvS.user.userId]);
+  await expectRefused(await offer(drvS, order.id), 'revoked grant');
+
+  // the grant is restored but the account phone is no longer verified: refused.
+  await cleanup.query(
+    "UPDATE users SET roles = ARRAY['passenger','driver']::text[], active_role = 'driver', phone_verified = false WHERE id = $1",
+    [drvS.user.userId],
+  );
+  await expectRefused(await offer(drvS, order.id), 'unverified phone');
+
+  // refusals write nothing: the only offer is the one the granted driver made.
+  assert.equal(await offerCount(order.id), 1);
 });

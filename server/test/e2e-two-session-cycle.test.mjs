@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { grantDriverRole } from './helpers/driver-grant.mjs';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -90,7 +91,7 @@ test('two-session pilot cycle: auth -> order -> offer -> select -> ride -> COMPL
 
   // ---- 1. Two devices, two DISTINCT identities (never the shared pseudo-id of the mock era).
   const paxS = await mintSession(app, pax);
-  const drvS = await mintSession(app, drv);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const outS = await mintSession(app, out);
   assert.ok(paxS.token && drvS.token, 'both sessions minted');
   assert.notEqual(paxS.user.userId, drvS.user.userId, 'passenger and driver are separate identities');
@@ -261,7 +262,7 @@ test('NO_SHOW terminal branch: waiting -> NO_SHOW freezes the ride; no receipt i
   });
 
   const paxS = await mintSession(app, pax);
-  const drvS = await mintSession(app, drv);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const order = (await post(app, '/api/v1/orders',
     { pickup: { label: 'Рынок' }, dropoff: { label: 'Вокзал' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);

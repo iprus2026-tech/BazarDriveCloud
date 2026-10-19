@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { grantDriverRole } from './helpers/driver-grant.mjs';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -60,7 +61,7 @@ test('history: complete a ride -> GET /history (both roles) + write-once receipt
 
   // build a COMPLETED ride via the live spine.
   const paxS = await mintSession(app, pax);
-  const drvS = await mintSession(app, drv);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
   const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Иван', price: 800 }, bearer(drvS))).json().offer;
