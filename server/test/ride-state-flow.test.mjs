@@ -107,8 +107,14 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   assert.equal(p1.statusCode, 200);
   assert.equal(p1.json().ride.status, 'DRIVER_EN_ROUTE');
   assert.ok(p1.json().ride.timestamps.acceptedAt, 'acceptedAt stamped');
-  // -> IN_PROGRESS stamps startedAt.
+  // The driver walks the forward-only chain to WAITING_PASSENGER (BD-RIDE-AUTHORITY-01B-B).
+  for (const status of ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER']) {
+    const step = await patch(app, `/api/v1/ride-state/rides/${tripId}/status`, { status }, bearer(drvS));
+    assert.equal(step.statusCode, 200, `driver -> ${status}`);
+  }
+  // passenger boarding: WAITING_PASSENGER -> IN_PROGRESS stamps startedAt.
   const p2 = await patch(app, `/api/v1/ride-state/rides/${tripId}/status`, { status: 'IN_PROGRESS' }, bearer(paxS));
+  assert.equal(p2.statusCode, 200, 'passenger boarding is allowed from WAITING_PASSENGER');
   assert.ok(p2.json().ride.timestamps.startedAt, 'startedAt stamped');
   // idempotent retry: re-PATCH the SAME non-terminal status -> no-op (no re-stamp, no new event).
   const startedAt = p2.json().ride.timestamps.startedAt;
@@ -132,9 +138,10 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   assert.equal((await patch(app, `/api/v1/ride-state/rides/${tripId}/status`, { status: 'CANCELED' }, bearer(drvS))).statusCode, 409, 'terminal ride cannot transition out');
   assert.equal((await patch(app, `/api/v1/ride-state/rides/${tripId}/status`, { status: 'COMPLETED' }, bearer(drvS))).statusCode, 200, 'idempotent same-status is allowed');
 
-  // a status_change event was appended per accepted transition (EN_ROUTE, IN_PROGRESS, COMPLETED = 3).
+  // a status_change event was appended per accepted transition
+  // (EN_ROUTE, APPROACHING, WAITING, IN_PROGRESS, COMPLETED = 5).
   const n = (await cleanup.query("SELECT count(*)::int AS n FROM ride_events WHERE trip_id = $1 AND type = 'status_change'", [tripId])).rows[0].n;
-  assert.equal(n, 3, 'three status_change events appended (no event for the rejected/no-op patches)');
+  assert.equal(n, 5, 'five status_change events appended (no event for the rejected/no-op patches)');
   const outboxRows = (await cleanup.query(
     `SELECT o.outbox_seq::text AS event_seq,
             o.source_event_id::text,
@@ -152,11 +159,13 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
       ORDER BY e.at, e.id`,
     [tripId],
   )).rows;
-  assert.equal(outboxRows.length, 3, 'each accepted transition has exactly one outbox source');
+  assert.equal(outboxRows.length, 5, 'each accepted transition has exactly one outbox source');
   const audience = [drvS.user.userId.toLowerCase(), paxS.user.userId.toLowerCase()].sort();
   const expectedTransitions = [
     ['ACCEPTED', 'DRIVER_EN_ROUTE', drvS.user.userId.toLowerCase(), 'driver'],
-    ['DRIVER_EN_ROUTE', 'IN_PROGRESS', paxS.user.userId.toLowerCase(), 'passenger'],
+    ['DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP', drvS.user.userId.toLowerCase(), 'driver'],
+    ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', drvS.user.userId.toLowerCase(), 'driver'],
+    ['WAITING_PASSENGER', 'IN_PROGRESS', paxS.user.userId.toLowerCase(), 'passenger'],
     ['IN_PROGRESS', 'COMPLETED', drvS.user.userId.toLowerCase(), 'driver'],
   ];
   const rowsByTransition = new Map(outboxRows.map((row) => [
@@ -357,8 +366,8 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   assert.equal(terminalNoShow.json().code, 'RIDE_TERMINAL');
   assert.deepEqual(
     terminalWritesBefore,
-    { ride_events: 3, notification_outbox: 3 },
-    'terminal rejection starts from the three accepted transition pairs',
+    { ride_events: 5, notification_outbox: 5 },
+    'terminal rejection starts from the five accepted transition pairs',
   );
   assert.deepEqual(
     await writeCounts(cleanup, tripId),

@@ -3,13 +3,14 @@
 //   GET   /rides/:tripId        -> { ride }   PARTICIPANT-ONLY snapshot of the ride state.
 //   PATCH /rides/:tripId/status -> { ride }   PARTICIPANT-ONLY status transition.
 //
-// RIDE_STATUS authority is domain/ride-status.js (parity-pinned to the client). A transition is
-// refused only by the terminal-freeze rule (mirrors the client + the trg_rides_freeze_terminal
-// trigger that backstops it); a non-terminal ride may move to any valid status. The PATCH locks the
-// ride row, stamps the status-keyed timestamp, and appends an append-only status_change event — all
-// in one tx. `rides` rows are minted by R10 (assignment->ride bootstrap); until then only seeded
+// RIDE_STATUS is domain/ride-status.js (parity-pinned to the client). WHO may make WHICH move is
+// domain/ride-transition-authority.js (BD-RIDE-AUTHORITY-01B-B): per-role, forward-only along
+// NEXT_STATUS, plus the terminal freeze (backstopped by the trg_rides_freeze_terminal trigger). The
+// PATCH locks the ride row, stamps the status-keyed timestamp, and appends an append-only
+// status_change event — all in one tx. `rides` rows are minted by R10 (assignment->ride bootstrap); until then only seeded
 // rows + tests exercise this, and the client read cutover is R15.
 import { RIDE_STATUS, isValidRideStatus, TERMINAL_RIDE_STATUSES, STATUS_TIMESTAMP_FIELD } from '../../domain/ride-status.js';
+import { authorizeForwardTransition, authorizeCancel } from '../../domain/ride-transition-authority.js';
 import { serializeRide, serializeRecoveredRide } from '../../serialize.js';
 import {
   findRideByTripId, lockRideByTripId, patchRideStatus, patchRideCanceled,
@@ -185,6 +186,11 @@ export default async function rideStateService(app) {
         if (TERMINAL_RIDE_STATUSES.has(ride.status)) {
           return { err: [409, 'RIDE_TERMINAL', `ride is terminal (${ride.status})`] };
         }
+        // Contract §1: a passenger may cancel only before the trip starts (before reason checks).
+        const cancelAuthority = authorizeCancel({ role, from: ride.status });
+        if (!cancelAuthority.ok) {
+          return { err: [cancelAuthority.status, cancelAuthority.code, cancelAuthority.error] };
+        }
 
         const rawReason = typeof req.body.cancel?.reason === 'string' ? req.body.cancel.reason.trim() : '';
         const allowedReasons = role === 'driver' ? DRIVER_CANCEL_REASONS : PASSENGER_CANCEL_REASONS;
@@ -211,16 +217,15 @@ export default async function rideStateService(app) {
         return { ok: { ride: updated } };
       }
 
-      // IDEMPOTENT: a PATCH to the status the ride is ALREADY in is a no-op — no re-stamp, no event.
-      // So a normal network retry of an already-succeeded transition can't corrupt the original
-      // lifecycle timestamp (e.g. re-stamping started_at) or append a from==to event (Codex #792).
-      // Covers terminal AND non-terminal alike.
-      if (status === ride.status) return { ok: { ride } };
-      // Terminal-freeze (mirrors the client + trg_rides_freeze_terminal): a terminal ride can't move
-      // OUT to a different status. A non-terminal ride may move to any other valid status.
-      if (TERMINAL_RIDE_STATUSES.has(ride.status)) {
-        return { err: [409, 'RIDE_TERMINAL', `ride is terminal (${ride.status})`] };
-      }
+      // Per-role, forward-only authority (contract §1, domain/ride-transition-authority.js), in order:
+      // target owned by nobody -> 409; owned by the other role -> 403 RIDE_ROLE_FORBIDDEN;
+      // IDEMPOTENT same-status retry by the owner -> no-op (no re-stamp, no event — a network retry
+      // can't corrupt the original lifecycle timestamp or append a from==to event, Codex #792);
+      // terminal ride -> 409 RIDE_TERMINAL (mirrors the client + trg_rides_freeze_terminal);
+      // anything but the single NEXT_STATUS step (a skip or a backward move) -> 409.
+      const transition = authorizeForwardTransition({ role, from: ride.status, to: status });
+      if (!transition.ok) return { err: [transition.status, transition.code, transition.error] };
+      if (transition.noop) return { ok: { ride } };
       const tsKey = STATUS_TIMESTAMP_FIELD[status];
       const timestampColumn = tsKey ? TS_KEY_TO_COLUMN[tsKey] : null;
       const updated = await patchRideStatus(client, {

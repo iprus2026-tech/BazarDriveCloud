@@ -75,6 +75,26 @@ async function internalOrderId(client, legacyId) {
   return rows[0].id;
 }
 
+// BD-RIDE-AUTHORITY-01B-B made the PATCH chokepoint forward-only, so the sparse / backward shapes
+// these recovery tests cover can no longer be committed through the API. Rows written before that
+// slice may still carry them, so they are reproduced exactly as the old write path stored them:
+// the new status plus its status-keyed timestamp at now() (accepted_at is write-once and never
+// re-stamped on a DRIVER_EN_ROUTE re-entry). The recovery gate must keep accepting these shapes.
+const LEGACY_STAMP_COLUMN = {
+  DRIVER_APPROACHING_PICKUP: 'approaching_at',
+  WAITING_PASSENGER: 'arrived_at',
+  IN_PROGRESS: 'started_at',
+  COMPLETED: 'completed_at',
+};
+async function writeLegacyStatus(client, tripId, status) {
+  const column = LEGACY_STAMP_COLUMN[status];
+  const sql = column
+    ? `UPDATE rides SET status = $2, ${column} = now() WHERE trip_id = $1`
+    : 'UPDATE rides SET status = $2 WHERE trip_id = $1';
+  const { rowCount } = await client.query(sql, [tripId, status]);
+  assert.equal(rowCount, 1, `legacy ${status} shape written for ${tripId}`);
+}
+
 // ── 1) full accept → both GETs pass, reprojected body verified against order/offer ─────────
 test('recovery gate: full accept passes on both GETs, Ride response reprojected from order/offer', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
@@ -502,9 +522,10 @@ test('recovery gate: a physically-populated source-less serializer column fails 
   }
 });
 
-// ── 12) real direct/sparse transitions from DRIVER_EN_ROUTE via the actual PATCH chokepoint —
-// both recovery GETs still pass (Codex finding #1) ──────────────────────────────────────────
-test('recovery gate: real DRIVER_EN_ROUTE PATCH transitions (including sparse IN_PROGRESS/COMPLETED) still pass both GETs', { skip: SKIP }, async (t) => {
+// ── 12) direct/sparse shapes from DRIVER_EN_ROUTE — API-committed where the move is still
+// allowed, legacy (pre-01B-B) where the PATCH now refuses the skip — both recovery GETs still
+// pass (Codex finding #1) ─────────────────────────────────────────────────────────────────────
+test('recovery gate: DRIVER_EN_ROUTE direct and legacy sparse (IN_PROGRESS/COMPLETED) shapes still pass both GETs', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
   const cleanup = makeCleanupClient();
   await cleanup.connect();
@@ -528,17 +549,24 @@ test('recovery gate: real DRIVER_EN_ROUTE PATCH transitions (including sparse IN
       ? { status: target, cancel: { reason: 'car_problem' } }
       : { status: target };
     const patchRes = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, patchPayload, bearer(drvS));
-    assert.equal(patchRes.statusCode, 200, `PATCH DRIVER_EN_ROUTE -> ${target} is permitted by the API today (no sequential-progression gate)`);
+    if (target === 'DRIVER_APPROACHING_PICKUP' || target === 'CANCELED') {
+      assert.equal(patchRes.statusCode, 200, `PATCH DRIVER_EN_ROUTE -> ${target} is a permitted driver move`);
+    } else {
+      assert.equal(patchRes.statusCode, 409, `PATCH DRIVER_EN_ROUTE -> ${target} is a refused skip`);
+      assert.equal(patchRes.json().code, 'RIDE_TRANSITION_NOT_ALLOWED');
+      await writeLegacyStatus(cleanup, tripId, target);
+    }
 
     const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
-    assert.equal(rideRes.statusCode, 200, `recovery ride-state GET passes for the real, API-committed sparse ${target} shape`);
+    assert.equal(rideRes.statusCode, 200, `recovery ride-state GET passes for the ${target} shape`);
     const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
-    assert.equal(offersRes.statusCode, 200, `recovery offers GET passes for the real, API-committed sparse ${target} shape`);
+    assert.equal(offersRes.statusCode, 200, `recovery offers GET passes for the ${target} shape`);
   }
 });
 
-// ── 13) real backward non-terminal transition via the actual PATCH chokepoint — still passes ──
-test('recovery gate: a real backward non-terminal PATCH transition (WAITING_PASSENGER -> DRIVER_EN_ROUTE) still passes both GETs', { skip: SKIP }, async (t) => {
+// ── 13) a legacy backward non-terminal shape (WAITING_PASSENGER -> DRIVER_EN_ROUTE, refused by the
+// PATCH since 01B-B) — still passes ────────────────────────────────────────────────────────────
+test('recovery gate: a legacy backward non-terminal shape (WAITING_PASSENGER -> DRIVER_EN_ROUTE) still passes both GETs', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
   const cleanup = makeCleanupClient();
   await cleanup.connect();
@@ -557,9 +585,12 @@ test('recovery gate: a real backward non-terminal PATCH transition (WAITING_PASS
   tripIds.push(tripId);
 
   const forward = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: 'WAITING_PASSENGER' }, bearer(drvS));
-  assert.equal(forward.statusCode, 200);
+  assert.equal(forward.statusCode, 409, 'the PATCH chokepoint refuses the DRIVER_EN_ROUTE -> WAITING_PASSENGER skip');
+  await writeLegacyStatus(cleanup, tripId, 'WAITING_PASSENGER');
   const backward = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: 'DRIVER_EN_ROUTE' }, bearer(drvS));
-  assert.equal(backward.statusCode, 200, 'the PATCH chokepoint permits a backward non-terminal transition too');
+  assert.equal(backward.statusCode, 409, 'the PATCH chokepoint refuses a backward non-terminal transition');
+  assert.equal(backward.json().code, 'RIDE_TRANSITION_NOT_ALLOWED');
+  await writeLegacyStatus(cleanup, tripId, 'DRIVER_EN_ROUTE');
 
   const row = (await cleanup.query('SELECT status, approaching_at, arrived_at FROM rides WHERE trip_id=$1', [tripId])).rows[0];
   assert.equal(row.status, 'DRIVER_EN_ROUTE');
@@ -680,13 +711,21 @@ test('recovery gate: chain A and chain B (backward-revisit sequences) both pass 
     await app.close();
   });
 
-  async function runChain(label, ns, statuses) {
+  // Each step is either an allowed next move committed through the API ('api') or a move the
+  // forward-only PATCH now refuses (asserted), reproduced as its legacy pre-01B-B shape ('legacy').
+  async function runChain(label, ns, steps) {
     const { paxS, drvS, order, tripId } = await acceptedFixture(app, cleanup, ns);
     orderIds.push(order.id);
     tripIds.push(tripId);
-    for (const status of statuses) {
+    for (const [status, via] of steps) {
       const res = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status }, bearer(drvS));
-      assert.equal(res.statusCode, 200, `chain ${label}: PATCH -> ${status} succeeds`);
+      if (via === 'api') {
+        assert.equal(res.statusCode, 200, `chain ${label}: PATCH -> ${status} succeeds`);
+      } else {
+        assert.equal(res.statusCode, 409, `chain ${label}: PATCH -> ${status} is refused`);
+        assert.equal(res.json().code, 'RIDE_TRANSITION_NOT_ALLOWED');
+        await writeLegacyStatus(cleanup, tripId, status);
+      }
     }
     const bundle = await findRecoveryBundleByTripId(cleanup, tripId);
     assert.equal(bundle.pg_chronology_ok, true, `chain ${label}: pg_chronology_ok holds under the per-column bound design`);
@@ -698,12 +737,13 @@ test('recovery gate: chain A and chain B (backward-revisit sequences) both pass 
 
   // A: approaching_at already stamped once, later revisited after a backward hop.
   await runChain('A', `${process.pid}16a`, [
-    'DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP',
+    ['DRIVER_APPROACHING_PICKUP', 'api'], ['WAITING_PASSENGER', 'api'],
+    ['DRIVER_EN_ROUTE', 'legacy'], ['DRIVER_APPROACHING_PICKUP', 'api'],
   ]);
 
   // B: approaching_at is stamped for the FIRST time only after arrived_at was already set.
   await runChain('B', `${process.pid}16b`, [
-    'WAITING_PASSENGER', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP',
+    ['WAITING_PASSENGER', 'legacy'], ['DRIVER_EN_ROUTE', 'legacy'], ['DRIVER_APPROACHING_PICKUP', 'api'],
   ]);
 });
 
@@ -908,8 +948,18 @@ test('recovery gate: every terminal-timestamp contradiction fails closed (409) o
         [tripId],
       );
     } else {
-      // COMPLETED / CANCELED / IN_PROGRESS via the real PATCH chokepoint, then corrupt with
-      // the extra terminal column directly (the PATCH itself only ever stamps its own column).
+      // COMPLETED / CANCELED / IN_PROGRESS via the real PATCH chokepoint (the driver walks the
+      // forward-only chain, BD-RIDE-AUTHORITY-01B-B), then corrupt with the extra terminal column
+      // directly (the PATCH itself only ever stamps its own column).
+      const chain = {
+        CANCELED: [],
+        IN_PROGRESS: ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER'],
+        COMPLETED: ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS'],
+      }[status];
+      for (const step of chain) {
+        const stepRes = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: step }, bearer(drvS));
+        assert.equal(stepRes.statusCode, 200, `PATCH -> ${step} succeeds`);
+      }
       const patchPayload = status === 'CANCELED'
         ? { status, cancel: { reason: 'car_problem' } }
         : { status };
