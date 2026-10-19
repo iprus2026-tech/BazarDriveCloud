@@ -212,14 +212,21 @@ test('two-session pilot cycle: auth -> order -> offer -> select -> ride -> COMPL
   // ---- 13. Write-once receipt (driver-only), then history for BOTH roles.
   assert.equal((await post(app, '/api/v1/history/receipts',
     { tripId, fare: 850, commission: -85, tip: 0, net: 765 }, bearer(paxS))).statusCode, 403, 'passenger cannot write the receipt');
+  // Server-derived amounts (BD-RIDE-AUTHORITY-01B-C): the client's 10% numbers are ignored; the
+  // accepted 850 bid at the default 12% gives 850 / -102 / 0 / 748. paymentMode still comes from
+  // the request.
   const rec = await post(app, '/api/v1/history/receipts',
     { tripId, fare: 850, commission: -85, tip: 0, net: 765, paymentMode: 'cash' }, bearer(drvS));
   assert.equal(rec.statusCode, 201);
+  assert.deepEqual(
+    (({ fare, commission, tip, net, paymentMode }) => ({ fare, commission, tip, net, paymentMode }))(rec.json().receipt),
+    { fare: 850, commission: -102, tip: 0, net: 748, paymentMode: 'cash' },
+  );
   const recAgain = await post(app, '/api/v1/history/receipts',
     { tripId, fare: 999, commission: 0, tip: 0, net: 999 }, bearer(drvS));
   assert.equal(recAgain.statusCode, 201);
   assert.equal(recAgain.json().receipt.fare, 850, 'write-once: a second write returns the ORIGINAL amounts');
-  assert.equal(recAgain.json().receipt.net, 765);
+  assert.equal(recAgain.json().receipt.net, 748);
 
   assert.equal((await get(app, '/api/v1/history')).statusCode, 401);
   const paxHist = (await get(app, '/api/v1/history', bearer(paxS))).json();
@@ -232,7 +239,7 @@ test('two-session pilot cycle: auth -> order -> offer -> select -> ride -> COMPL
   assert.ok(de, 'driver history has the trip');
   assert.equal(de.role, 'driver');
   assert.equal(de.counterparty.name, 'Пассажир', 'driver sees the passenger');
-  assert.equal(de.receipt && de.receipt.net, 765, 'driver history carries the receipt');
+  assert.equal(de.receipt && de.receipt.net, 748, 'driver history carries the receipt');
   const outHist = (await get(app, '/api/v1/history', bearer(outS))).json();
   assert.ok(!outHist.items.some((e) => e.tripId === tripId), 'outsider history never sees the trip');
 });

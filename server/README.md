@@ -14,6 +14,7 @@
 cd server
 nvm use                 # Node 22 (server's own .nvmrc; the repo root .nvmrc pins 22 too)
 cp .env.example .env    # set DATABASE_URL (Postgres 16); ALLOWED_ORIGIN in prod
+                        # RECEIPT_COMMISSION_PERCENT: receipt commission, decimal 0..100 (unset = 12)
 npm ci
 npm run migrate         # apply migrations/*.sql in order
 npm run seed            # dev seed (stub — per-entity seeders land with their module PRs)
@@ -36,7 +37,7 @@ delivery, operations or activation gap still prevents pilot use.
 | `/api/v1/matching` | LIVE / PILOT-BLOCKED | Owner/self-offer checks exist; offer creation requires a live authenticated session, while `phone_verified`, granted driver role and readiness are not enforced yet. |
 | `/api/v1/ride-state` | LIVE | Participant-only; terminal freeze and append-only events are authoritative. |
 | `/api/v1/realtime/poll` | LIVE | Participant-only cursor polling; WebSocket/SSE push remains dark. |
-| `/api/v1/history` | LIVE | Authenticated reads; completed-ride receipt write is driver-only and write-once. |
+| `/api/v1/history` | LIVE | Authenticated reads; completed-ride receipt write is driver-only and write-once, with server-derived amounts (interim fare basis = the price fixed at `/select`, commission from `RECEIPT_COMMISSION_PERCENT`, tip 0; client amounts ignored — `docs/ride-state-receipt-authority-contract.md` §3). |
 | `/api/v1/chat` | LIVE persistence / PILOT-BLOCKED | Participant authorization is absent and sender role is still request-supplied. |
 | Availability, route price, notifications, safety | DARK | No pilot contract or activation. |
 | Metrics | DARK | Observability policy is not frozen. |

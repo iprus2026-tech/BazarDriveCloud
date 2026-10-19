@@ -5,6 +5,18 @@
 // (same-origin only). Redis / S3 / token-OTP knobs are parsed but DARK (no Phase-1
 // consumer); token/OTP POLICY is deferred per BD-DOCS-032.
 
+// BD-RIDE-AUTHORITY-01B-C (docs/ride-state-receipt-authority-contract.md §3): the commission rate
+// receipt amounts are derived with. Unset -> 12, the rate the shipped UI already shows.
+export const DEFAULT_RECEIPT_COMMISSION_PERCENT = 12;
+
+// A plain decimal string ("12", "12.5"); anything else (empty, "abc", "-1", "1e1") is NaN so the
+// range guard below rejects it at startup.
+function parseCommissionPercent(raw) {
+  if (raw === undefined) return DEFAULT_RECEIPT_COMMISSION_PERCENT;
+  const text = String(raw).trim();
+  return /^\d+(\.\d+)?$/.test(text) ? Number(text) : Number.NaN;
+}
+
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'development';
   const isProd = nodeEnv === 'production';
@@ -36,6 +48,10 @@ export function loadConfig(env = process.env) {
       // 0 = no expiry modeled (auth_session.expires_at stays NULL); lifetime/refresh policy
       // deferred per BD-DOCS-032. A positive value is the issuer-supplied TTL (R02 reads it).
       ttlSeconds: Number.parseInt(env.SESSION_TTL_SECONDS ?? '0', 10),
+    },
+    // --- RECEIPTS (BD-RIDE-AUTHORITY-01B-C) — server-derived receipt amounts ---
+    receipts: {
+      commissionPercent: parseCommissionPercent(env.RECEIPT_COMMISSION_PERCENT),
     },
 
     // --- DARK (structured, no Phase-1 consumer — see ADR BD-DOCS-041) ---
@@ -87,6 +103,10 @@ export function loadConfig(env = process.env) {
   }
   if (!Number.isInteger(config.session.ttlSeconds) || config.session.ttlSeconds < 0 || config.session.ttlSeconds > 315_360_000) {
     throw new Error(`Invalid SESSION_TTL_SECONDS: ${env.SESSION_TTL_SECONDS} — must be an integer 0..315360000 (seconds; 0 = no expiry)`);
+  }
+  const commissionPercent = config.receipts.commissionPercent;
+  if (!Number.isFinite(commissionPercent) || commissionPercent < 0 || commissionPercent > 100) {
+    throw new Error(`Invalid RECEIPT_COMMISSION_PERCENT: ${env.RECEIPT_COMMISSION_PERCENT} — must be a number 0..100`);
   }
   // Production must never echo an OTP in an API response. Fail fast instead of silently
   // overriding an operator-supplied value so a staging/production misconfiguration is visible.
