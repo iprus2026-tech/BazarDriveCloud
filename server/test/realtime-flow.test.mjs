@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
-import { grantDriverRole } from './helpers/driver-grant.mjs';
+import { grantDriverRole } from '../test-support/driver-grant.mjs';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';

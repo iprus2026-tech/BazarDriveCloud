@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
-import { grantDriverRole } from './helpers/driver-grant.mjs';
+import { grantDriverRole } from '../test-support/driver-grant.mjs';
 import { lockConflictRideForSelection, lockRideByTripId } from '../src/repositories/rides.js';
 import { validateConflictRideInvariant } from '../src/domain/select-conflict-ride.js';
 

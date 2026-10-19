@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
-import { grantDriverRole } from './helpers/driver-grant.mjs';
+import { grantDriverRole } from '../test-support/driver-grant.mjs';
 import { findRecoveryBundleByTripId, findRecoveryBundleByOrderId } from '../src/repositories/rides.js';
 import { listOffersByOrder } from '../src/repositories/offers.js';
 

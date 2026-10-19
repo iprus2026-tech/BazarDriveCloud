@@ -1,10 +1,10 @@
-// /server/test/helpers/driver-grant.mjs — shared DB-gated test helper (BD-RIDE-AUTHORITY-01B-A).
+// /server/test-support/driver-grant.mjs — shared DB-gated test helper (BD-RIDE-AUTHORITY-01B-A).
 // Every OTP login creates a passenger-only account (repositories/users.js resolveVerifiedLoginUser)
 // and no API grants the driver role yet (#1042 / #830), so suites that create offers over HTTP
 // grant it in SQL. Both sides are written: the account grant (users.roles / active_role), which
 // POST /matching/offers re-reads as the CURRENT grant, and the live sessions' active_role, which
-// carries the role the session was minted with. No tests live here; node --test loads it as an
-// empty file.
+// carries the role the session was minted with. It lives OUTSIDE test/ on purpose: node --test
+// treats every file under a test/ directory as a test file, so it would inflate the test count.
 
 // Grant the driver role to an OTP-minted session ({ token, user: { userId } }).
 export async function grantDriverRole(db, session, { roles = ['passenger', 'driver'], activeRole = 'driver' } = {}) {
