@@ -123,7 +123,7 @@ const authority = requireDriverActor(await resolveActorAuthority(client, viewer)
 Rules:
 - The gate reads **current** grants (`users.roles`), so a revoked grant takes effect on the next request even for an older session.
 - Because the gate precedes the order lookup, a non-driver learns nothing about order existence. `ORDER_NOT_FOUND`, `CANNOT_OFFER_OWN_ORDER` and `ORDER_NOT_OPEN` remain, for drivers only.
-- Unchanged: `GET /matching/offers` and `POST /matching/select` keep their owner checks. A passenger active-role gate on them is deferred to #830, because without an account role switch (#829, B2-C) a dual-role account would lose access to its own orders.
+- Unchanged: `GET /matching/offers` and `POST /matching/select` keep their owner checks. A passenger active-role gate on them is deferred to #830, because without an active-role switch a dual-role account would lose access to its own orders. That switch is an #830 concern ([BD-AUTH-POLICY-01A](driver-role-grant-contract.md) §2), not the B2-C account switch of #829.
 - Out of scope: minimum driver readiness (#830) and driver grant writing (#1042 / #830).
 
 Consequence: until a product path grants the driver role, only accounts granted through SQL can offer. The backend-ON PWA is pilot-blocked, so no shipped flow regresses. For a non-driver, `public/src/screens/respond.js:742-761` already rejects before the local write.
@@ -219,7 +219,7 @@ Each step is its own PR with its own review and merge approval. None of them act
 ## Deferred, not decided by silence
 
 - Passenger active-role gate on `/select` and `GET /matching/offers` (#830).
-- Account role switch (#829, B2-C) and driver grant writing (#1042 / #830).
+- Active-role switch and driver grant writing (#1042 / #830), now specified by [BD-AUTH-POLICY-01A](driver-role-grant-contract.md).
 - Minimum driver readiness at offer time (#830).
 - Fare truth, tariffs, negotiated pricing (BD-DOCS-035 / #588); tips and payment provider (#634).
 - Session `activeRole` cross-check on ride-state writes (#830).

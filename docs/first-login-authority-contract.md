@@ -174,7 +174,9 @@ into one writable flag.
 ## Role policy and demo separation
 
 - Choosing passenger/driver in UI records intent; it never issues a grant.
-- Only #830's server policy grants roles and accepts a session role choice.
+- Only #830's server policy grants roles and accepts a session role choice
+  (driver enrollment, the active-role switch and the passenger gates are
+  defined in [BD-AUTH-POLICY-01A](driver-role-grant-contract.md)).
   A grant request/enrollment decision is separate from choosing an existing role.
 - Wrong-role protected mutations must fail server-side even if the client
   bypasses routing or sends altered local flags. The operation must also enforce
@@ -216,7 +218,7 @@ implemented or executed by this docs-only slice:
 | Fresh install; Welcome Start with either role | UX progresses without issuing authenticated identity, a grant or readiness. |
 | Backend OFF mock OTP; later backend ON | Simulated flags cannot restore server authentication. |
 | OTP wrong/expired/reused; cancelled or replaced attempt | No session elevation; old completions cannot install credentials. |
-| Successful OTP with empty grants | `AUTHENTICATED` only; no implicit passenger/driver grant. |
+| Successful OTP with empty grants | `AUTHENTICATED` only; no implicit passenger/driver grant. Since #1017 a newly inserted OTP account receives only the passenger grant; this row now covers legacy roleless accounts. The driver grant comes only through enrollment ([BD-AUTH-POLICY-01A](driver-role-grant-contract.md)). |
 | Boot with valid token and complete snapshot | Restore the confirmed account, role and supported readiness. |
 | Expired/revoked/unknown token; `{ user: null }` | Anonymous, rejected bearer and authenticated projection invalidated. |
 | Boot lookup `503`, offline or timeout | Retryable/unconfirmed state, protected actions blocked, no mock fallback or silent logout. |
