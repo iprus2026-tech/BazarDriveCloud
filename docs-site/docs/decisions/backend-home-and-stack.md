@@ -4,7 +4,7 @@ docType: decision-record
 title: "Backend Home & Stack — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-09-27
+revision: 2026-10-19
 effectiveFrom: 2026-06-20
 reviewAfter: 2026-12-20
 visibleFor: [developer, dispatcher, product]
@@ -49,7 +49,7 @@ Adopt a single self-hosted Node service at `/server`, structured so the full Min
 
 | Layer | Choice | Why |
 |---|---|---|
-| Runtime | **Node.js 22 LTS**, plain **ESM** (`"type":"module"`), **no TypeScript build, no bundler** | Active LTS (clean superset of the repo's CI Node 20); matches the client's ES-module style and the repo's zero-build `node scripts/*.mjs` ethos. JSDoc + optional `// @ts-check` give types without a build step. Server pins its own `/server/.nvmrc` so the repo-wide toolchain is untouched. |
+| Runtime | **Node.js 22 LTS**, plain **ESM** (`"type":"module"`), **no TypeScript build, no bundler** | Active LTS; matches the client's ES-module style and the repo's zero-build `node scripts/*.mjs` ethos. JSDoc + optional `// @ts-check` give types without a build step. Server pins its own `/server/.nvmrc` (read by `server-ci.yml`). At adoption this was a clean superset of the repo's CI Node 20; since 2026-10-19 the repo root `.nvmrc` pins Node 22 as well (read by `ci.yml` / `docs-site-ci.yml`), so server and repo CI share one Node major. |
 | HTTP framework | **Fastify 5** + `@fastify/cors` + `@fastify/helmet` (Phase 1 only) | Per-route **JSON Schema validation/serialization** makes the BD-DOCS-031 entity contract *executable* and self-documenting (OpenAPI) — contract fidelity is the load-bearing goal; built-in pino logging feeds the #9 monitoring layer; a realtime hub (transport per BD-DOCS-033/036) can later mount in the same process; plugin encapsulation maps 1:1 to "one service = one plugin". Raw `node:http` (re-implement routing/validation/CORS/WS by hand) and Express (needs many plugins for what Fastify ships) are rejected. |
 | Database | **PostgreSQL 16** via the **`pg`** driver behind a **thin repository layer**; plain ordered SQL migrations | The single source of truth BD-DOCS-030 demands. The BD-DOCS-031 model is relational (users↔vehicles↔orders↔offers↔assignment↔rides↔ride_events↔receipts), needs a transaction for the `ACCEPTED` assignment step, an append-only `ride_events` timeline (the #9 audit seed), and Phase-3 "nearby drivers" geo — which is a later `CREATE EXTENSION postgis`, **not a new datastore**. No heavyweight ORM, to keep the entity↔store mapping legible against BD-DOCS-031. |
 | `RIDE_STATUS` authority | `rides.status` = **TEXT + CHECK** over the exact `public/src/ride_state.js` literals; terminal-freeze enforced **twice**: in a shared `domain/ride-status.js` (verbatim mirror, with `canTransition()` + `TERMINAL_RIDE_STATUSES`) **and** a DB trigger | Moves the freeze client→server **without changing the enum or transitions**. `domain/ride-status.js` mirrors **all 12** literals verbatim (NEW_ORDER, CONFIRMATION_PENDING, CONFIRMED, CHAT_STARTED, ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW) + the full `NEXT_STATUS` map + the 3-member terminal set `{CANCELED, NO_SHOW, COMPLETED}` — the **whole** lifecycle moves, not a subset. TEXT+CHECK (not a Postgres `ENUM` type) stays readable. An **enum-parity test** in `/server/test` pins the full server set against the client's, failing CI on drift. |
@@ -64,7 +64,7 @@ Adopt a single self-hosted Node service at `/server`, structured so the full Min
 /server                       (new top-level dir; /public is untouched)
   package.json                "type":"module", engines node >=22 <23; deps: fastify,
                               @fastify/cors, @fastify/helmet, pg  (Phase 1)
-  .nvmrc                      22                (server's own pin; repo .nvmrc=20 stays)
+  .nvmrc                      22                (server's own pin; repo root .nvmrc is 22 too since 2026-10-19)
   .env.example                PORT, DATABASE_URL, ALLOWED_ORIGIN (the Pages origin),
                               REDIS_URL?, S3_*?, OTP_*/SESSION_SECRET
   Dockerfile                  node:22-slim, npm ci --omit=dev, non-root
@@ -155,7 +155,7 @@ Each owner module keeps its exported function signatures; only the body swaps fr
 
 ### CI / dev
 
-A new **path-filtered** `.github/workflows/server-ci.yml` (`paths: ['server/**', '.github/workflows/server-ci.yml']`, mirroring how `docs-site-ci.yml` is scoped) runs `cd server && npm ci && npm test` on Node 22 with a `postgres:16` service container and migrations applied before `node:test`. The existing `ci.yml` (`node scripts/check.mjs`) is **untouched** — `check.mjs` walks only `public/` and `scripts/`, so a `/server` tree is invisible to it and the static-data gate (`smoke-static-data-inventory.mjs`, #636) stays the migration's authoritative red/green. `docs-site-ci.yml` and `pages.yml` are likewise untouched (different paths). Local dev: `cd server && docker compose up` then `npm run dev` (`node --watch`); the client runs as today and points `config.js` at `http://localhost:PORT`. Two gates, never entangled: `node scripts/check.mjs` + `node scripts/dispatcher.mjs` (client) and `cd server && npm test` (server).
+A new **path-filtered** `.github/workflows/server-ci.yml` (`paths: ['server/**', '.github/workflows/server-ci.yml']`, mirroring how `docs-site-ci.yml` is scoped) runs `cd server && npm ci && npm test` on Node 22 with a `postgres:16` service container and migrations applied before `node:test`. The existing `ci.yml` (`node scripts/check.mjs`) gets **no server job** — `check.mjs` walks only `public/` and `scripts/`, so a `/server` tree is invisible to it and the static-data gate (`smoke-static-data-inventory.mjs`, #636) stays the migration's authoritative red/green. `docs-site-ci.yml` and `pages.yml` likewise get no server job (different paths). The only later edit to `ci.yml` / `docs-site-ci.yml` is the 2026-10-19 repo-wide Node 22 bump: both now read the root `.nvmrc` via `node-version-file` (toolchain only, no server coupling). Local dev: `cd server && docker compose up` then `npm run dev` (`node --watch`); the client runs as today and points `config.js` at `http://localhost:PORT`. Two gates, never entangled: `node scripts/check.mjs` + `node scripts/dispatcher.mjs` (client) and `cd server && npm test` (server).
 
 ## Alternatives considered
 
@@ -183,7 +183,7 @@ The three reviewed proposals agreed on Fastify + ESM + REST `/api/v1` + deferred
 - Introduces a backend to own: hosting, Postgres ops, auth/session, API versioning.
 - CSP `connect-src` remains a safety-boundary change for the two-origin production API. The BazarDrive `/api/` SW bypass is already shipped for both cross-origin and same-origin `/api/` traffic, so API placement alone needs no SW change; only future backend/realtime traffic outside that covered path/origin behavior requires separate SW review.
 - Offline shifts from "localStorage is truth" to "cache + reconcile"; conflict handling and offline-create IDs must be designed (deferred).
-- A second Node toolchain (server Node 22 vs repo CI Node 20) and a Fastify dependency tree (mitigated: first-party `@fastify/*` only, lockfile committed, `npm audit` in `server-ci.yml`).
+- A second Node toolchain (server Node 22 vs repo CI Node 20; resolved 2026-10-19 by the repo-wide Node 22 bump, see Open questions) and a Fastify dependency tree (mitigated: first-party `@fastify/*` only, lockfile committed, `npm audit` in `server-ci.yml`).
 
 **Neutral**
 - `posts` and the `marketplace_message` kind of `responses` sit outside the #1–#9 dispatch services (their own marketplace concern) and get plain resources — not forced into a dispatch service.
@@ -212,7 +212,7 @@ Client-only keys (`user.v1` until auth lands, drafts, prefs, favorites, dev keys
 - **Token format / OTP provider / session lifetime** (BD-DOCS-032 follow-up).
 - **Vehicles split** out of the driver garage into the server `vehicles` entity (BD-DOCS-031/032 follow-up).
 - **`users.role` reconciliation** — the scalar in BD-DOCS-031 vs `roles` + `activeRole` in BD-DOCS-032.
-- **Repo-wide Node bump** to 22 (currently `.nvmrc=20`, CI Node 20) — deferred; `/server` pins its own.
+- **Repo-wide Node bump** to 22 — **resolved 2026-10-19** (was deferred while the repo pinned `.nvmrc=20` / CI Node 20; Node 20 reached end-of-life 2026-04-30). The root `.nvmrc` now pins 22 and `ci.yml` / `docs-site-ci.yml` read it via `node-version-file`; `/server` keeps its own `server/.nvmrc`.
 
 ## Relation to BD-DOCS-023/030/031/032
 

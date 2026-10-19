@@ -27,12 +27,12 @@ apt update && apt install -y curl git build-essential
 
 ## Node.js via nvm
 
-The repo uses **two different Node versions** managed by
-[nvm](https://github.com/nvm-sh/nvm):
+The repo uses **Node 22** everywhere, managed by
+[nvm](https://github.com/nvm-sh/nvm) and pinned in two `.nvmrc` files:
 
 | Area | Node version | Source |
 |------|-------------|--------|
-| Root project (PWA / scripts) | 20.x | `.nvmrc` (repo root) |
+| Root project (PWA / scripts / docs-site) | 22.x | `.nvmrc` (repo root) |
 | `server/` (Fastify backend) | 22.x | `server/.nvmrc` |
 
 ### Installing nvm
@@ -40,7 +40,6 @@ The repo uses **two different Node versions** managed by
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 # Restart shell, then:
-nvm install 20
 nvm install 22
 ```
 
@@ -48,7 +47,7 @@ nvm install 22
 
 ```bash
 # In repo root
-nvm use          # picks up root .nvmrc → Node 20
+nvm use          # picks up root .nvmrc → Node 22
 
 # In server/
 cd server
@@ -61,7 +60,7 @@ npm ci
 ## PWA / Root project
 
 ```bash
-# In repo root (Node 20)
+# In repo root (Node 22)
 node scripts/check.mjs
 node scripts/dispatcher.mjs
 ```
@@ -75,7 +74,7 @@ no build step. Scripts run directly with Node.
 
 ```bash
 cd docs-site
-npm ci           # Node 20 is fine here
+npm ci           # Node 22 (root .nvmrc)
 npm run check    # validate frontmatter, registry, navigation
 npm run build    # confirmed working
 ```
@@ -157,11 +156,11 @@ through Node directly. The CLI quirk is not a blocker.
 # 1. Enter proot Ubuntu
 proot-distro login ubuntu
 
-# 2. Root project checks (Node 20)
+# 2. Root project checks (Node 22)
 nvm use
 node scripts/check.mjs
 
-# 3. docs-site (Node 20)
+# 3. docs-site (Node 22)
 cd docs-site && npm ci && npm run build && cd ..
 
 # 4. Backend (Node 22)

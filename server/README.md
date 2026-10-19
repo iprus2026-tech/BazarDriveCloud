@@ -12,7 +12,7 @@
 
 ```bash
 cd server
-nvm use                 # Node 22 (server's own .nvmrc; repo .nvmrc=20 is untouched)
+nvm use                 # Node 22 (server's own .nvmrc; the repo root .nvmrc pins 22 too)
 cp .env.example .env    # set DATABASE_URL (Postgres 16); ALLOWED_ORIGIN in prod
 npm ci
 npm run migrate         # apply migrations/*.sql in order
