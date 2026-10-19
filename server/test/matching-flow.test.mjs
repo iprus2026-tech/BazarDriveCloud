@@ -31,6 +31,31 @@ async function mintSession(app, phone) {
   return (await post(app, '/api/v1/auth/otp/verify', { phone, code })).json(); // { token, user }
 }
 
+// Run fn() while recording every SQL text the offer transaction client executes; the pooled
+// client's query method is always restored, so nothing leaks into later requests.
+async function captureTxSql(app, fn) {
+  const originalTx = app.db.tx;
+  const sql = [];
+  app.db.tx = (work) => originalTx(async (client) => {
+    const originalQuery = client.query;
+    client.query = (...args) => {
+      const text = typeof args[0] === 'string' ? args[0] : args[0]?.text;
+      if (typeof text === 'string') sql.push(text);
+      return originalQuery.apply(client, args);
+    };
+    try {
+      return await work(client);
+    } finally {
+      client.query = originalQuery;
+    }
+  });
+  try {
+    return { result: await fn(), sql };
+  } finally {
+    app.db.tx = originalTx;
+  }
+}
+
 test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
   const pax = `+1581${String(process.pid).padStart(7, '0')}`;
@@ -58,10 +83,15 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
   // anonymous offer -> 401; a passenger-only session is refused before any order lookup
   // (BD-RIDE-AUTHORITY-01B-A) — for a real and for an unknown order alike.
   assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id })).statusCode, 401);
+  // The refusal happens before ANY orders query (no existence oracle, no lock taken): the tx only
+  // reads the caller's grants.
   for (const orderId of [order.id, 'order-nope']) {
-    const paxOffer = await post(app, '/api/v1/matching/offers', { orderId }, bearer(paxS));
+    const { result: paxOffer, sql } = await captureTxSql(app,
+      () => post(app, '/api/v1/matching/offers', { orderId }, bearer(paxS)));
     assert.equal(paxOffer.statusCode, 403, `passenger offer on ${orderId} is refused`);
     assert.equal(paxOffer.json().code, 'DRIVER_ROLE_REQUIRED');
+    assert.ok(sql.some((text) => /\bFROM\s+users\b/i.test(text)), `the grant lookup ran in the offer tx for ${orderId}`);
+    assert.equal(sql.some((text) => /\borders\b/i.test(text)), false, `passenger offer on ${orderId} must not query orders`);
   }
 
   // a granted driver: unknown order -> 404; the driver cannot offer on their OWN order (Codex #790).
