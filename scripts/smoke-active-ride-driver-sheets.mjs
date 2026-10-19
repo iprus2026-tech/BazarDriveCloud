@@ -324,8 +324,16 @@ expect('terminal stub never reopens openDriverCancelSheet',
   !/openDriverCancelSheet\s*\(/.test(canceledStub));
 expect('terminal stub never reopens openDriverProblemSheet',
   !/openDriverProblemSheet\s*\(/.test(canceledStub));
-const completedRenderer = functionBody(screen, 'renderCompleted') || '';
-expect('renderCompleted() body resolved', completedRenderer.length > 0);
+expect('renderCompleted() body resolved', (functionBody(screen, 'renderCompleted') || '').length > 0);
+// #1059 — the completed terminal is renderCompleted plus the receipt views it
+// delegates to: the server receipt pending / error views and openDriverEarnings,
+// which mounts the earnings sheet. Every guard below covers all of them.
+const completedViews = ['renderCompleted', 'renderServerReceipt', 'renderDriverReceiptPending',
+  'renderDriverReceiptError', 'openDriverEarnings'];
+for (const name of completedViews) {
+  expect(`completed terminal view ${name}() body resolved`, (functionBody(screen, name) || '').length > 0);
+}
+const completedRenderer = completedViews.map((name) => functionBody(screen, name) || '').join('\n');
 expect('completed renderer never mounts the cancel button',
   !/ar-cancel(?:-accepted)?\b/.test(completedRenderer));
 expect('completed renderer never mounts the no-show / problem buttons',
