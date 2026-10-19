@@ -122,10 +122,46 @@ expect('active_ride.js imports openDriverEarningsSheet from the sheets module',
   /import\s*\{[\s\S]*?openDriverEarningsSheet[\s\S]*?\}\s*from\s*'\.\/active_ride_driver_sheets\.js'/.test(screen));
 expect('active_ride.js reads the ?state= entry stage',
   /query\.get\('state'\)/.test(screen));
-expect('active_ride.js builds a mock earnings payload',
-  /function\s+buildDriverEarningsPayload\s*\(/.test(screen));
-expect('active_ride.js uses a fixed 12% commission + mock tip',
-  /commissionRate\s*=\s*0\.12/.test(screen) && /tip\s*=\s*120/.test(screen));
+// #1059 — the screen never computes money: the payload only formats the
+// canonical receipt (server-derived in backend-ON, the mock_api stand-in in
+// backend-OFF), and the finish button shows the agreed order price only.
+const screenCode = screen.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+const fnBody = (src, name) => {
+  const start = src.indexOf(`function ${name}(`);
+  if (start === -1) return '';
+  const open = src.indexOf('{', src.indexOf(')', start));
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
+  }
+  return '';
+};
+const payloadBody = fnBody(screenCode, 'buildDriverEarningsPayload');
+const inProgressBody = fnBody(screenCode, 'renderInProgress');
+const earningsOpenerBody = fnBody(screenCode, 'openDriverEarnings');
+expect('active_ride.js builds the earnings payload from the receipt',
+  /function\s+buildDriverEarningsPayload\s*\(\s*ride\s*,\s*receipt\s*\)/.test(screenCode) && payloadBody.length > 0);
+expect('the payload reads each amount from the receipt',
+  ['fare', 'commission', 'tip', 'net'].every((k) => new RegExp(`receipt\\.${k}\\b`).test(payloadBody)));
+expect('active_ride.js carries no client commission rate, mock tip or fare fallback',
+  !/0\.12\b/.test(screenCode) && !/'12%'/.test(screenCode) && !/commissionRate/.test(screenCode)
+  && !/\btip\s*[=:]\s*120\b/.test(screenCode) && !/\b1540\b/.test(screenCode) && !/1 540/.test(screenCode));
+expect('active_ride.js never reads the seed ride.price for money',
+  !/ride\.ride\?\.price/.test(screenCode) && !/ride\.ride\.price/.test(screenCode));
+expect('the finish button price is the agreed order.offerPrice, server-confirmed in backend-ON',
+  /const\s+finishPrice\s*=\s*\(\s*backendRide\s*\|\|\s*!isBackendEnabled\(\)\s*\)\s*\?\s*\(\s*ride\.order\?\.offerPrice\s*\|\|\s*''\s*\)\s*:\s*''/.test(inProgressBody)
+  && /Завершить\$\{finishPrice\s*\?/.test(inProgressBody));
+expect('the commission label shows a percent only when the payload carries one',
+  /Комиссия сервиса\$\{p\.commissionPctLabel\s*\?/.test(sheets));
+const serverReceiptBody = fnBody(screenCode, 'renderServerReceipt');
+const receiptErrorBody = fnBody(screenCode, 'renderDriverReceiptError');
+expect('the pending server receipt view always has an exit (timeout → retry view)',
+  /setTimeout\([\s\S]*?renderDriverReceiptError\([\s\S]*?DRIVER_RECEIPT_TIMEOUT_MS\s*\)/.test(serverReceiptBody)
+  && /role="status"/.test(fnBody(screenCode, 'renderDriverReceiptPending')));
+expect('the receipt error view offers «Повторить» and «К заказам» (→ /driver-map)',
+  /id="ar-receipt-retry"/.test(receiptErrorBody) && /id="ar-receipt-orders"/.test(receiptErrorBody)
+  && /go\('\/driver-map'\)/.test(receiptErrorBody) && /role="alert"/.test(receiptErrorBody));
 expect('renderCompleted mounts the sheet with state + payload',
   /openDriverEarningsSheet\(\s*root\s*,\s*\{[\s\S]*?state:\s*earningsState[\s\S]*?payload[\s\S]*?\}\s*\)/.test(screen));
 expect('the old inline completion card is gone',
@@ -154,10 +190,12 @@ for (const key of ['passengerName', 'passengerInitials', 'pickupLabel', 'distanc
 //    COMPLETED polish applies without a reload.
 expect('renderSheet re-syncs the map shell data-status without reload',
   /mapShell\.dataset\.status\s*=\s*ride\.status/.test(screen));
-// 3) History persists the same earnings the sheet displays — sourced from the
-//    payload, with the divergent (8%, no-tip) calc removed entirely.
-expect('history earnings are sourced from the sheet payload (net parity)',
-  /net:\s*payload\.net/.test(screen) && /buildDriverEarningsPayload\(ride\)/.test(screen));
+// 3) History persists the same earnings the sheet displays — both read the
+//    one receipt (#1059), with the divergent (8%, no-tip) calc removed entirely.
+expect('history earnings and the sheet payload are sourced from the same receipt (net parity)',
+  /net:\s*receipt\.net/.test(earningsOpenerBody)
+  && /buildDriverEarningsPayload\(\s*ride\s*,\s*receipt\s*\)/.test(earningsOpenerBody)
+  && /entry\.fare\s*=\s*formatRub\(\s*receipt\.fare\s*\)/.test(earningsOpenerBody));
 expect('the divergent calcEarnings helper is gone',
   !/function\s+calcEarnings\s*\(/.test(screen));
 

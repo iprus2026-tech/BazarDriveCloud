@@ -526,13 +526,30 @@ expect('B — mock_api exports sanitizeDriverReceipt + DEMO_DRIVER_RECEIPT + cle
 
 // ── C4. Caller-site COMPLETED gates: history writes only in COMPLETED ─
 {
-  // active_ride.js — saveDriverReceipt + saveRideHistoryEntry are
-  // called inside `renderCompleted`, which is reached only when
-  // `ride.status === RIDE_STATUS.COMPLETED` (renderSheet branch).
-  expect('C4 — driver renderCompleted calls saveDriverReceipt',
-    /renderCompleted[\s\S]{0,3000}saveDriverReceipt\s*\(/.test(driverActiveSrc));
-  expect('C4 — driver renderCompleted calls saveRideHistoryEntry',
-    /renderCompleted[\s\S]{0,3000}saveRideHistoryEntry\s*\(/.test(driverActiveSrc));
+  // active_ride.js (#1059):
+  // - the receipt is resolved from `renderCompleted`: the server request via
+  //   renderServerReceipt, or the backend-OFF mock stand-in;
+  // - the history row is saved by openDriverEarnings, which only those two
+  //   views call;
+  // - `renderCompleted` is reached only when `ride.status ===
+  //   RIDE_STATUS.COMPLETED` (renderSheet branch).
+  const driverCode = stripComments(driverActiveSrc);
+  const completedBody = stripComments(extractFunctionBody(driverActiveSrc, 'renderCompleted') || '');
+  const serverReceiptBody = stripComments(extractFunctionBody(driverActiveSrc, 'renderServerReceipt') || '');
+  const earningsBody = stripComments(extractFunctionBody(driverActiveSrc, 'openDriverEarnings') || '');
+  const calls = (src, name) => (src.match(new RegExp(`\\b${name}\\s*\\(`, 'g')) || []).length;
+  expect('C4 — driver renderCompleted resolves the receipt (server request or mock stand-in)',
+    calls(completedBody, 'renderServerReceipt') === 1 && calls(completedBody, 'resolveMockDriverReceipt') === 1
+    && calls(serverReceiptBody, 'requestServerDriverReceipt') === 1);
+  expect('C4 — the receipt writers are called nowhere else in active_ride.js',
+    calls(driverCode, 'resolveMockDriverReceipt') === 1 && calls(driverCode, 'requestServerDriverReceipt') === 1);
+  expect('C4 — driver openDriverEarnings saves the history row',
+    calls(earningsBody, 'saveRideHistoryEntry') === 1);
+  expect('C4 — openDriverEarnings is called only from renderCompleted / renderServerReceipt',
+    calls(driverCode, 'openDriverEarnings')
+      === 1 + calls(completedBody, 'openDriverEarnings') + calls(serverReceiptBody, 'openDriverEarnings'));
+  expect('C4 — saveRideHistoryEntry is called only from openDriverEarnings',
+    calls(driverCode, 'saveRideHistoryEntry') === 1);
   expect('C4 — driver renderSheet routes to renderCompleted only on RIDE_STATUS.COMPLETED',
     /ride\.status\s*===\s*RIDE_STATUS\.COMPLETED[\s\S]{0,200}renderCompleted/.test(driverActiveSrc));
   // active_ride_passenger.js — `persistHistory` lives inside

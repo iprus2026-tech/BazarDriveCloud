@@ -1147,11 +1147,14 @@ export function mergeFeedAndRideOrderPosts(feedPosts, rideOrderPosts) {
 
 // ── Driver ride receipts (BD-RIDE-HISTORY-D-01, issue #381) ───────────────
 // Canonical post-completion financial document for a driver's completed
-// ride. The driver earnings flow (active_ride.js → buildDriverEarningsPayload)
-// computes `net` exactly ONCE and persists this object. Ride history, Driver
-// payouts and the Trip receipt screen all READ this shape and only FORMAT it
-// — they never recompute fare / commission / tip / net. No backend, no real
-// payments, no balances, no tax / accounting math.
+// ride. The amounts are never computed by a screen (#1059):
+// - backend-ON: the server derives them (BD-RIDE-AUTHORITY-01B-C) and
+//   requestServerDriverReceipt stores the POST /history/receipts response;
+// - backend-OFF: resolveMockDriverReceipt stands in for the server, applying
+//   the same rule.
+// Ride history, Driver payouts and the Trip receipt screen all READ this shape
+// and only FORMAT it — they never recompute fare / commission / tip / net. No
+// real payments, no balances, no tax / accounting math.
 //
 // Shape (the single source of truth for every completed-ride money surface):
 //   { tripId, completedAt, fare, commission, tip, net, paymentMode, status }
@@ -1229,29 +1232,79 @@ export function sanitizeDriverReceipt(input) {
   return { tripId, completedAt, fare, commission, tip, net, paymentMode, status: 'completed' };
 }
 
-// Upsert a canonical receipt by tripId (newest write wins). Returns the
-// sanitized receipt that was stored, or null when the input was unusable.
+// Upsert a canonical receipt by tripId in the LOCAL store (newest write wins).
+// Returns the sanitized receipt that was stored, or null when the input was
+// unusable. Local only: since #1059 the server receipt is written by
+// requestServerDriverReceipt, which never sends client amounts.
 export function saveDriverReceipt(receipt) {
   const clean = sanitizeDriverReceipt(receipt);
   if (!clean) return null;
   const list = loadDriverReceiptsRaw().filter((r) => toReceiptTripId(r.tripId) !== clean.tripId);
   list.unshift(clean);
   persistDriverReceipts(list);
-  // #784 CUT-6 — also write the receipt to the backend (POST /history/receipts). The amounts are
-  // already sanitized integers with commission signed negative — exactly the backend's shape. The
-  // server enforces driver-only + COMPLETED + write-once, so a 403/409 (non-driver / not-completed /
-  // duplicate) is EXPECTED and swallowed: the local receipt is the user-facing truth. OFF: no POST.
-  if (isBackendEnabled()) {
-    submitReceiptToBackend({
-      tripId: clean.tripId,
-      fare: clean.fare,
-      commission: clean.commission,
-      tip: clean.tip,
-      net: clean.net,
-      paymentMode: clean.paymentMode,
-    }).catch(() => {});
-  }
   return clean;
+}
+
+// Backend-OFF stand-in for the server's DEFAULT_RECEIPT_COMMISSION_PERCENT
+// (server/src/config.js). Demo only — backend-ON amounts come from the server.
+// smoke-driver-receipt-no-drift pins the two values equal.
+export const MOCK_RECEIPT_COMMISSION_PERCENT = 12;
+
+const roundHalfUpRubles = (value) => Math.floor(value + 0.5 + 1e-9);
+
+// A fare basis is a number or a price label such as '950 ₽' / '1 480 ₽' / '763,5 ₽'.
+function parseFareBasis(value) {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return Number.NaN;
+  const cleaned = value.replace(/[\s  ₽]/g, '').replace(',', '.');
+  return /^\d+(\.\d+)?$/.test(cleaned) ? Number(cleaned) : Number.NaN;
+}
+
+// Mirror of server/src/domain/receipt-amounts.js computeReceiptAmounts for the
+// backend-OFF demo: fare = the agreed price rounded half up, commission =
+// -round(fare * pct / 100) (never -0), tip = 0, net = fare + commission + tip.
+// Returns null when there is no positive basis (the server's 409
+// RECEIPT_FARE_UNKNOWN).
+export function deriveMockReceiptAmounts(fareBasis) {
+  const basis = parseFareBasis(fareBasis);
+  if (!Number.isFinite(basis) || basis <= 0) return null;
+  const fare = roundHalfUpRubles(basis);
+  const commission = 0 - roundHalfUpRubles((fare * MOCK_RECEIPT_COMMISSION_PERCENT) / 100);
+  const tip = 0;
+  return { fare, commission, tip, net: fare + commission + tip };
+}
+
+// Backend-OFF receipt for a completed demo ride. Write-once like the server:
+// an existing local receipt is returned as stored; otherwise the amounts come
+// from deriveMockReceiptAmounts(fareBasis). Returns null without a basis.
+// Never POSTs.
+export function resolveMockDriverReceipt({ tripId, completedAt, paymentMode, fareBasis } = {}) {
+  const existing = getReceipt(tripId);
+  if (existing) return existing;
+  const amounts = deriveMockReceiptAmounts(fareBasis);
+  if (!amounts) return null;
+  return saveDriverReceipt({ tripId, completedAt, paymentMode, status: 'completed', ...amounts });
+}
+
+// Backend-ON receipt for a server-confirmed completed ride (#1059). Sends
+// only the trip id and payment mode: the server derives every amount, and a
+// repeat POST returns the stored receipt. The response is persisted locally
+// as-is, replacing any older client-computed receipt for the trip. Throws
+// ApiError: the server's error (e.g. 409 RECEIPT_FARE_UNKNOWN), NETWORK, or
+// BAD_RESPONSE when the receipt is malformed.
+export async function requestServerDriverReceipt({ tripId, paymentMode } = {}) {
+  if (!isBackendEnabled()) {
+    throw new ApiError({ status: 0, code: 'BACKEND_DISABLED', retryable: false, message: 'backend is disabled' });
+  }
+  const r = await submitReceiptToBackend({ tripId, paymentMode });
+  const srv = r && r.receipt;
+  const clean = srv && typeof srv === 'object'
+    ? sanitizeDriverReceipt({ ...srv, tripId: srv.tripId || tripId })
+    : null;
+  if (!clean || clean.tripId !== toReceiptTripId(tripId)) {
+    throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed receipt response' });
+  }
+  return saveDriverReceipt(clean);
 }
 
 // Read one receipt by tripId. Persisted receipts win; the canonical demo
@@ -1361,12 +1414,13 @@ export async function getReceiptResolved(tripId) {
   return getReceipt(tripId);
 }
 
-// RECEIPT WRITE — POST the driver's write-once earnings receipt. Amounts are already signed integers.
-export async function submitReceiptToBackend({ tripId, fare, commission, tip, net, paymentMode }) {
+// RECEIPT WRITE — POST the driver's write-once earnings receipt. No amounts: the server derives
+// fare / commission / tip / net (BD-RIDE-AUTHORITY-01B-C) and returns { receipt }.
+export async function submitReceiptToBackend({ tripId, paymentMode }) {
   if (isBackendEnabled()) {
     return apiFetch('/history/receipts', {
       method: 'POST',
-      body: { tripId, fare, commission, tip, net, paymentMode },
+      body: { tripId, paymentMode },
     });
   }
   return null;

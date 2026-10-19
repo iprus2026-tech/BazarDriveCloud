@@ -38,6 +38,7 @@ expect('fixture helper resolved', fixtureHelper.length > 0);
 for (const forbidden of [
   'localStorage', 'loadCanonicalActiveRide', 'loadDriverHandoffSnapshot', 'findLatestHandedOffOrderTripId',
   'getRideFromBackend', 'pollRide', 'patchRideStatus', 'saveDriverReceipt', 'saveRideHistoryEntry',
+  'requestServerDriverReceipt', 'resolveMockDriverReceipt',
 ]) {
   expect(`fixture helper does not use ${forbidden}`, !fixtureHelper.includes(forbidden));
 }
@@ -122,7 +123,8 @@ expect('fixture retry is deterministic and network-free',
   retry.includes('DRIVER_RIDE_READ_STATE.LOADING')
     && retry.includes('DRIVER_RIDE_READ_STATE.ERROR')
     && retry.includes('DRIVER_RIDE_FIXTURE_RETRY_MS'));
-for (const writer of ['patchRideStatus', 'updateActiveRideStatus', 'saveActiveRide', 'saveDriverReceipt', 'saveRideHistoryEntry']) {
+for (const writer of ['patchRideStatus', 'updateActiveRideStatus', 'saveActiveRide', 'saveDriverReceipt', 'saveRideHistoryEntry',
+  'requestServerDriverReceipt', 'resolveMockDriverReceipt']) {
   expect(`retry does not call writer ${writer}`, !retry.includes(writer));
 }
 

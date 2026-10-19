@@ -4,11 +4,17 @@
 //
 // BD-RIDE-D-09 — Driver Earnings / Completion Polish (issue #376). The
 // completed driver flow no longer renders an inline completion card: it
-// computes a mock earnings payload (12% commission + tip, net == balance
-// delta) and mounts the seven-state DriverEarningsSheet overlay from
+// mounts the seven-state DriverEarningsSheet overlay from
 // active_ride_driver_sheets.js over the completed map shell. The ?state=
 // query selects the entry stage (summary | cash | noncash | shift | loading
 // | closed | empty); ride history is still persisted exactly as before.
+//
+// #1059 — this screen never computes money. The earnings amounts come from
+// the canonical receipt:
+// - a server-confirmed ride POSTs { tripId, paymentMode } and renders the
+//   server's receipt;
+// - backend-ON without a server ride shows no amounts;
+// - backend-OFF uses the mock_api stand-in for the server rule.
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
@@ -35,8 +41,8 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import {
   findLatestHandedOffOrderTripId,
   updateTripStatus,
-  getReceipt,
-  saveDriverReceipt,
+  requestServerDriverReceipt,
+  resolveMockDriverReceipt,
   getRideFromBackend,
   patchRideStatus,
   pollRide,
@@ -106,6 +112,9 @@ const DRIVER_RIDE_READ_STATE = Object.freeze({
 });
 const DRIVER_RIDE_FIXTURES = new Set(Object.values(DRIVER_RIDE_READ_STATE));
 const DRIVER_RIDE_READ_TIMEOUT_MS = 12_000;
+// #1059 — after this long without a receipt response the pending view gives
+// way to the retry view (a late response is still accepted).
+const DRIVER_RECEIPT_TIMEOUT_MS = 12_000;
 const DRIVER_RIDE_POLL_MS = 2_500;
 const DRIVER_RIDE_POLL_TIMEOUT_MS = 12_000;
 const DRIVER_RIDE_FIXTURE_RETRY_MS = 400;
@@ -389,12 +398,16 @@ function renderDriverEmpty() {
   return root;
 }
 
-function buildDriverEarningsPayload(ride) {
-  const fare = parseMoney(ride.ride?.price) || 1540;
-  const commissionRate = 0.12;
-  const commissionAmount = Math.round(fare * commissionRate);
-  const tip = 120;
-  const net = fare - commissionAmount + tip;
+// The earnings sheet payload. Every amount is read from the canonical receipt
+// (server-derived in backend-ON, the mock_api stand-in in backend-OFF) and
+// only formatted here (#1059). No receipt → empty money labels, which the
+// sheet renders as its «Нет данных о доходе» stage. The balance and shift
+// stats are still demo values (#1070).
+function buildDriverEarningsPayload(ride, receipt) {
+  const money = receipt
+    ? { fare: receipt.fare, commission: receipt.commission, tip: receipt.tip, net: receipt.net }
+    : null;
+  const commissionAmount = money ? Math.abs(money.commission) : null;
   const balance = 19195;
   const stats = [
     { val: ride.ride?.todayEarnings ? String(ride.ride.todayEarnings) : '4 720 ₽', lbl: 'Сегодня' },
@@ -403,19 +416,17 @@ function buildDriverEarningsPayload(ride) {
   ];
   const tripNumber = ride.order?.number;
   return {
-    fare,
-    commissionRate,
+    fare: money ? money.fare : null,
     commissionAmount,
-    tip,
-    net,
-    netLabel: formatRub(net),
-    netAria: `${net} рублей`,
-    fareLabel: formatRub(fare),
-    commissionPctLabel: '12%',
-    commissionAmountLabel: `−${formatRub(commissionAmount)}`,
-    tipLabel: `+${formatRub(tip)}`,
+    tip: money ? money.tip : null,
+    net: money ? money.net : null,
+    netLabel: money ? formatRub(money.net) : '',
+    netAria: money ? `${money.net} рублей` : '',
+    fareLabel: money ? formatRub(money.fare) : '',
+    commissionAmountLabel: money ? `−${formatRub(commissionAmount)}` : '',
+    tipLabel: money ? `+${formatRub(money.tip)}` : '',
     balanceLabel: formatRub(balance),
-    balanceDeltaLabel: `+${formatRub(net)}`,
+    balanceDeltaLabel: money ? `+${formatRub(money.net)}` : '',
     dropoffLabel: ride.route?.dropoffLabel || 'Точка назначения',
     stats,
     passengerName: ride.passenger?.name || '',
@@ -524,6 +535,8 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   let fixtureRetryTimer = null;
   let destroyed = false;
   let hasMounted = false;
+  // #1059 — the completed trip's server receipt request (see renderServerReceipt).
+  let driverReceiptRequest = null;
 
   function currentViewIsUsable() {
     if (destroyed || !isCurrent()) return false;
@@ -1545,7 +1558,10 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   }
 
   function renderInProgress() {
-    const finishPrice = ride.ride?.price || '';
+    // #1059 — the agreed price only, never a seed or demo fallback: in
+    // backend-ON the server-confirmed order.offerPrice (none → no price), in
+    // backend-OFF the demo order's.
+    const finishPrice = (backendRide || !isBackendEnabled()) ? (ride.order?.offerPrice || '') : '';
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Везёте пассажира</div>${optionalRouteText('active-ride__sheet-sub', ride.route?.dropoffLabel)}</div>${pickupEtaHtml(ride.route?.etaToDestination, true)}</div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-finish">Завершить${finishPrice ? ` · ${escapeHtml(finishPrice)}` : ''}</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-stop">+ Остановка</button><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-issue">Проблема</button></div></div>`;
     sheet.querySelector('#ar-nav-btn')?.addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-finish').addEventListener('click', () => commitDriverCompletion());
@@ -1554,30 +1570,112 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     bindPassengerActions();
   }
 
+  // #1059 — the receipt source:
+  // - server-confirmed ride: the server's receipt (renderServerReceipt);
+  // - backend-ON without a server ride: none, so no amounts are shown;
+  // - backend-OFF: the mock_api stand-in for the server rule.
   function renderCompleted() {
-    const payload = buildDriverEarningsPayload(ride);
     const paymentMode = earningsState === 'cash' ? 'cash' : 'noncash';
-    const receipt = getReceipt(ride.tripId) || saveDriverReceipt({
-      tripId:      ride.tripId,
+    if (backendRide) {
+      renderServerReceipt(paymentMode);
+      return;
+    }
+    const receipt = isBackendEnabled() ? null : resolveMockDriverReceipt({
+      tripId: ride.tripId,
       completedAt: ride.timestamps?.completedAt || new Date().toISOString(),
-      fare:        payload.fare,
-      commission:  -payload.commissionAmount,
-      tip:         payload.tip,
-      net:         payload.net,
       paymentMode,
-      status:      'completed',
+      fareBasis: ride.order?.offerPrice,
     });
+    openDriverEarnings(receipt);
+  }
+
+  // One receipt request per completed trip on this screen:
+  // - a re-render while it is pending keeps the pending view;
+  // - a failed request keeps its error view until «Повторить»;
+  // - a received receipt is reused without another POST;
+  // - a late result after the screen or the trip changed is dropped.
+  // State: driverReceiptRequest, declared with the other screen state.
+  function ownsDriverReceiptRequest(request) {
+    return driverReceiptRequest === request && !destroyed && currentViewIsUsable()
+      && ride.tripId === request.tripId && ride.status === RIDE_STATUS.COMPLETED;
+  }
+
+  function renderServerReceipt(paymentMode) {
+    const current = driverReceiptRequest;
+    if (current && current.tripId === ride.tripId) {
+      if (current.receipt) openDriverEarnings(current.receipt);
+      else if (current.error) renderDriverReceiptError(current, paymentMode);
+      else renderDriverReceiptPending();
+      return;
+    }
+    const request = { tripId: ride.tripId, receipt: null, error: null };
+    driverReceiptRequest = request;
+    renderDriverReceiptPending();
+    // No response in time → the retry view; a late response is still taken
+    // while this request owns the screen (no «Повторить» yet).
+    const timeout = setTimeout(() => {
+      if (!ownsDriverReceiptRequest(request) || request.receipt || request.error) return;
+      request.error = { code: 'TIMEOUT' };
+      renderDriverReceiptError(request, paymentMode);
+    }, DRIVER_RECEIPT_TIMEOUT_MS);
+    requestServerDriverReceipt({ tripId: request.tripId, paymentMode }).then(
+      (receipt) => {
+        clearTimeout(timeout);
+        if (!ownsDriverReceiptRequest(request)) return;
+        request.error = null;
+        request.receipt = receipt;
+        openDriverEarnings(receipt);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        if (!ownsDriverReceiptRequest(request)) return;
+        request.error = error || new Error('receipt request failed');
+        renderDriverReceiptError(request, paymentMode);
+      },
+    );
+  }
+
+  function renderDriverReceiptPending() {
+    sheet.setAttribute('aria-busy', 'true');
+    sheet.innerHTML = '<div class="active-ride__sheet-head"><div class="active-ride__sheet-title">Поездка завершена</div></div><div class="active-ride__stub" role="status" aria-live="polite">Получаем итог поездки…</div>';
+  }
+
+  function renderDriverReceiptError(request, paymentMode) {
+    sheet.setAttribute('aria-busy', 'false');
+    const body = request.error && request.error.code === 'RECEIPT_FARE_UNKNOWN'
+      ? 'Сервер не смог рассчитать итог: у поездки нет согласованной цены.'
+      : 'Не удалось получить итог поездки. Проверьте соединение и попробуйте ещё раз.';
+    const hadFocus = !document.activeElement || document.activeElement === document.body
+      || sheet.contains(document.activeElement);
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-title">Поездка завершена</div></div><div class="active-ride__stub" role="alert">${escapeHtml(body)}</div><div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-receipt-retry">Повторить</button><button type="button" class="bd-btn ghost active-ride__btn-primary" id="ar-receipt-orders">К заказам</button></div>`;
+    const retry = sheet.querySelector('#ar-receipt-retry');
+    retry.addEventListener('click', () => {
+      if (driverReceiptRequest !== request) return;
+      driverReceiptRequest = null;
+      renderServerReceipt(paymentMode);
+    });
+    sheet.querySelector('#ar-receipt-orders').addEventListener('click', () => go('/driver-map'));
+    if (hadFocus) retry.focus({ preventScroll: true });
+  }
+
+  function openDriverEarnings(receipt) {
+    sheet.setAttribute('aria-busy', 'false');
+    const payload = buildDriverEarningsPayload(ride, receipt);
     const entry = buildDriverHistoryEntry(ride, {
       receipt,
-      earnings: {
-        gross: payload.fare,
-        commissionAmount: payload.commissionAmount,
-        net: payload.net,
-        commissionLabel: payload.commissionPctLabel,
-        tip: payload.tip,
-      },
+      earnings: receipt ? {
+        gross: receipt.fare,
+        commissionAmount: Math.abs(receipt.commission),
+        net: receipt.net,
+        tip: receipt.tip,
+      } : null,
     });
-    if (entry) saveRideHistoryEntry(entry);
+    if (entry) {
+      // The history fare is the receipt's, never the seed's ride.price.
+      if (receipt) entry.fare = formatRub(receipt.fare);
+      else if (isBackendEnabled()) entry.fare = null;
+      saveRideHistoryEntry(entry);
+    }
     sheet.innerHTML = '';
     openDriverEarningsSheet(root, {
       state: earningsState,

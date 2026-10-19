@@ -1,18 +1,23 @@
 // BD-RIDE-HISTORY-D-01 — no-drift guard for the driver completed-ride receipt
 // (issue #381).
 //
-// The completed driver earnings flow computes `net` exactly ONCE
-// (active_ride.js → buildDriverEarningsPayload) and persists ONE canonical
-// receipt object via mock_api.saveDriverReceipt. Ride history, Driver payouts
-// and the /receipt screen must only READ that stored object and FORMAT it —
-// never recompute fare / commission / tip / net. A future refactor could
-// silently re-fork the math (a second commission rate, an inline subtraction
-// in a card, a recomputed net in payouts) without tripping check.mjs.
+// The completed driver flow persists ONE canonical receipt object, and no
+// screen computes its amounts (#1059):
+// - backend-ON: the server derives them; mock_api.requestServerDriverReceipt
+//   POSTs only { tripId, paymentMode } and stores the response;
+// - backend-OFF: mock_api.resolveMockDriverReceipt applies the same rule,
+//   with its commission pinned to the server default.
+// Ride history, Driver payouts and the /receipt screen must only READ that
+// stored object and FORMAT it — never recompute fare / commission / tip / net.
+// A future refactor could silently re-fork the math (a second commission rate,
+// an inline subtraction in a card, a recomputed net in payouts) without
+// tripping check.mjs.
 //
-// This guard mixes a small BEHAVIOURAL round-trip (the receipt store really
-// persists and reads back the same net) with STATIC cross-surface assertions
-// (every read surface reads the receipt and carries no inline arithmetic on
-// the money fields). No browser, no Mapbox, no backend, no network.
+// This guard mixes small BEHAVIOURAL round-trips with STATIC cross-surface
+// assertions. The round-trips cover the receipt store, the mock rule, and the
+// server request against a stubbed fetch. The static checks confirm every read
+// surface reads the receipt and carries no inline arithmetic on the money
+// fields. No browser, no Mapbox, no backend, no network.
 
 import fs from 'node:fs';
 
@@ -123,7 +128,7 @@ expect('buildDriverHistoryEntry carries the receipt object',
   historyEntry && historyEntry.receipt && historyEntry.receipt.net === saved.net);
 
 // THE no-drift invariant: one net flows unchanged through every read surface.
-const sheetNet = 1475; // single computation source (buildDriverEarningsPayload)
+const sheetNet = 1475; // the stored receipt's net, which the sheet payload only formats
 expect('no-drift: sheet.net === receipt.net === payoutRow.net === historyRow.net',
   sheetNet === saved.net
   && saved.net === got.net
@@ -141,9 +146,10 @@ expect('demo receipt 48-321 still listed', api.listDriverReceipts().some((r) => 
 
 // ── 0a. Idempotent COMPLETED rerender preserves cash (PR #382, Codex #1) ──
 // A live cash completion saves a cash receipt. Reopening COMPLETED without
-// ?state=cash recomputes paymentMode='noncash' — but renderCompleted now reads
-// `getReceipt(tripId) || saveDriverReceipt(...)`, so an existing receipt is
-// preserved verbatim and never flipped to noncash. Mirror that exact guard.
+// ?state=cash resolves paymentMode='noncash'. The backend-OFF resolver is
+// write-once like the server, so the existing receipt is returned verbatim and
+// never flipped to noncash. (Backend-ON: the server returns its stored
+// receipt — see 0c.)
 const liveTripId = 'trip_cash_rerender_demo';
 api.saveDriverReceipt({
   tripId: liveTripId,
@@ -151,18 +157,13 @@ api.saveDriverReceipt({
   fare: 1540, commission: -185, tip: 120, net: 1475,
   paymentMode: 'cash', status: 'completed',
 });
-// Rerender guard: the second render computes noncash but must NOT overwrite.
-const recomputedNoncash = {
-  tripId: liveTripId,
-  completedAt: '2026-06-04T10:05:00.000Z',
-  fare: 1540, commission: -185, tip: 120, net: 1475,
-  paymentMode: 'noncash', status: 'completed',
-};
-const preserved = api.getReceipt(liveTripId) || api.saveDriverReceipt(recomputedNoncash);
+const preserved = api.resolveMockDriverReceipt({
+  tripId: liveTripId, completedAt: '2026-06-04T10:05:00.000Z', paymentMode: 'noncash', fareBasis: '950 ₽',
+});
 expect('cash receipt stays cash after rerender without ?state=cash',
-  preserved && preserved.paymentMode === 'cash');
+  preserved && preserved.paymentMode === 'cash' && preserved.net === 1475);
 expect('idempotent rerender keeps the persisted cash receipt intact',
-  api.getReceipt(liveTripId)?.paymentMode === 'cash');
+  api.getReceipt(liveTripId)?.paymentMode === 'cash' && api.getReceipt(liveTripId)?.net === 1475);
 
 // ── 0b. Auth boundary clears driver receipts (PR #382, Codex #2) ─────────
 // A persisted receipt must not survive a local logout / session reset.
@@ -181,20 +182,111 @@ expect('clearUserScopedStorage() drops the persisted store entirely',
   !api.listDriverReceipts().some((r) => r.tripId === 'trip_boundary_demo'));
 store.clear();
 
-// ── 1. Single computation source in the completed flow ───────
+// ── 0c. #1059 — the server rule, its backend-OFF mirror, and the ON request ──
+// Backend-OFF: mock_api applies the server rule. The fare is the agreed price
+// rounded half up, commission = -round(fare * pct / 100), tip = 0, and
+// net = fare + commission + tip.
+expect('mock_api exports the receipt resolvers',
+  ['deriveMockReceiptAmounts', 'resolveMockDriverReceipt', 'requestServerDriverReceipt']
+    .every((fn) => typeof api[fn] === 'function'));
+const mockAmounts = (basis) => api.deriveMockReceiptAmounts(basis);
+expect('mock rule: 950 ₽ → 950 / −114 / 0 / 836',
+  JSON.stringify(mockAmounts('950 ₽')) === JSON.stringify({ fare: 950, commission: -114, tip: 0, net: 836 }));
+expect('mock rule: 763 ₽ → 763 / −92 / 0 / 671 (the server result for the E2E ride)',
+  JSON.stringify(mockAmounts('763 ₽')) === JSON.stringify({ fare: 763, commission: -92, tip: 0, net: 671 }));
+expect('mock rule: grouped labels parse (1 480 ₽ with a plain or no-break space)',
+  mockAmounts('1 480 ₽')?.fare === 1480 && mockAmounts('1 480 ₽')?.fare === 1480
+  && mockAmounts('1 480 ₽')?.commission === -178);
+expect('mock rule: a fractional basis rounds half up (763,5 ₽ → 764 / −92 / 0 / 672)',
+  JSON.stringify(mockAmounts('763,5 ₽')) === JSON.stringify({ fare: 764, commission: -92, tip: 0, net: 672 }));
+expect('mock rule: no positive basis → null (the server\'s RECEIPT_FARE_UNKNOWN)',
+  [null, undefined, '', '0 ₽', 0, -5, 'abc', '—'].every((b) => mockAmounts(b) === null));
+const serverConfig = read('../server/src/config.js');
+const serverDefault = Number((serverConfig.match(/export\s+const\s+DEFAULT_RECEIPT_COMMISSION_PERCENT\s*=\s*(\d+(?:\.\d+)?)\s*;/) || [])[1]);
+expect('MOCK_RECEIPT_COMMISSION_PERCENT equals the server DEFAULT_RECEIPT_COMMISSION_PERCENT',
+  Number.isFinite(serverDefault) && api.MOCK_RECEIPT_COMMISSION_PERCENT === serverDefault,
+  `mock ${api.MOCK_RECEIPT_COMMISSION_PERCENT} vs server ${serverDefault}`);
+
+// The fetch stub records every request; the OFF resolver must never reach it.
+const realFetch = globalThis.fetch;
+const requests = [];
+let nextResponse = null;
+globalThis.fetch = async (url, init = {}) => {
+  requests.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined });
+  const { status, payload } = nextResponse;
+  return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(payload) };
+};
+try {
+  const offReceipt = api.resolveMockDriverReceipt({
+    tripId: 'trip_off_demo', completedAt: '2026-10-19T10:00:00.000Z', paymentMode: 'noncash', fareBasis: '950 ₽',
+  });
+  expect('backend-OFF resolver derives and persists the mock receipt',
+    offReceipt && offReceipt.fare === 950 && offReceipt.net === 836 && api.getReceipt('trip_off_demo')?.net === 836);
+  expect('backend-OFF resolver without a basis returns null and stores nothing',
+    api.resolveMockDriverReceipt({ tripId: 'trip_off_nobasis', paymentMode: 'noncash', fareBasis: null }) === null
+    && api.getReceipt('trip_off_nobasis') === null);
+  expect('backend-OFF resolver never calls fetch', requests.length === 0);
+
+  // Backend-ON: POST only { tripId, paymentMode }; store the server's receipt.
+  globalThis.__BD_API_BASE__ = 'https://api.example.invalid';
+  api.saveDriverReceipt({ // an older client-computed receipt (the E2E's demo amounts)
+    tripId: 'trip_on_e2e', completedAt: '2026-10-19T10:00:00.000Z',
+    fare: 950, commission: -114, tip: 120, net: 956, paymentMode: 'noncash',
+  });
+  nextResponse = { status: 201, payload: { receipt: {
+    tripId: 'trip_on_e2e', fare: 763, commission: -92, tip: 0, net: 671,
+    paymentMode: 'noncash', status: 'completed', completedAt: '2026-10-19T10:01:00.000Z',
+  } } };
+  const onReceipt = await api.requestServerDriverReceipt({ tripId: 'trip_on_e2e', paymentMode: 'noncash' });
+  const [req] = requests;
+  expect('backend-ON POSTs /api/v1/history/receipts once',
+    requests.length === 1 && req.method === 'POST' && req.url.endsWith('/api/v1/history/receipts'));
+  expect('backend-ON receipt body carries only tripId + paymentMode (no client amounts)',
+    req && JSON.stringify(Object.keys(req.body).sort()) === JSON.stringify(['paymentMode', 'tripId'])
+    && req.body.tripId === 'trip_on_e2e', JSON.stringify(req && req.body));
+  expect('backend-ON returns the server receipt',
+    onReceipt && onReceipt.fare === 763 && onReceipt.commission === -92 && onReceipt.tip === 0 && onReceipt.net === 671);
+  expect('backend-ON replaces the older local receipt with the server one',
+    api.getReceipt('trip_on_e2e')?.net === 671 && api.getReceipt('trip_on_e2e')?.tip === 0);
+
+  const rejects = async (fn) => { try { await fn(); return null; } catch (err) { return err; } };
+  nextResponse = { status: 409, payload: { error: 'no server fare basis for this ride', code: 'RECEIPT_FARE_UNKNOWN', retryable: false } };
+  const noBasis = await rejects(() => api.requestServerDriverReceipt({ tripId: 'trip_on_nobasis', paymentMode: 'noncash' }));
+  expect('backend-ON 409 RECEIPT_FARE_UNKNOWN rejects with the server code and stores nothing',
+    noBasis && noBasis.code === 'RECEIPT_FARE_UNKNOWN' && api.getReceipt('trip_on_nobasis') === null);
+  nextResponse = { status: 201, payload: { receipt: { tripId: 'trip_on_bad', fare: 763, commission: -92, tip: 0 } } };
+  const malformed = await rejects(() => api.requestServerDriverReceipt({ tripId: 'trip_on_bad', paymentMode: 'noncash' }));
+  expect('backend-ON malformed receipt rejects BAD_RESPONSE and stores nothing',
+    malformed && malformed.code === 'BAD_RESPONSE' && api.getReceipt('trip_on_bad') === null);
+} finally {
+  delete globalThis.__BD_API_BASE__;
+  globalThis.fetch = realFetch;
+  store.clear();
+}
+
+// ── 1. No money math in the completed flow (#1059) ───────────
 const activeRide = read('../public/src/screens/active_ride.js');
-expect('net is computed once via buildDriverEarningsPayload',
-  /function\s+buildDriverEarningsPayload\s*\(/.test(activeRide));
-expect('renderCompleted persists the canonical receipt via saveDriverReceipt',
-  /saveDriverReceipt\(\s*\{/.test(activeRide));
-expect('receipt net is sourced from the single payload (net: payload.net)',
-  /net:\s*payload\.net/.test(activeRide));
-expect('receipt commission is the signed payload commission',
-  /commission:\s*-payload\.commissionAmount/.test(activeRide));
+const mockApiSrc = read('../public/src/mock_api.js');
+const completedFn = functionBody(activeRide, 'renderCompleted') || '';
+const serverReceiptFn = functionBody(activeRide, 'renderServerReceipt') || '';
+const submitFn = functionBody(mockApiSrc, 'submitReceiptToBackend') || '';
+expect('the sheet payload formats the receipt (buildDriverEarningsPayload(ride, receipt))',
+  /function\s+buildDriverEarningsPayload\s*\(\s*ride\s*,\s*receipt\s*\)/.test(activeRide));
+expect('renderCompleted resolves the receipt: server for a server ride, the mock stand-in in backend-OFF',
+  /if\s*\(\s*backendRide\s*\)/.test(completedFn) && /renderServerReceipt\(/.test(completedFn)
+  && /isBackendEnabled\(\)\s*\?\s*null\s*:\s*resolveMockDriverReceipt\(/.test(completedFn)
+  && /requestServerDriverReceipt\(/.test(serverReceiptFn));
+expect('the backend-OFF mock basis is the agreed order price',
+  /fareBasis:\s*ride\.order\?\.offerPrice/.test(completedFn));
+expect('active_ride.js never writes a receipt with its own amounts',
+  !/saveDriverReceipt\s*\(/.test(activeRide) && !/\bfare:\s*payload\./.test(activeRide)
+  && !/commission:\s*-?payload\./.test(activeRide));
 expect('completed flow records the payment mode',
-  /paymentMode/.test(activeRide) && /'cash'/.test(activeRide) && /'noncash'/.test(activeRide));
-expect('COMPLETED rerender is idempotent (getReceipt(tripId) || saveDriverReceipt)',
-  /getReceipt\(ride\.tripId\)\s*\|\|\s*saveDriverReceipt\(/.test(activeRide));
+  /paymentMode/.test(completedFn) && /'cash'/.test(completedFn) && /'noncash'/.test(completedFn));
+expect('a COMPLETED rerender reuses the server receipt instead of POSTing again',
+  /if\s*\(\s*current\.receipt\s*\)\s*openDriverEarnings\(\s*current\.receipt\s*\)/.test(serverReceiptFn));
+expect('submitReceiptToBackend posts only { tripId, paymentMode }',
+  /body:\s*\{\s*tripId,\s*paymentMode\s*\}/.test(submitFn) && !/\b(fare|commission|tip|net)\b/.test(submitFn));
 
 // ── 2. Receipt screen reads + formats only (states C/D/E/F) ──
 const receipt = read('../public/src/screens/trip_receipt.js');
