@@ -15,7 +15,7 @@ jobs:
           fetch-depth: 0           # full history so the precache-drift guard can diff vs the PR base
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version-file: .nvmrc
       - name: Static checks (CSP guards, JSON, JS syntax)
         run: node scripts/check.mjs
       - name: Precache-drift guard (a precached file changed ⇒ sw.js VERSION must bump)

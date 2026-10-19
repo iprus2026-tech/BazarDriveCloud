@@ -73,8 +73,8 @@ const location = {
 };
 globalThis.location = location;
 // Node >=21 exposes a global `navigator` (a getter-only binding — replacing
-// the object outright throws, hence setting the property instead), but CI's
-// pinned Node 20 (see .github/workflows/ci.yml) has no global navigator at
+// the object outright throws, hence setting the property instead), but Node 20
+// (CI's pin before the repo-wide Node 22 bump) has no global navigator at
 // all, so a bare `navigator.onLine = …` throws ReferenceError there. Create
 // the object only if missing, so this works on both.
 if (!globalThis.navigator) globalThis.navigator = {};

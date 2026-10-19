@@ -4,7 +4,7 @@ docType: decision-record
 title: "Backend Home & Stack — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-09-27
+revision: 2026-10-19
 effectiveFrom: 2026-06-20
 reviewAfter: 2026-12-20
 visibleFor: [developer, dispatcher, product]
@@ -64,7 +64,7 @@ Adopt a single self-hosted Node service at `/server`, structured so the full Min
 /server                       (new top-level dir; /public is untouched)
   package.json                "type":"module", engines node >=22 <23; deps: fastify,
                               @fastify/cors, @fastify/helmet, pg  (Phase 1)
-  .nvmrc                      22                (server's own pin; repo .nvmrc=20 stays)
+  .nvmrc                      22                (server's own pin; repo root .nvmrc is 22 too since 2026-10-19)
   .env.example                PORT, DATABASE_URL, ALLOWED_ORIGIN (the Pages origin),
                               REDIS_URL?, S3_*?, OTP_*/SESSION_SECRET
   Dockerfile                  node:22-slim, npm ci --omit=dev, non-root
@@ -183,7 +183,7 @@ The three reviewed proposals agreed on Fastify + ESM + REST `/api/v1` + deferred
 - Introduces a backend to own: hosting, Postgres ops, auth/session, API versioning.
 - CSP `connect-src` remains a safety-boundary change for the two-origin production API. The BazarDrive `/api/` SW bypass is already shipped for both cross-origin and same-origin `/api/` traffic, so API placement alone needs no SW change; only future backend/realtime traffic outside that covered path/origin behavior requires separate SW review.
 - Offline shifts from "localStorage is truth" to "cache + reconcile"; conflict handling and offline-create IDs must be designed (deferred).
-- A second Node toolchain (server Node 22 vs repo CI Node 20) and a Fastify dependency tree (mitigated: first-party `@fastify/*` only, lockfile committed, `npm audit` in `server-ci.yml`).
+- A second Node toolchain (server Node 22 vs repo CI Node 20; resolved 2026-10-19 by the repo-wide Node 22 bump, see Open questions) and a Fastify dependency tree (mitigated: first-party `@fastify/*` only, lockfile committed, `npm audit` in `server-ci.yml`).
 
 **Neutral**
 - `posts` and the `marketplace_message` kind of `responses` sit outside the #1–#9 dispatch services (their own marketplace concern) and get plain resources — not forced into a dispatch service.
@@ -212,7 +212,7 @@ Client-only keys (`user.v1` until auth lands, drafts, prefs, favorites, dev keys
 - **Token format / OTP provider / session lifetime** (BD-DOCS-032 follow-up).
 - **Vehicles split** out of the driver garage into the server `vehicles` entity (BD-DOCS-031/032 follow-up).
 - **`users.role` reconciliation** — the scalar in BD-DOCS-031 vs `roles` + `activeRole` in BD-DOCS-032.
-- **Repo-wide Node bump** to 22 (currently `.nvmrc=20`, CI Node 20) — deferred; `/server` pins its own.
+- **Repo-wide Node bump** to 22 — **resolved 2026-10-19** (was deferred while the repo pinned `.nvmrc=20` / CI Node 20; Node 20 reached end-of-life 2026-04-30). The root `.nvmrc` now pins 22 and `ci.yml` / `docs-site-ci.yml` read it via `node-version-file`; `/server` keeps its own `server/.nvmrc`.
 
 ## Relation to BD-DOCS-023/030/031/032
 
