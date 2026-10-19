@@ -1,8 +1,9 @@
 // /server/src/repositories/receipts.js — the ONLY module that runs SQL against `receipts`
 // (migration 0001). Single SQL seam (ADR BD-DOCS-041). #8 Receipt (R08): a receipt is a write-once
-// financial document, 1:1 with a ride (receipts_ride_uniq). The client never recomputes fare/
-// commission/tip/net — the server stores the supplied, already-computed values VERBATIM. The DB
-// CHECKs (commission <= 0, tip >= 0, status = 'completed') backstop the schema validation.
+// financial document, 1:1 with a ride (receipts_ride_uniq). Since BD-RIDE-AUTHORITY-01B-C the
+// amounts written here are SERVER-DERIVED (domain/receipt-amounts.js), never client-supplied; the
+// client never recomputes a stored receipt. The DB CHECKs (commission <= 0, tip >= 0,
+// status = 'completed') backstop the derivation.
 export async function insertReceipt(db, r) {
   const { rows } = await db.query(
     `INSERT INTO receipts (ride_id, completed_at, fare, commission, tip, net, payment_mode, status)

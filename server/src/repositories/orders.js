@@ -33,6 +33,17 @@ export async function findOrderByLegacyId(db, legacyId) {
   return rows[0] ?? null;
 }
 
+// Resolve an order by its INTERNAL id (rides.order_id) for the receipt fare basis
+// (BD-RIDE-AUTHORITY-01B-C). estimated_price is NUMERIC (a string from node-pg). Null when the
+// order row is gone.
+export async function findOrderEstimateById(db, id) {
+  const { rows } = await db.query(
+    `SELECT id, estimated_price FROM orders WHERE id = $1 LIMIT 1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
 // Resolve + ROW-LOCK an order by legacy id inside a transaction (SELECT … FOR UPDATE). The
 // transactional accept (/select, R05) locks the order first so concurrent selects serialize: the
 // loser waits, then re-reads the now-ACCEPTED row and is rejected. Returns the FULL row (R10 reads

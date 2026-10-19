@@ -168,3 +168,21 @@ test('SESSION_TTL_SECONDS must be an integer in 0..315360000 (NaN/negative/over-
   assert.equal(loadConfig({ ...base, NODE_ENV: 'development', SESSION_TTL_SECONDS: '0' }).session.ttlSeconds, 0);
   assert.equal(loadConfig({ ...base, NODE_ENV: 'development', SESSION_TTL_SECONDS: '315360000' }).session.ttlSeconds, 315360000);
 });
+
+// BD-RIDE-AUTHORITY-01B-C: the receipt commission rate (docs/ride-state-receipt-authority-contract.md §3).
+test('RECEIPT_COMMISSION_PERCENT defaults to 12 and accepts a decimal 0..100', () => {
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development' }).receipts.commissionPercent, 12);
+  for (const [raw, want] of [['15', 15], ['12.5', 12.5], ['0', 0], ['100', 100], [' 8 ', 8]]) {
+    assert.equal(loadConfig({ ...base, NODE_ENV: 'development', RECEIPT_COMMISSION_PERCENT: raw }).receipts.commissionPercent, want, raw);
+  }
+});
+
+test('RECEIPT_COMMISSION_PERCENT outside 0..100 or not a plain decimal fails at startup', () => {
+  for (const bad of ['-1', '101', '100.01', 'abc', '', '1e1', '12%', '0x10']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', RECEIPT_COMMISSION_PERCENT: bad }),
+      /Invalid RECEIPT_COMMISSION_PERCENT: .* must be a number 0\.\.100/,
+      `expected reject: ${JSON.stringify(bad)}`,
+    );
+  }
+});

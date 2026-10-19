@@ -94,20 +94,24 @@ test('history: complete a ride -> GET /history (both roles) + write-once receipt
   // write-once receipt — driver only.
   assert.equal((await post(app, '/api/v1/history/receipts',
     { tripId, fare: 800, commission: -120, tip: 0, net: 680 }, bearer(paxS))).statusCode, 403, 'passenger cannot write the receipt');
+  // The client numbers (15% commission) are ignored: the server derives 800 / -96 / 0 / 704 from
+  // the accepted 800 bid at the default 12% (BD-RIDE-AUTHORITY-01B-C).
   const rec = await post(app, '/api/v1/history/receipts', { tripId, fare: 800, commission: -120, tip: 0, net: 680 }, bearer(drvS));
   assert.equal(rec.statusCode, 201);
-  assert.equal(rec.json().receipt.net, 680);
-  assert.equal(rec.json().receipt.commission, -120);
+  assert.equal(rec.json().receipt.fare, 800);
+  assert.equal(rec.json().receipt.commission, -96);
+  assert.equal(rec.json().receipt.tip, 0);
+  assert.equal(rec.json().receipt.net, 704);
   assert.ok(rec.json().receipt.completedAt, 'receipt completed_at derived from the ride');
   // write-once: a second write (different numbers) returns the ORIGINAL receipt, never overwrites.
   const rec2 = await post(app, '/api/v1/history/receipts', { tripId, fare: 999, commission: -1, tip: 0, net: 998 }, bearer(drvS));
   assert.equal(rec2.statusCode, 201);
-  assert.equal(rec2.json().receipt.net, 680, 'write-once: original receipt preserved');
+  assert.equal(rec2.json().receipt.net, 704, 'write-once: original receipt preserved');
 
   // the driver history entry now carries the receipt; an unknown trip -> 404.
   const de2 = (await get(app, '/api/v1/history', bearer(drvS))).json().items.find((e) => e.tripId === tripId);
   assert.ok(de2.receipt, 'driver entry now carries the receipt');
-  assert.equal(de2.receipt.net, 680);
+  assert.equal(de2.receipt.net, 704);
   assert.equal((await post(app, '/api/v1/history/receipts',
     { tripId: 'trip-nope', fare: 1, commission: 0, tip: 0, net: 1 }, bearer(drvS))).statusCode, 404, 'receipt for an unknown trip -> 404');
 });
