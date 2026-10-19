@@ -89,7 +89,7 @@ Unchanged prefix: 401/503 auth → 400 `INVALID_STATUS` → 400 `INVALID_CANCEL_
    5. target is not `NEXT_STATUS[current]` → 409 `RIDE_TRANSITION_NOT_ALLOWED` — rejects forward skips and backward moves;
    6. write + status-keyed timestamp + `ride_events` row + outbox row — unchanged.
 
-Every rejection writes nothing: no ride update, no event, no outbox row. The error envelope stays `{ error, code, retryable: false }`.
+Every **transition rejection** from steps 1–3 (`FORBIDDEN`, `RIDE_ROLE_FORBIDDEN`, `RIDE_TERMINAL`, `RIDE_TRANSITION_NOT_ALLOWED`, `CANCEL_REASON_REQUIRED`, `INVALID_CANCEL_REASON`) writes nothing — no ride update, no event, no outbox row — and uses the envelope `{ error, code, retryable: false }`. Responses of the unchanged prefix keep their current semantics; in particular 503 `SESSION_LOOKUP_FAILED` stays `retryable: true`.
 
 ### Invariants
 
