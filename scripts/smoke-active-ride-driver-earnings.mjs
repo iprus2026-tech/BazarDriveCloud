@@ -195,7 +195,7 @@ expect('renderSheet re-syncs the map shell data-status without reload',
 expect('history earnings and the sheet payload are sourced from the same receipt (net parity)',
   /net:\s*receipt\.net/.test(earningsOpenerBody)
   && /buildDriverEarningsPayload\(\s*ride\s*,\s*receipt\s*\)/.test(earningsOpenerBody)
-  && /entry\.fare\s*=\s*formatRub\(\s*receipt\.fare\s*\)/.test(earningsOpenerBody));
+  && /entry\.fare\s*=\s*receipt\s*\?\s*formatRub\(\s*receipt\.fare\s*\)\s*:\s*null\s*;/.test(earningsOpenerBody));
 expect('the divergent calcEarnings helper is gone',
   !/function\s+calcEarnings\s*\(/.test(screen));
 

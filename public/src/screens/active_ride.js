@@ -1671,9 +1671,9 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       } : null,
     });
     if (entry) {
-      // The history fare is the receipt's, never the seed's ride.price.
-      if (receipt) entry.fare = formatRub(receipt.fare);
-      else if (isBackendEnabled()) entry.fare = null;
+      // The history fare is the receipt's, never the seed's ride.price — no
+      // receipt (either mode) → no fare.
+      entry.fare = receipt ? formatRub(receipt.fare) : null;
       saveRideHistoryEntry(entry);
     }
     sheet.innerHTML = '';
