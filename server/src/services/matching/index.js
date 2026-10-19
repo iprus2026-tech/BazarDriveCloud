@@ -1,15 +1,19 @@
 // /server/src/services/matching/index.js — #3 Matching (BD-DOCS-023), partially LIVE in R04 of
 // #784. Routes (mounted at /api/v1/matching):
-//   POST /offers  -> 201 { offer }   an authenticated actor offers on an open order;
+//   POST /offers  -> 201 { offer }   a granted, active driver offers on an open order;
 //                                     idempotent per (order, driver); re-sends a withdrawn offer.
 //   GET  /offers?orderId=<legacyId> -> { items:[offer] }   OWNER-ONLY (the order's passenger).
 //   POST /select  -> 200 { order, offer, assignment, ride }  OWNER-ONLY transactional accept [LIVE].
 //
 // Identity is recomputed per request; ownership is re-validated server-side (BD-DOCS-032 dec. 4).
-// Role-gating (only a granted driver may offer) is deferred — any live authenticated session may offer today
-// (no role grants flow until R17); R04 requires authentication, not a specific role. The PWA write
-// cutover is R18; until then only this server + tests exercise these routes.
+// BD-RIDE-AUTHORITY-01B-A (docs/ride-state-receipt-authority-contract.md §2): POST /offers requires a
+// granted, active driver role — current grants are read from users.roles inside the offer tx, BEFORE
+// the order lookup, so a non-driver learns nothing about order existence. GET /offers and /select keep
+// their owner checks; a passenger active-role gate on them is deferred to #830. No product path grants
+// the driver role yet (#1042 / #830). The PWA write cutover is R18; until then only this server + tests
+// exercise these routes.
 import { newOfferId } from '../../infra/ids.js';
+import { resolveActorAuthority, requireDriverActor } from '../auth/authority.js';
 import { serializeOffer, serializeOrder, serializeAssignment, serializeRide, serializeRecoveredOffer } from '../../serialize.js';
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
 import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
@@ -17,6 +21,19 @@ import { insertAssignment } from '../../repositories/assignment.js';
 import { bootstrapRide, lockConflictRideForSelection, findRecoveryBundleByOrderId } from '../../repositories/rides.js';
 import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
 import { validateRecoveryLinkage } from '../../domain/select-recovery-linkage.js';
+
+// Map a denied driver-authority result (services/auth/authority.js) to the offer route's problem
+// tuple [status, code, error, retryable] (contract §2).
+const UNAUTHENTICATED_AUTHORITY = new Set(['UNAUTHENTICATED', 'INVALID_SESSION_ACTOR', 'ACCOUNT_NOT_FOUND']);
+function driverAuthorityProblem(authority) {
+  if (authority.reason === 'AUTHORITY_LOOKUP_FAILED') {
+    return [503, 'AUTHORITY_LOOKUP_FAILED', 'authority lookup failed', true];
+  }
+  if (UNAUTHENTICATED_AUTHORITY.has(authority.reason)) {
+    return [401, 'UNAUTHENTICATED', 'authentication required', false];
+  }
+  return [403, 'DRIVER_ROLE_REQUIRED', 'a granted, active driver role is required', false];
+}
 
 // Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
 // client's `${n.toLocaleString('ru-RU')} ₽`. Returns null for a non-finite value.
@@ -102,9 +119,12 @@ export default async function matchingService(app) {
     // offer on an already-ACCEPTED order, after rejectPeerOffers has run (Codex #791). The
     // idempotent upsert runs in the same tx.
     const result = await app.db.tx(async (client) => {
+      // Driver authority first (contract §2), on the same tx client as the offer write.
+      const authority = requireDriverActor(await resolveActorAuthority(client, viewer));
+      if (!authority.ok) return { err: driverAuthorityProblem(authority) };
       const order = await lockOrderByLegacyId(client, b.orderId);
       if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found'] };
-      // A passenger cannot offer on their OWN order — no self-candidate (Codex #790).
+      // A driver cannot offer on their OWN order — no self-candidate (Codex #790).
       if (String(order.passenger_id) === String(viewer.userId)) {
         return { err: [403, 'CANNOT_OFFER_OWN_ORDER', 'cannot offer on your own order'] };
       }
@@ -126,7 +146,7 @@ export default async function matchingService(app) {
       if (!row) row = await findOfferByOrderDriver(client, order.id, viewer.userId);
       return { ok: row, orderLegacyId: order.legacy_id };
     });
-    if (result.err) return problem(reply, result.err[0], result.err[1], result.err[2]);
+    if (result.err) return problem(reply, ...result.err);
     return reply.code(201).send({ offer: serializeOffer(result.ok, { orderLegacyId: result.orderLegacyId }) });
   });
 

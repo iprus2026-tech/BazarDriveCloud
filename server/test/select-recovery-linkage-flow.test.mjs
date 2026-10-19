@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { grantDriverRole } from '../test-support/driver-grant.mjs';
 import { findRecoveryBundleByTripId, findRecoveryBundleByOrderId } from '../src/repositories/rides.js';
 import { listOffersByOrder } from '../src/repositories/offers.js';
 
@@ -52,7 +53,7 @@ async function acceptedFixture(app, cleanup, ns) {
   const pax = `+1700${ns}`;
   const drv = `+1701${ns}`;
   const paxS = await mintSession(app, pax);
-  const drvS = await mintSession(app, drv);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   const offer = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,8', price: 800 }, bearer(drvS))).json().offer;
   const sel = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offer.driverId }, bearer(paxS));
@@ -128,7 +129,7 @@ test('recovery gate: CREATED order with an accepted-offer footprint forces the g
   const pax = `+1700${ns}`;
   const drv = `+1701${ns}`;
   const paxS = await mintSession(app, pax);
-  const drvS = await mintSession(app, drv);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
   const offer = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'X' }, bearer(drvS))).json().offer;
@@ -948,7 +949,7 @@ test('recovery gate: offers-GET bypass serves its own bundle snapshot, never a l
 
   const ns = `${process.pid}22`;
   const paxS = await mintSession(app, `+1709${ns}`);
-  const drvS = await mintSession(app, `+1710${ns}`);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, `+1710${ns}`));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
   const offer = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Racer' }, bearer(drvS))).json().offer;

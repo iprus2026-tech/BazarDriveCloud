@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { grantDriverRole } from '../test-support/driver-grant.mjs';
 import { lockConflictRideForSelection, lockRideByTripId } from '../src/repositories/rides.js';
 import { validateConflictRideInvariant } from '../src/domain/select-conflict-ride.js';
 
@@ -58,8 +59,8 @@ test('select: transactional accept (target accepted, peers rejected, assignment,
   const paxS = await mintSession(app, pax);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const drvAS = await mintSession(app, drvA);
-  const drvBS = await mintSession(app, drvB);
+  const drvAS = await grantDriverRole(cleanup, await mintSession(app, drvA));
+  const drvBS = await grantDriverRole(cleanup, await mintSession(app, drvB));
   const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A', price: 800 }, bearer(drvAS))).json().offer;
   const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B', price: 900 }, bearer(drvBS))).json().offer;
 
@@ -136,8 +137,8 @@ test('select serializes concurrent accepts via FOR UPDATE — exactly one wins (
   const paxS = await mintSession(app, pax);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A' }, bearer(await mintSession(app, drvA)))).json().offer;
-  const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B' }, bearer(await mintSession(app, drvB)))).json().offer;
+  const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drvA))))).json().offer;
+  const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drvB))))).json().offer;
 
   // fire two selects (different drivers) concurrently — the FOR UPDATE lock must let exactly one win.
   const [r1, r2] = await Promise.all([
@@ -175,7 +176,7 @@ test('select refuses an offer past its TTL (expired-but-unswept), even though st
   const paxS = await mintSession(app, pax);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'D' }, bearer(await mintSession(app, drv)))).json().offer;
+  const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'D' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drv))))).json().offer;
 
   // force the offer past its TTL while it is still status='sent' (the sweep that flips expired
   // rows is future work) — selecting it must NOT accept a stale offer.
@@ -219,8 +220,8 @@ test('select rejects a mismatched conflict Ride (500, full rollback, conflict Ri
   const paxS = await mintSession(app, pax);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const drvAS = await mintSession(app, drvA);
-  const drvBS = await mintSession(app, drvB);
+  const drvAS = await grantDriverRole(cleanup, await mintSession(app, drvA));
+  const drvBS = await grantDriverRole(cleanup, await mintSession(app, drvB));
   const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A', price: 800 }, bearer(drvAS))).json().offer;
   const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B', price: 900 }, bearer(drvBS))).json().offer;
 

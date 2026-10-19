@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { grantDriverRole } from '../test-support/driver-grant.mjs';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -59,7 +60,7 @@ test('realtime poll: DB-cursor delta over the ride timeline + participant gating
 
   // build a ride via the live spine, then advance its status (appending ride_events).
   const paxS = await mintSession(app, pax);
-  const drvS = await mintSession(app, drv);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const otherS = await mintSession(app, other);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
