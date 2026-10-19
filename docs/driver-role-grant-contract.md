@@ -168,6 +168,17 @@ Rules:
 - **A revoked grant blocks immediately.** The authority core reads current grants, so it denies `ACTIVE_ROLE_NOT_GRANTED` even while an older session row still says `driver`. `revoke` (§1) also resets those rows.
 - **Ride state is unaffected:** it uses ride participation, not the session role (BD-RIDE-AUTHORITY-01A). Locking a switch during an active ride is deferred.
 
+### Same-account session replacement at verify
+
+A new OTP verify in a tab that already holds a bearer for the **same** account replaces that bearer, e.g. a re-requested code after a role rejection (§3). The replaced session must not stay live, and the guarantee is server-side and atomic. No separate client cleanup request is relied on.
+
+- **What the client sends.** `POST /api/v1/auth/otp/verify` carries the tab's current bearer as `Authorization`. The client transport already attaches the installed bearer.
+- **What the server does.** In the **same transaction** that consumes the OTP and mints the new session, it revokes the presented session. This applies only when that session is live and belongs to the account being verified.
+- **Another account's bearer** is left untouched: replacing a different account is the B2-C account switch (#829).
+- **A missing, revoked or expired presented session** is ignored. Verify behaves as today.
+- **No partial success.** If the lookup or revocation of the presented session fails, verify fails with `503` (retryable) and mints no session. A successful verify therefore guarantees that the replaced same-account session is revoked.
+- This is part of `01B-B`.
+
 ## 3. Client — `01C` (resolves D3 #1044)
 
 **Login with a chosen role.** The client still never sends a role at OTP. After verify it compares the chosen role with the response:
@@ -187,7 +198,7 @@ The three actions of that state:
 
 «Повторить» no longer repeats the same rejection.
 
-**A replaced bearer is revoked.** A new verify in the same tab may install a new bearer for the same account, e.g. a re-requested code after a rejection. The **replaced** bearer is then revoked on the server: a bodyless `POST /auth/logout` carrying that bearer (`revokeUnacceptedSession`), awaited. A failed revoke does not fail the login; that case is left to #829's server guarantee. No live session may be orphaned silently by the client.
+**A replaced bearer is revoked by the server.** When a re-requested code is verified in a tab that holds a bearer for the same account, the verify request carries that bearer. The server revokes it in the same transaction as the new session (§2, "Same-account session replacement at verify"). The client installs the new bearer only after a successful verify, and a failed verify leaves the old bearer in place. A replaced session is never left live by a successful login.
 
 **Profile role switch.** Applies to `#pfp-role-switch` and `#pf2-act-role-switch`.
 - Backend-ON:
@@ -238,11 +249,16 @@ The three actions of that state:
 - `GET /auth/session` returns `roles`.
 - After a switch, the offer gate follows the new active role: driver `201`, passenger `403`.
 - Another session of the same account is unchanged.
+- **Session replacement at verify:**
+  - a presented live same-account bearer is revoked in the verify transaction, and the old bearer then gets `401` on `GET /auth/session`;
+  - a presented bearer of another account stays live;
+  - a missing, revoked or expired presented bearer is ignored;
+  - an injected lookup or revoke failure gives `503`, with no new session row and no OTP consumed.
 
 ### `01C` — client (D3 #1044)
 
 All three login rows of §3 are covered, together with:
-- the replaced-bearer revoke: a stubbed transport receives exactly one logout carrying the old bearer;
+- the re-requested-code verify carries the replaced bearer, and the new bearer is installed only after a successful verify;
 - no endless «Повторить»;
 - the profile switch in ON and OFF.
 
@@ -265,7 +281,7 @@ The smoke pins in `scripts/smoke-auth-session-bootstrap.mjs` that assert the old
 1. D2 guard fix (#1072): independent, before this contract.
 2. This contract (docs only).
 3. `01B-A` — server: migration `0010`, enrollment routes, the decision module and `ops:driver`, the auto-approve flag. The user applies migration `0010` to the dev database via `docker cp` + `psql -v ON_ERROR_STOP=1 -f`.
-4. `01B-B` — server: the active-role switch and `roles` in the session DTO.
+4. `01B-B` — server: the active-role switch, `roles` in the session DTO, and same-account session replacement at verify.
 5. `01C` — client: login role handling (D3), the enrollment UI, the profile switch.
 6. `01B-C` — server: passenger gates.
 7. Docs sync (#1067).
