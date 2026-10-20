@@ -551,7 +551,12 @@ export function createAuthSessionBootstrap({
 }
 
 export function sessionRouteAdmission(snapshot, path, { guestPublic = false } = {}) {
-  if (snapshot.state === 'LOCAL_DEMO_BOOT' || snapshot.state === 'AUTHENTICATED') return true;
+  if (snapshot.state === 'LOCAL_DEMO_BOOT') return true;
+  // #1043 — app.js sends an authenticated profile that is not onboarded to
+  // /onboarding. Such a profile can have welcomeSeen:false (an account reset
+  // wipes user.v1), so the router's welcome guard must not bounce /onboarding
+  // back to /welcome, or the two guards ping-pong forever.
+  if (snapshot.state === 'AUTHENTICATED') return path === '/onboarding' ? { skipWelcome: true } : true;
   if (snapshot.state !== 'ANONYMOUS') return false;
   // Classification comes from router. This admits only a read-only Guest view,
   // never a confirmed identity, grants, readiness, or pending/unknown fallback.

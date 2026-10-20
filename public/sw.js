@@ -253,7 +253,8 @@
 // v374 (BD-AUTH-SESSION-01-829-B2-B2-R1): refresh precached auth/onboarding runtime for late OTP cleanup.
 // v375: wait for server-confirmed driver cancellation and reconcile uncertain outcomes.
 // v378 (#1059): refresh precached driver completion runtime — server-derived receipt amounts.
-const VERSION    = 'v378';
+// v379 (#1043): refresh precached auth bootstrap — authenticated /onboarding skips the welcome guard.
+const VERSION    = 'v379';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
