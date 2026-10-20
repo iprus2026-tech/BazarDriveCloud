@@ -57,6 +57,12 @@ export async function decideEnrollment(db, id, { status, decidedBy, reason = nul
   return rows[0] ?? null;
 }
 
+// How many applications are pending (the operator list states it even when the display is capped).
+export async function countPendingEnrollments(db) {
+  const { rows } = await db.query(`SELECT count(*)::int AS n FROM driver_enrollments WHERE status = 'PENDING'`);
+  return rows[0].n;
+}
+
 // The operator's queue: pending applications, oldest first, with the applicant's phone for
 // display (the caller masks it).
 export async function listPendingEnrollments(db, { limit = 50 } = {}) {

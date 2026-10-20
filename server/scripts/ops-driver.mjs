@@ -16,7 +16,16 @@ import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
 import { decideDriverEnrollment, DECISIONS } from '../src/services/driver-enrollment/decisions.js';
-import { listPendingEnrollments } from '../src/repositories/driver_enrollments.js';
+import { listPendingEnrollments, countPendingEnrollments } from '../src/repositories/driver_enrollments.js';
+
+const LIST_LIMIT = 50;
+
+// The list header always states the full pending count; when the display is capped it says so.
+export function pendingHeader(total, shown) {
+  return shown < total
+    ? `pending driver applications: ${total} (showing the oldest ${shown})`
+    : `pending driver applications: ${total}`;
+}
 
 const USAGE = `usage: npm run ops:driver -- list
        npm run ops:driver -- <approve|reject|revoke> <phone|userId> [--reason "..."] [--by <operator>]`;
@@ -43,7 +52,10 @@ export function parseArgs(argv) {
     const arg = rest[i];
     if (arg === '--reason' || arg === '--by') {
       const value = rest[i + 1];
-      if (value === undefined) return { error: `${arg} needs a value` };
+      // A missing operand must not swallow the next flag (`--by --reason x`) or pass empty.
+      if (value === undefined || value.trim() === '' || value.startsWith('-')) {
+        return { error: `${arg} needs a value` };
+      }
       out[arg.slice(2)] = value;
       i++;
     } else if (arg.startsWith('--')) {
@@ -98,8 +110,11 @@ export async function run(argv, { env = process.env, out = console.log, err = co
   const db = createDb(pool);
   try {
     if (args.command === 'list') {
-      const rows = await listPendingEnrollments(db);
-      out(`pending driver applications: ${rows.length}`);
+      const [rows, total] = await Promise.all([
+        listPendingEnrollments(db, { limit: LIST_LIMIT }),
+        countPendingEnrollments(db),
+      ]);
+      out(pendingHeader(total, rows.length));
       for (const row of rows) {
         out(`  ${row.user_id}  ${maskPhone(row.phone)}  requested ${new Date(row.requested_at).toISOString()}`);
       }
