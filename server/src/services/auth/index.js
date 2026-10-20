@@ -32,6 +32,7 @@ import {
 } from '../../repositories/users.js';
 import {
   insertSession, revokeSessionById, resolveLiveSessionByTokenHash, setSessionActiveRole,
+  lockLiveSessionById,
 } from '../../repositories/sessions.js';
 import { bearerToken } from '../../plugins/auth.js';
 
@@ -377,14 +378,18 @@ export default async function authService(app) {
     let outcome;
     try {
       outcome = await app.db.tx(async (client) => {
+        // Lock order user -> session, the same as verify and the enrollment decisions.
         const account = await lockUserForGrant(client, viewer.userId);
         if (!account) return { code: 'UNAUTHENTICATED' };
-        if (viewer.phoneVerified !== true || account.phone_verified !== true) return { code: 'PHONE_NOT_VERIFIED' };
+        // Re-read THIS session under a lock: the request-time snapshot may be stale (a concurrent
+        // switch) or the session may have been revoked since (a logout). The locked row decides
+        // both liveness and the no-op.
+        const session = await lockLiveSessionById(client, viewer.sessionId);
+        if (!session || String(session.user_id) !== String(account.id)) return { code: 'UNAUTHENTICATED' };
+        if (session.phone_verified !== true || account.phone_verified !== true) return { code: 'PHONE_NOT_VERIFIED' };
         const roles = Array.from(account.roles ?? []);
         if (!roles.includes(role)) return { code: 'ROLE_NOT_GRANTED' };
-        if (viewer.activeRole !== role && !(await setSessionActiveRole(client, viewer.sessionId, role))) {
-          return { code: 'UNAUTHENTICATED' }; // the session stopped being live meanwhile
-        }
+        if (session.active_role !== role) await setSessionActiveRole(client, session.id, role);
         if (account.active_role !== role) await setUserActiveRole(client, account.id, role);
         return { code: 'OK', roles };
       });

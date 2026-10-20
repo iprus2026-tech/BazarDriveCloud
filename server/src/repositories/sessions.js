@@ -45,6 +45,21 @@ export async function resetLiveSessionsActiveRole(db, userId, fromRole, toRole) 
   return rowCount;
 }
 
+// The active-role switch (BD-AUTH-POLICY-01B-B): row-lock ONE session if it is still live, on
+// the switch's transaction client. null when it was revoked or expired in the meantime.
+export async function lockLiveSessionById(db, sessionId) {
+  const { rows } = await db.query(
+    `SELECT id, user_id, active_role, phone_verified
+       FROM auth_session
+      WHERE id = $1
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > now())
+      FOR UPDATE`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
 // The active-role switch (BD-AUTH-POLICY-01B-B): set the active role of ONE live session.
 // Returns the updated row, or null when the session is no longer live (revoked/expired).
 export async function setSessionActiveRole(db, sessionId, role) {

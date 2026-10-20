@@ -118,6 +118,35 @@ test('active role: same role is a no-op; other sessions keep their own role', { 
   assert.equal((await f.sessionRow(second.token)).activeRole, 'passenger', 'another session of the account is unchanged');
 });
 
+test('active role: the switch decides on the locked session row, not the request snapshot', { skip: SKIP }, async (t) => {
+  const f = await fixture(t);
+  const a = await f.dualRole(f.phone());
+  const { sessionId } = await f.sessionRow(a.token);
+  const originalTx = f.app.db.tx;
+  // Run `before` after resolveUser() has taken its snapshot but before the switch transaction.
+  const between = async (before, request) => {
+    f.app.db.tx = async (fn) => { f.app.db.tx = originalTx; await before(); return originalTx(fn); };
+    try { return await request(); } finally { f.app.db.tx = originalTx; }
+  };
+  const sessionRole = async () => (await f.db('SELECT active_role FROM auth_session WHERE id = $1', [sessionId]))[0].active_role;
+
+  // A concurrent switch moved the session to driver; the snapshot still says passenger.
+  const stale = await between(
+    () => f.db("UPDATE auth_session SET active_role = 'driver' WHERE id = $1", [sessionId]),
+    () => f.inject('PUT', SWITCH, { payload: { activeRole: 'passenger' }, headers: bearer(a.token) }),
+  );
+  assert.equal(stale.statusCode, 200);
+  assert.equal(stale.json().user.activeRole, 'passenger');
+  assert.equal(await sessionRole(), 'passenger', 'the response matches the stored session role');
+
+  // A logout revoked the session after the snapshot: a same-role request must not succeed.
+  const revoked = await between(
+    () => f.db('UPDATE auth_session SET revoked_at = now() WHERE id = $1', [sessionId]),
+    () => f.inject('PUT', SWITCH, { payload: { activeRole: 'passenger' }, headers: bearer(a.token) }),
+  );
+  assert.equal(revoked.statusCode, 401, 'a session revoked meanwhile cannot switch, even to its current role');
+});
+
 test('active role: ungranted, unverified, malformed and unauthenticated requests are refused', { skip: SKIP }, async (t) => {
   const f = await fixture(t);
   const passenger = await f.login(f.phone());
