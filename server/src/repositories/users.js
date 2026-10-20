@@ -78,3 +78,45 @@ export async function resolveVerifiedLoginUser(db, { phone }) {
   );
   return rows[0];
 }
+
+// --- Role grants (BD-AUTH-POLICY-01B-A, docs/driver-role-grant-contract.md §1) ---
+// Called only by services/driver-enrollment/decisions.js, on the transaction client of the
+// enrollment decision, so the application row and users.roles change together.
+
+// Row-lock the account before a grant decision (serializes concurrent applications/decisions).
+export async function lockUserForGrant(db, userId) {
+  const { rows } = await db.query(
+    `SELECT id, roles, active_role, phone, phone_verified
+       FROM users
+      WHERE id = $1
+      FOR UPDATE`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+// Add a role to users.roles (no-op when already granted). Never changes active_role.
+export async function addRoleGrant(db, userId, role) {
+  const { rows } = await db.query(
+    `UPDATE users
+        SET roles = CASE WHEN $2 = ANY(roles) THEN roles ELSE array_append(roles, $2) END
+      WHERE id = $1
+     RETURNING id, roles, active_role`,
+    [userId, role],
+  );
+  return rows[0] ?? null;
+}
+
+// Remove a role from users.roles. When it was the account's active_role, active_role falls
+// back to `fallbackActiveRole` (a remaining grant, or NULL).
+export async function removeRoleGrant(db, userId, role, fallbackActiveRole) {
+  const { rows } = await db.query(
+    `UPDATE users
+        SET roles = array_remove(roles, $2),
+            active_role = CASE WHEN active_role = $2 THEN $3 ELSE active_role END
+      WHERE id = $1
+     RETURNING id, roles, active_role`,
+    [userId, role, fallbackActiveRole],
+  );
+  return rows[0] ?? null;
+}

@@ -29,6 +29,22 @@ export async function revokeSessionById(db, sessionId) {
   return rows[0] ?? null;
 }
 
+// A revoked role grant (BD-AUTH-POLICY-01B-A): every LIVE session of the account that is in
+// the revoked role falls back to `toRole` (a remaining grant, or NULL). Runs on the decision's
+// transaction client. The authority core already denies such sessions on current grants; this
+// keeps the session rows truthful too.
+export async function resetLiveSessionsActiveRole(db, userId, fromRole, toRole) {
+  const { rowCount } = await db.query(
+    `UPDATE auth_session
+        SET active_role = $3
+      WHERE user_id = $1
+        AND active_role = $2
+        AND revoked_at IS NULL`,
+    [userId, fromRole, toRole],
+  );
+  return rowCount;
+}
+
 // Mint a verified session row (the OTP-verify cutover, R02). Stores only the token HASH
 // (hashToken of the plaintext returned to the client). expires_at NULL = no expiry modeled
 // (config.session.ttlSeconds === 0; lifetime/refresh policy deferred per BD-DOCS-032). The

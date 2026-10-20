@@ -23,8 +23,9 @@ const config = {
 const app = await buildApp({ config });
 after(() => app.close());
 
-// auth (R02), orders (R03), matching (R04/R05), ride-state (R06), history #8 (R08) are LIVE; rest dark.
-const LIVE = new Set(['auth', 'orders', 'matching', 'ride-state', 'history']);
+// auth (R02), orders (R03), matching (R04/R05), ride-state (R06), history #8 (R08) and drivers
+// (BD-AUTH-POLICY-01B-A driver enrollment) are LIVE; rest dark.
+const LIVE = new Set(['auth', 'orders', 'matching', 'ride-state', 'history', 'drivers']);
 const DARK = SERVICES.map((s) => s.name).filter((n) => !LIVE.has(n));
 
 test('every still-dark service returns 501 NOT_IMPLEMENTED at its prefix', async () => {
@@ -162,4 +163,21 @@ test('/metrics is a dark skeleton (501)', async () => {
   const res = await app.inject({ method: 'GET', url: '/metrics' });
   assert.equal(res.statusCode, 501);
   assert.equal(res.json().code, 'NOT_IMPLEMENTED');
+});
+
+test('driver enrollment is LIVE: unauthenticated -> 401, client fields -> 400 (hermetic)', async () => {
+  // BD-AUTH-POLICY-01B-A. Neither path touches the DB: no bearer resolves to no viewer, and a
+  // body field is refused before any lookup. The full flow is DB-gated (driver-enrollment-flow).
+  for (const method of ['GET', 'POST']) {
+    const res = await app.inject({ method, url: '/api/v1/drivers/enrollment' });
+    assert.equal(res.statusCode, 401, `${method} without a session`);
+    assert.equal(res.json().code, 'UNAUTHENTICATED');
+  }
+  const withRoles = await app.inject({ method: 'POST', url: '/api/v1/drivers/enrollment', payload: { roles: ['driver'] } });
+  assert.equal(withRoles.statusCode, 400, 'the applicant cannot send roles or any field');
+  assert.equal(withRoles.json().code, 'VALIDATION');
+  const withQuery = await app.inject({ method: 'POST', url: '/api/v1/drivers/enrollment?status=APPROVED' });
+  assert.equal(withQuery.statusCode, 400);
+  const emptyObject = await app.inject({ method: 'POST', url: '/api/v1/drivers/enrollment', payload: {} });
+  assert.equal(emptyObject.statusCode, 401, '`{}` is an accepted (empty) body');
 });
