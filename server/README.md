@@ -50,7 +50,7 @@ delivery, operations or activation gap still prevents pilot use.
 | Module / route | State | Boundary that matters before pilot |
 |---|---|---|
 | `GET /api/v1/health`, `GET /api/v1/readyz` | LIVE | Readiness checks database connectivity and migration state. |
-| `/api/v1/auth/*` | LIVE / PILOT-BLOCKED | Session and OTP request/verify exist; OTP throttling/delivery and final session policy remain. |
+| `/api/v1/auth/*` | LIVE / PILOT-BLOCKED | Session and OTP request/verify exist. `GET /session` returns the account's current `roles`. `PUT /session/active-role` switches the current session to a granted role and seeds the next login. Verify revokes a presented live bearer of the same account in the login transaction, or fails with 503 (`docs/driver-role-grant-contract.md` §2). OTP throttling/delivery and final session policy remain. |
 | `/api/v1/orders` | LIVE | Created-order read is public; create requires a live authenticated session, while `phone_verified` and passenger-role enforcement remain pilot gates. |
 | `/api/v1/matching` | LIVE / PILOT-BLOCKED | Owner/self-offer checks exist; offer creation requires a live authenticated session, while `phone_verified`, granted driver role and readiness are not enforced yet. |
 | `/api/v1/ride-state` | LIVE | Participant-only; terminal freeze and append-only events are authoritative. |

@@ -67,6 +67,11 @@ async function logoutFixture(t, { logged = false } = {}) {
       if (state.lookupFails) throw new Error('diagnostic lookup failure');
       return { rows: row.revoked_at || row.expires_at ? [] : [{ ...row }] };
     }
+    // GET /auth/session reads the account's current grants (BD-AUTH-POLICY-01B-B).
+    if (/^\s*SELECT\b/.test(sql) && sql.includes('FROM users')) {
+      assert.deepEqual(params, [row.user_id]);
+      return { rows: [{ id: row.user_id, roles: [], phone_verified: row.phone_verified }] };
+    }
     assert.match(sql, /^\s*UPDATE auth_session\b/);
     assert.match(sql, /WHERE id = \$1/);
     assert.deepEqual(params, [row.id]);
