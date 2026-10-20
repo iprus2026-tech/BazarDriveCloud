@@ -15,12 +15,30 @@ cd server
 nvm use                 # Node 22 (server's own .nvmrc; the repo root .nvmrc pins 22 too)
 cp .env.example .env    # set DATABASE_URL (Postgres 16); ALLOWED_ORIGIN in prod
                         # RECEIPT_COMMISSION_PERCENT: receipt commission, decimal 0..100 (unset = 12)
+                        # DRIVER_ENROLLMENT_AUTO_APPROVE: true|false (unset = false) — local stand
+                        #   only; approves driver applications at once; forbidden in production
 npm ci
 npm run migrate         # apply migrations/*.sql in order
 npm run seed            # dev seed (stub — per-entity seeders land with their module PRs)
 npm run dev             # node --watch; or `npm start` / `docker compose up`
 npm test                # node:test — enum-parity + route smokes
 ```
+
+Driver applications are decided by an operator with `npm run ops:driver`, which uses the
+same `DATABASE_URL` (BD-AUTH-POLICY-01B-A, `docs/driver-role-grant-contract.md` §1). It
+prints the account id and a masked phone, never a token. Exit codes: 0 ok, 1 refused
+(nothing written), 2 usage, 3 runtime error.
+
+```bash
+npm run ops:driver -- list                                   # pending applications
+npm run ops:driver -- approve +79000001004 --reason "docs checked" [--by alice]
+npm run ops:driver -- reject  <phone|userId> [--reason "..."]
+npm run ops:driver -- revoke  <phone|userId> [--reason "..."]  # removes the driver grant
+```
+
+The decision logic lives in `src/services/driver-enrollment/decisions.js`
+(`decideDriverEnrollment`). The command is only its CLI adapter, so a later bot or admin
+route can call the same function.
 
 ## Current route baseline
 
@@ -38,6 +56,7 @@ delivery, operations or activation gap still prevents pilot use.
 | `/api/v1/ride-state` | LIVE | Participant-only; terminal freeze and append-only events are authoritative. |
 | `/api/v1/realtime/poll` | LIVE | Participant-only cursor polling; WebSocket/SSE push remains dark. |
 | `/api/v1/history` | LIVE | Authenticated reads; completed-ride receipt write is driver-only and write-once, with server-derived amounts (interim fare basis = the price fixed at `/select`, commission from `RECEIPT_COMMISSION_PERCENT`, tip 0; client amounts ignored — `docs/ride-state-receipt-authority-contract.md` §3). |
+| `/api/v1/drivers/enrollment` | LIVE / PILOT-BLOCKED | Driver application: a live session with a verified phone applies (`POST`) and reads its status (`GET`). Approval, rejection and revocation are operator decisions (`npm run ops:driver`), which add or remove the `driver` grant in the same transaction. The approved grant is not line readiness (documents, shift and vehicle remain #830). See `docs/driver-role-grant-contract.md` §1. |
 | `/api/v1/chat` | LIVE persistence / PILOT-BLOCKED | Participant authorization is absent and sender role is still request-supplied. |
 | Availability, route price, notifications, safety | DARK | No pilot contract or activation. |
 | Metrics | DARK | Observability policy is not frozen. |

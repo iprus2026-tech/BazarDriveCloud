@@ -1,6 +1,6 @@
 // /server/src/services/index.js — the Mini-Yonder service registry (ADR BD-DOCS-041).
 // One folder per service; the registry shape remains stable while implementations advance.
-// Auth, orders, matching, ride-state and history are database-backed; availability,
+// Auth, orders, matching, ride-state, history and driver enrollment are database-backed; availability,
 // route-price, notifications and safety remain dark 501 seams. Promoting a service is
 // "implement a folder", never "re-architect" — this list does not change shape, only its
 // imports do. See the #821 backend baseline for pilot blockers and activation state.
@@ -13,6 +13,7 @@ import rideStateService from './ride-state/index.js';
 import notificationsService from './notifications/index.js';
 import safetyService from './safety/index.js';
 import historyService from './history/index.js';
+import driverEnrollmentService from './driver-enrollment/index.js';
 
 export const SERVICES = [
   { name: 'auth', plugin: authService },             // BD-DOCS-032 phone+OTP, session
@@ -24,4 +25,5 @@ export const SERVICES = [
   { name: 'notifications', plugin: notificationsService }, // #6 Notification fan-out
   { name: 'safety', plugin: safetyService },         // #7 Safety & Compliance
   { name: 'history', plugin: historyService },       // #8 History & Receipt
+  { name: 'drivers', plugin: driverEnrollmentService }, // BD-AUTH-POLICY-01B-A driver enrollment
 ];

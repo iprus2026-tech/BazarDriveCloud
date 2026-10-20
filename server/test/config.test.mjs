@@ -186,3 +186,28 @@ test('RECEIPT_COMMISSION_PERCENT outside 0..100 or not a plain decimal fails at 
     );
   }
 });
+
+// BD-AUTH-POLICY-01B-A — the stand-only driver enrollment auto-approve switch.
+test('DRIVER_ENROLLMENT_AUTO_APPROVE defaults to false and accepts only true / false', () => {
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development' }).drivers.enrollmentAutoApprove, false);
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development', DRIVER_ENROLLMENT_AUTO_APPROVE: 'true' }).drivers.enrollmentAutoApprove, true);
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development', DRIVER_ENROLLMENT_AUTO_APPROVE: 'false' }).drivers.enrollmentAutoApprove, false);
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'test', DRIVER_ENROLLMENT_AUTO_APPROVE: ' true ' }).drivers.enrollmentAutoApprove, true);
+  for (const bad of ['', 'yes', '1', 'TRUE', 'on']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', DRIVER_ENROLLMENT_AUTO_APPROVE: bad }),
+      /Invalid DRIVER_ENROLLMENT_AUTO_APPROVE: .* must be true or false/,
+      `expected reject: ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('production rejects DRIVER_ENROLLMENT_AUTO_APPROVE=true at startup, accepts false', () => {
+  const prod = { ...base, NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://a.github.io', OTP_DEV_MODE: 'false' };
+  assert.throws(
+    () => loadConfig({ ...prod, DRIVER_ENROLLMENT_AUTO_APPROVE: 'true' }),
+    /Invalid DRIVER_ENROLLMENT_AUTO_APPROVE: true is forbidden when NODE_ENV=production/,
+  );
+  assert.equal(loadConfig({ ...prod, DRIVER_ENROLLMENT_AUTO_APPROVE: 'false' }).drivers.enrollmentAutoApprove, false);
+  assert.equal(loadConfig(prod).drivers.enrollmentAutoApprove, false);
+});

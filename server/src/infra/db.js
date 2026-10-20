@@ -63,6 +63,11 @@ async function dbPlugin(app, opts) {
     // Merchant Identity/Contact dark authority. 0008 remains reserved by the frozen vehicle
     // block-state contract and is intentionally untouched/absent in this slice; numbering gaps
     // do not weaken readiness because the actual load-bearing 0009 objects are checked directly.
+    //
+    // 0010 (BD-AUTH-POLICY-01B-A) — driver_enrollments backs the LIVE /api/v1/drivers routes,
+    // so a database with 0001-0009 and not 0010 must report schema-incomplete, checked
+    // structurally like the rest (columns, named constraints, the one-open partial unique
+    // index, the updated_at trigger).
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -571,6 +576,29 @@ async function dbPlugin(app, opts) {
                  AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='merchant_contact_bindings_one_active_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='merchant_id' AND pg_get_indexdef(ci.oid,2,true)='external_contact_identity_id' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%status%ACTIVE%')
                  AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_contact_bindings_guard_immutability' AND NOT t.tgisinternal)
                  AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_contact_bindings_updated_at' AND NOT t.tgisinternal)
+            )
+            -- 0010 (BD-AUTH-POLICY-01B-A) — driver enrollment, read and written by LIVE routes.
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'driver_enrollments'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id','user_id','status','requested_at','decided_at','decided_by',
+                        'decision_reason','created_at','updated_at'
+                      )
+                 ) = 9
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='driver_enrollments_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='driver_enrollments_user_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.users') AND pc.confdeltype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='driver_enrollments_status_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='driver_enrollments_decision_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='driver_enrollments_one_open_per_user_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='user_id' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%PENDING%' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%APPROVED%')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_driver_enrollments_updated_at' AND NOT t.tgisinternal)
             )
             ) AS ok`,
       );

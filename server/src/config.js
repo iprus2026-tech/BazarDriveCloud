@@ -17,6 +17,16 @@ function parseCommissionPercent(raw) {
   return /^\d+(\.\d+)?$/.test(text) ? Number(text) : Number.NaN;
 }
 
+// A strict boolean env flag: unset -> false; only "true" / "false" are accepted, anything else
+// is null so the caller fails fast instead of guessing.
+function parseBooleanFlag(raw) {
+  if (raw === undefined) return false;
+  const text = String(raw).trim();
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  return null;
+}
+
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'development';
   const isProd = nodeEnv === 'production';
@@ -52,6 +62,12 @@ export function loadConfig(env = process.env) {
     // --- RECEIPTS (BD-RIDE-AUTHORITY-01B-C) — server-derived receipt amounts ---
     receipts: {
       commissionPercent: parseCommissionPercent(env.RECEIPT_COMMISSION_PERCENT),
+    },
+    // --- DRIVERS (BD-AUTH-POLICY-01B-A) — driver enrollment ---
+    drivers: {
+      // Local stand only: approve a driver application in the same transaction. Forbidden in
+      // production (guard below), like OTP_DEV_MODE.
+      enrollmentAutoApprove: parseBooleanFlag(env.DRIVER_ENROLLMENT_AUTO_APPROVE),
     },
 
     // --- DARK (structured, no Phase-1 consumer — see ADR BD-DOCS-041) ---
@@ -112,6 +128,13 @@ export function loadConfig(env = process.env) {
   // overriding an operator-supplied value so a staging/production misconfiguration is visible.
   if (isProd && config.otp.devMode) {
     throw new Error('Invalid OTP_DEV_MODE: true is forbidden when NODE_ENV=production');
+  }
+  if (config.drivers.enrollmentAutoApprove === null) {
+    throw new Error(`Invalid DRIVER_ENROLLMENT_AUTO_APPROVE: ${env.DRIVER_ENROLLMENT_AUTO_APPROVE} — must be true or false`);
+  }
+  // Production must never self-approve driver grants; fail fast like OTP_DEV_MODE.
+  if (isProd && config.drivers.enrollmentAutoApprove) {
+    throw new Error('Invalid DRIVER_ENROLLMENT_AUTO_APPROVE: true is forbidden when NODE_ENV=production');
   }
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(', ')}`);

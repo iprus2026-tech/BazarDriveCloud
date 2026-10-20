@@ -245,6 +245,19 @@ jobs:
             psql -v ON_ERROR_STOP=1 -tAc \
               "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='$table' and t.tgname='$trigger' and not t.tgisinternal" | grep -qx 1
           done
+          # BD-AUTH-POLICY-01B-A (0010) — driver enrollment, read and written by live routes.
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='driver_enrollments'" | grep -qx 1
+          for constraint in driver_enrollments_status_check driver_enrollments_decision_check driver_enrollments_decided_by_check driver_enrollments_reason_length_check; do
+            psql -v ON_ERROR_STOP=1 -tAc \
+              "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_enrollments' and pc.conname='$constraint'" | grep -qx c
+          done
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select exists (select 1 from pg_constraint pc join pg_class c on c.oid=pc.conrelid join pg_class target on target.oid=pc.confrelid where c.relname='driver_enrollments' and pc.conname='driver_enrollments_user_id_fkey' and pc.contype='f' and pc.confdeltype='c' and target.relname='users')" | grep -qx t
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select exists (select 1 from pg_class ci join pg_namespace ni on ni.oid=ci.relnamespace join pg_index pi on pi.indexrelid=ci.oid where ni.nspname='public' and ci.relname='driver_enrollments_one_open_per_user_uq' and ci.relkind='i' and pi.indisunique and pg_get_indexdef(ci.oid,1,true)='user_id' and pg_get_expr(pi.indpred,pi.indrelid) like '%PENDING%' and pg_get_expr(pi.indpred,pi.indrelid) like '%APPROVED%')" | grep -qx t
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_enrollments' and t.tgname='trg_driver_enrollments_updated_at' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"
 
   app:
@@ -287,6 +300,24 @@ jobs:
           for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql migrations/0005_*.sql migrations/0006_*.sql migrations/0007_*.sql; do
             psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
           done
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { buildApp } from './src/server.js';
+
+          const app = await buildApp();
+          try {
+            const response = await app.inject({ method: 'GET', url: '/api/v1/readyz' });
+            assert.equal(response.statusCode, 503);
+            assert.deepEqual(response.json(), { status: 'degraded', db: 'schema-incomplete' });
+          } finally {
+            await app.close();
+          }
+          NODE
+      # 0010 (BD-AUTH-POLICY-01B-A) backs the live /api/v1/drivers routes: with 0001-0009 but
+      # not 0010, readiness must still fail closed.
+      - name: Apply 0009 without 0010 and assert readiness is incomplete
+        run: |
+          psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f migrations/0009_merchant_identity_contact_authority.sql
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import { buildApp } from './src/server.js';
