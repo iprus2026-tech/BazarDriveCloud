@@ -131,7 +131,11 @@ async function runProfileRoleSwitch(role, userId) {
     const code = ['ROLE_NOT_GRANTED', 'PHONE_NOT_VERIFIED', 'NETWORK'].includes(err?.code) ? err.code : 'ROLE_SWITCH_FAILED';
     return { ok: false, code };
   }
-  if (reply.userId !== userId) return { ok: false, code: 'ROLE_SWITCH_FAILED' };
+  if (reply.userId !== userId) {
+    // The bearer no longer represents the account on screen: re-read it and let admission decide.
+    await bootSession.reconcile();
+    return { ok: false, code: 'ROLE_SWITCH_FAILED', handover: true };
+  }
   const snapshot = await bootSession.reconcile();
   if (snapshot.state !== 'AUTHENTICATED' || snapshot.user?.userId !== userId) {
     return { ok: false, code: 'ROLE_SWITCH_FAILED', handover: true };

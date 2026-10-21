@@ -1626,8 +1626,10 @@ async function profileRoleCaseBody(name) {
       if (name === 'session-lost') return response({ code: 'UNAUTHENTICATED' }, 401);
       if (!server.roles.includes(body.activeRole)) return response({ code: 'ROLE_NOT_GRANTED' }, 403);
       // 'unconfirmed': the reply claims a switch that the server's session never shows.
-      if (name !== 'unconfirmed') server.active = body.activeRole;
-      return response({ user: { userId: 'user-A', sessionId: 'session-user-A', activeRole: body.activeRole,
+      if (name !== 'unconfirmed' && name !== 'foreign-reply') server.active = body.activeRole;
+      // 'foreign-reply': the reply belongs to another account.
+      return response({ user: { userId: name === 'foreign-reply' ? 'user-B' : 'user-A', sessionId: 'session-user-A',
+        activeRole: body.activeRole,
         phoneVerified: true, roles: server.roles.slice() } });
     }
     if (url.endsWith('/auth/session')) {
@@ -1711,6 +1713,22 @@ async function profileRoleCaseBody(name) {
     assert.equal(puts().length, 2, 'the retry repeats the switch');
     assert.equal(user.get().role, 'driver');
     assert.ok(node('pf2-act-role-switch'), 'the retry reaches the driver profile');
+    return;
+  }
+
+  if (name === 'foreign-reply') {
+    // A reply for another account is never applied: the session is re-read and admission
+    // re-renders the route for whoever the server confirms (here still user-A, passenger).
+    const readsBefore = sessionReads();
+    const before = node('pfp-role-switch');
+    before.click(); await settle();
+    assert.equal(puts().length, 1);
+    assert.equal(sessionReads(), readsBefore + 1, 'the bearer is re-read');
+    assert.equal(user.get().role, 'passenger', 'nothing from the foreign reply is applied');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), 'passenger');
+    assert.ok(node('pfp-role-switch'), 'the confirmed account is shown again');
+    assert.notEqual(node('pfp-role-switch'), before, 'admission re-rendered the route');
+    assert.equal(bootState(), undefined);
     return;
   }
 
@@ -3832,8 +3850,8 @@ if (process.argv[2] === '--onboarding-detach-case') {
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
-  for (const scenario of ['both-ways', 'failure-retry', 'unconfirmed', 'session-lost', 'not-granted',
-    'not-granted-close']) {
+  for (const scenario of ['both-ways', 'failure-retry', 'unconfirmed', 'foreign-reply', 'session-lost',
+    'not-granted', 'not-granted-close']) {
     await check('actual app/profile server role switch (BD-AUTH-POLICY-01C-2): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--profile-role-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
