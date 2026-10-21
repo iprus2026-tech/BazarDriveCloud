@@ -392,6 +392,10 @@ for (const role of ['passenger', 'driver']) {
   expect(role + ' role switching never invokes logout', explicitLogoutCalls === before);
   expect(role + ' backend-OFF role switching never calls the injected server switch (01C-2)',
     serverSwitchCalls === 0, String(serverSwitchCalls));
+  if (role === 'driver') {
+    expect('driver backend-OFF keeps the «Перейти в режим пассажира» demo entry (#1088 hides it only ON)',
+      renderedHtml.includes('id="pf2-act-passenger-mode"'));
+  }
   expect(role + ' backend-OFF role switching stays the per-tab override (01C-2)',
     getSmokeRole() === (role === 'passenger' ? 'driver' : 'passenger'), String(getSmokeRole()));
   const submit = clickHandlers.get(role === 'passenger' ? '#pfp-logout' : '#pf2-act-logout');

@@ -50,6 +50,7 @@ register('/rules',       rules);
 register('/profile', context => profile(context, {
   logout: options => authLogout.logout(options),
   switchRole: role => switchProfileRole(context, role),
+  syncRole: () => syncProfileRole(context),
 }));
 let onboardingHandoffOwner = null;
 // BD-AUTH-POLICY-01C-2 — the profile whose server role switch is in flight (see switchProfileRole).
@@ -117,6 +118,44 @@ async function switchProfileRole(context, role) {
     go((location.hash || '#/welcome').slice(1));
   }
   return { ok: outcome.ok, code: outcome.code };
+}
+
+// #1086 — the profile adopts the server's active role on mount (backend-ON). The local role is a
+// cache of the session's role: another tab, a revoke or a switch elsewhere can move the session, and
+// a role-gate refusal then sent the user to a profile that offered the wrong switch. The session is
+// re-read with the profile kept mounted (as in switchProfileRole). A session that no longer confirms
+// this account hands over to admission. A failed read changes nothing.
+async function syncProfileRole(context) {
+  const before = bootSession.getSnapshot();
+  if (!isBackendEnabled() || profileSwitchOwner || !context.isCurrent() || bootSession.hasUncommittedLogin()
+      || before.state !== 'AUTHENTICATED' || !before.user) return { ok: false, code: 'AUTH_STALE' };
+  const userId = before.user.userId;
+  profileSwitchOwner = context;
+  let snapshot;
+  try {
+    snapshot = await bootSession.reconcile();
+  } finally {
+    profileSwitchOwner = null;
+  }
+  if (!context.isCurrent()) return { ok: false, code: 'AUTH_STALE' };
+  if (snapshot.state === 'SESSION_UNKNOWN' || snapshot.state === 'SESSION_RECONCILING') {
+    return { ok: false, code: snapshot.error?.code || 'SESSION_UNKNOWN' };
+  }
+  if (snapshot.state !== 'AUTHENTICATED' || snapshot.user?.userId !== userId) {
+    go((location.hash || '#/welcome').slice(1));
+    return { ok: false, code: 'SESSION_CHANGED' };
+  }
+  const role = snapshot.user.activeRole;
+  if (role !== 'passenger' && role !== 'driver') return { ok: true, changed: false };
+  // The persisted role and the per-tab override are checked separately: a matching override must
+  // not hide a stale persisted role (other tabs and the next visit read user.v1).
+  const override = getSmokeRole();
+  const shown = override || user.get().role;
+  if (user.get().role === role && (!override || override === role)) return { ok: true, changed: false };
+  clearSmokeRole();
+  user.set({ role });
+  if (shown !== role) go('/profile');
+  return { ok: true, changed: true };
 }
 
 async function runProfileRoleSwitch(role, userId) {
