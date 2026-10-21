@@ -4,6 +4,8 @@ import { createFeedPost, createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
 import { isDriverMode, isPassengerMode } from '../ride_actions.js';
+import { isBackendEnabled } from '../api_config.js';
+import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
 import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
 
 const DRAFT_KEY = 'bazardrive.draft.v2';
@@ -551,6 +553,7 @@ export default function composer() {
             <line x1="9" y1="9" x2="15" y2="15"/>
           </svg>
           <span id="composer-error-text"></span>
+          <button type="button" class="bd-btn ghost sm composer__error-cta" id="composer-error-profile" hidden>${PROFILE_CTA_LABEL}</button>
         </div>
 
       </form>
@@ -585,6 +588,7 @@ export default function composer() {
   const draftBtn           = root.querySelector('#composer-draft-btn');
   const errorBox           = root.querySelector('#composer-error');
   const errorText          = root.querySelector('#composer-error-text');
+  const errorProfile       = root.querySelector('#composer-error-profile');
   const fieldsTripPass     = root.querySelector('#fields-trip-passenger');
   const fieldsListing      = root.querySelector('#fields-listing');
   const seatsField         = root.querySelector('#seats-field');
@@ -606,8 +610,11 @@ export default function composer() {
   function updateRoleNote() {
     if (!roleNote) return;
     if (driverMode && activeType === 'passenger') {
-      roleNoteText.textContent =
-        'Вы в режиме водителя. Эта публикация будет создана как пассажирский запрос.';
+      // BD-AUTH-POLICY-01B-C (K3-2): with the backend ON the server refuses a passenger order from a
+      // driver-mode session; a driver ride offer is not available yet (#1081).
+      roleNoteText.textContent = isBackendEnabled()
+        ? ROLE_GATE_TEXT.driverRidePublish
+        : 'Вы в режиме водителя. Эта публикация будет создана как пассажирский запрос.';
       roleNote.hidden = false;
     } else {
       roleNote.hidden = true;
@@ -652,13 +659,15 @@ export default function composer() {
   }
 
   // ── Validation error helpers ────────────────────────────────────
-  function showError(msg) {
+  function showError(msg, { profile = false } = {}) {
     errorText.textContent = msg;
+    if (errorProfile) errorProfile.hidden = !profile;
     errorBox.hidden = false;
   }
   function clearError() {
     errorBox.hidden = true;
     errorText.textContent = '';
+    if (errorProfile) errorProfile.hidden = true;
   }
 
   // ── Draft badge flash ───────────────────────────────────────────
@@ -769,11 +778,20 @@ export default function composer() {
       }
       clearDraft();
       go('/feed');
-    } catch {
-      showError('Не удалось опубликовать. Попробуйте ещё раз.');
+    } catch (err) {
+      // BD-AUTH-POLICY-01B-C (K3-2): a role refusal is explained. A driver-mode «Попутчик» is not
+      // pointed at the role switch (#1081); a passenger-mode view in a driver session is.
+      if (roleGateCode(err) === PASSENGER_ROLE_REQUIRED) {
+        if (isDriverMode(user.get())) showError(ROLE_GATE_TEXT.driverRidePublish);
+        else showError(ROLE_GATE_TEXT.orderCreate, { profile: true });
+      } else {
+        showError('Не удалось опубликовать. Попробуйте ещё раз.');
+      }
       setLoading(false);
     }
   });
+
+  errorProfile?.addEventListener('click', () => go('/profile'));
 
   // ── Event: back button ──────────────────────────────────────────
   root.querySelector('#composer-back').addEventListener('click', () => go('/feed'));

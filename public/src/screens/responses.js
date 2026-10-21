@@ -2,6 +2,7 @@ import { go } from '../router.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import { getOrderById, listOrderOffers, selectOfferOnBackend, DEMO_RESPONSE_KIND } from '../mock_api.js';
+import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED, DRIVER_NOT_ELIGIBLE } from '../role_gate.js';
 import { isBackendEnabled } from '../api_config.js';
 import { findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 import { acceptDriverResponse } from '../ride_actions.js';
@@ -1019,6 +1020,26 @@ function renderResponsesFooter({ retry = false } = {}) {
     </div>`;
 }
 
+// BD-AUTH-POLICY-01B-C (K3-2) — the server refused the offers read or the selection because the
+// session is in driver mode (403 PASSENGER_ROLE_REQUIRED). A retry cannot help: the way out is the
+// profile's server role switch (#1080). No fabricated drivers, no «Проверить отклики».
+function renderRoleGateState() {
+  return `
+    <div class="responses__empty responses__empty--role-gate">
+      <div class="responses__empty-icon" aria-hidden="true">
+        <span class="responses__empty-glow"></span>
+        <span class="responses__empty-icon-inner">${CAR_SVG}</span>
+      </div>
+      <h2 class="responses__empty-title">${ROLE_GATE_TEXT.offersListTitle}</h2>
+      <p class="responses__empty-body">${ROLE_GATE_TEXT.offersListBody}</p>
+    </div>
+    <div class="responses__footer responses__footer--in-scroll">
+      <button type="button" class="bd-btn primary responses__cta" data-action="open-profile">
+        <span>${PROFILE_CTA_LABEL}</span>
+      </button>
+    </div>`;
+}
+
 // BD-DRIVER-MAP-X-15 — accepted-driver handoff card. Rendered in place of the
 // empty search once the linked order has an active trip. Reads the driver-seeded
 // (or passenger-selected) active ride record, falling back to the request when a
@@ -1490,6 +1511,16 @@ export async function runSelectDriverOrchestration(
     try {
       await selectOfferOnBackend({ orderId: request.orderId, driverId: driver.driverId });
     } catch (err) {
+      // BD-AUTH-POLICY-01B-C (K3-2): role refusals are not "another driver won".
+      const gate = roleGateCode(err);
+      if (gate === PASSENGER_ROLE_REQUIRED) {
+        showToast(ROLE_GATE_TEXT.select);
+        return { ok: false, reason: 'passenger-role-required' };
+      }
+      if (gate === DRIVER_NOT_ELIGIBLE) {
+        showToast(ROLE_GATE_TEXT.driverNotEligible);
+        return { ok: false, reason: 'driver-not-eligible' };
+      }
       showToast(err && err.status === 409
         ? 'Этот заказ уже принят другим водителем'
         : 'Не удалось выбрать водителя. Попробуйте ещё раз.');
@@ -1698,6 +1729,9 @@ export default function responses() {
     }
     if (readState === 'error') {
       return { subtitle: 'Отклики недоступны', chip: 'Ошибка загрузки', tone: 'declined' };
+    }
+    if (readState === 'role-gate') {
+      return { subtitle: 'Нужен режим пассажира', chip: 'Режим водителя', tone: 'declined' };
     }
     return responseStatus(effectiveState);
   }
@@ -1919,6 +1953,8 @@ export default function responses() {
       content = renderOffersLoading();
     } else if (isAccepted) {
       content = renderAcceptedDriver(handoffRide, request);
+    } else if (readState === 'role-gate') {
+      content = renderRoleGateState();
     } else if (readState === 'error') {
       content = `${renderEmptyState(request, { error: true })}${renderResponsesFooter({ retry: true })}`;
     } else if (readState === 'empty') {
@@ -1982,6 +2018,15 @@ export default function responses() {
     return true;
   }
 
+  function enterRoleGate() {
+    drivers = [];
+    selectedDriver = null;
+    selectedDriverId = null;
+    effectiveState = 'empty';
+    readState = 'role-gate';
+    renderReadRegion();
+  }
+
   async function loadServerOffers({ isRetry = false } = {}) {
     if (!backendAuthoritative || fixture || !document.body.contains(root)) return;
     const runId = ++offersReadRunId;
@@ -2001,9 +2046,15 @@ export default function responses() {
       selectedDriverId = null;
       reconcileDriverState();
       renderReadRegion();
-    } catch {
+    } catch (err) {
       if (runId !== offersReadRunId || !document.body.contains(root)) return;
       if (settleLatestHandoff()) return;
+      // BD-AUTH-POLICY-01B-C (K3-2): a driver-mode session is refused — show the way to the profile
+      // switch instead of a retry that cannot succeed.
+      if (roleGateCode(err) === PASSENGER_ROLE_REQUIRED) {
+        enterRoleGate();
+        return;
+      }
       // A failed retry from the already-rendered error state keeps the same
       // button node/focus and only clears its local command progress.
       if (isRetry && readState === 'error') {
@@ -2040,6 +2091,11 @@ export default function responses() {
 
       if (event.target.closest('#responses-map')) {
         go('/order-map-draft');
+        return;
+      }
+
+      if (event.target.closest('[data-action="open-profile"]')) {
+        go('/profile');
         return;
       }
 
@@ -2103,6 +2159,10 @@ export default function responses() {
           { showToast: toast },
         );
         if (!outcome.ok) selecting = false;
+        // BD-AUTH-POLICY-01B-C (K3-2): a driver-mode session gets the profile way out; a driver who
+        // lost the grant is re-read (the list may still carry the offer until its TTL, #1082).
+        if (outcome.reason === 'passenger-role-required') enterRoleGate();
+        else if (outcome.reason === 'driver-not-eligible') void loadServerOffers();
         return;
       }
       if (action === 'cancel') {
