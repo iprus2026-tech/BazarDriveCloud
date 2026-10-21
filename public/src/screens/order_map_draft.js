@@ -1039,8 +1039,17 @@ function handleInput(root, target, draft) {
   }
 }
 
+// #1085 — the schedule mode of a click, or null. Only the «Сейчас / Позже» tabs carry one: the form
+// wrapper also holds data-mode (renderValidBody), so a bare closest('[data-mode]') resolved every
+// in-form tap (±50, «Изменить», «Сохранить черновик», «Перейти в профиль») to the current mode and
+// swallowed it before the [data-action] dispatch.
+export function scheduleModeFromTarget(target) {
+  const tab = target && typeof target.closest === 'function' ? target.closest('.omd-tab[data-mode]') : null;
+  return tab?.dataset?.mode ?? null;
+}
+
 function handleModeClick(root, target, draft) {
-  const mode = target.closest('[data-mode]')?.dataset.mode;
+  const mode = scheduleModeFromTarget(target);
   if (mode !== 'now' && mode !== 'later') return false;
   if (form.mode === mode) return true;
   form.mode = mode;

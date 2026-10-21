@@ -430,7 +430,7 @@ expect('driver sheets import the shared trapFocus helper',
 expect('bindSheetChrome installs trapFocus with an isLocked-guarded Escape',
   /releaseTrap = trapFocus\(overlay,\s*\{[\s\S]{0,40}onEscape:[\s\S]{0,150}if \(isLocked\(\)\) return;[\s\S]{0,90}close\(\)/.test(sheets));
 expect('close() releases the trap (focus restore + listener teardown)',
-  /function close\(\)\s*\{\s*releaseTrap\(\);/.test(sheets));
+  /function close\((?:\{ navigate = true \} = \{\})?\)\s*\{\s*releaseTrap\(\);/.test(sheets));
 expect('the bespoke onKey / focusableIn trap is gone (fully migrated)',
   !/function focusableIn/.test(sheets) && !/document\.addEventListener\('keydown', onKey\)/.test(sheets));
 

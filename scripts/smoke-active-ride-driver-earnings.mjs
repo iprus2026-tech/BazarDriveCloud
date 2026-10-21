@@ -174,6 +174,11 @@ expect('ride history is still persisted in renderCompleted',
 
 // ── G2. Follow-up regressions (Codex review after #378) ──────
 // 1) Dismissing the earnings sheet must leave an exit, not a blank map.
+// #1048 — the navigation buttons close the sheet without its onClose exit, then navigate once.
+expect('#1048: earnings navigation closes the sheet with navigate:false, never the onClose exit',
+  /const closeForNavigation = \(\) => \{ if \(overlay\.__closeSheet\) overlay\.__closeSheet\(\{ navigate: false \}\); \};/.test(sheets)
+  && (sheets.match(/closeForNavigation\(\);/g) || []).length === 5
+  && /function close\(\{ navigate = true \} = \{\}\) \{[\s\S]{0,120}if \(navigate && typeof options\.onClose === 'function'\) options\.onClose\(\);/.test(sheets));
 expect('renderCompleted wires an onClose exit to /driver-map',
   /onClose:\s*\(\)\s*=>\s*go\('\/driver-map'\)/.test(screen));
 // BD-RIDE-D-11 (#403) — secondary nav row routes
