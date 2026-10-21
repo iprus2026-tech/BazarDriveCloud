@@ -580,11 +580,13 @@ expect('arrivingDropoffAmount: an authoritative ride takes a separate branch con
   arrivingDropoffAmountBody.includes('if (ride && ride.authoritative) {')
     && arrivingDropoffAmountBody.includes('const order = ride.order || {};')
     && arrivingDropoffAmountBody.includes("return order.offerPrice || '—';"));
-expect('arrivingDropoffAmount: the local/backend-off branch preserves the exact prior real-value priority chain and "1 540 ₽" fallback, unbroken',
+// #1070 п.4 — the mock «1 540 ₽» is the last resort with the backend OFF only; ON gets «—».
+expect('arrivingDropoffAmount: the non-authoritative branch keeps the real-value priority chain; the "1 540 ₽" fallback is backend-OFF only, "—" when ON',
   arrivingDropoffAmountBody.includes('const pay = (ride && ride.payment) || {};')
     && arrivingDropoffAmountBody.includes('const r = (ride && ride.ride) || {};')
     && arrivingDropoffAmountBody.includes('const order = (ride && ride.order) || {};')
-    && arrivingDropoffAmountBody.includes("return pay.dropoffAmount || pay.amount || r.price || order.offerPrice || '1 540 ₽';"));
+    && arrivingDropoffAmountBody.includes("const fallback = isBackendEnabled() ? '—' : '1 540 ₽';")
+    && arrivingDropoffAmountBody.includes('return pay.dropoffAmount || pay.amount || r.price || order.offerPrice || fallback;'));
 expect('arrivingDropoffAmount: the authoritative branch is structurally first, so it can never fall through into the pay/r.price chain',
   arrivingDropoffAmountBody.indexOf('if (ride && ride.authoritative) {') < arrivingDropoffAmountBody.indexOf('const pay = (ride && ride.payment) || {};'));
 expect('arrivingDropoffAmount is exported for direct deterministic testing (its authoritative branch is otherwise unobservable through the live DOM — see smoke-passenger-active-ride-local-sync-runtime.mjs)',

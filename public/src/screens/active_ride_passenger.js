@@ -736,7 +736,10 @@ export function arrivingDropoffAmount(ride) {
   const pay = (ride && ride.payment) || {};
   const r = (ride && ride.ride) || {};
   const order = (ride && ride.order) || {};
-  return pay.dropoffAmount || pay.amount || r.price || order.offerPrice || '1 540 ₽';
+  // #1070 п.4 — with the backend ON a ride the server has not confirmed gets the
+  // neutral «—» instead of the Cloud Design mock number; backend OFF keeps the mock.
+  const fallback = isBackendEnabled() ? '—' : '1 540 ₽';
+  return pay.dropoffAmount || pay.amount || r.price || order.offerPrice || fallback;
 }
 
 // BD-RIDE-WAITING-01E — remaining/paidStartsAt are time-dependent values a

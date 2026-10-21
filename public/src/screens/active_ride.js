@@ -599,7 +599,16 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       ...ride,
       tripId: srv.tripId || ride.tripId,
       status: (pendingStatus != null && srv.status !== pendingStatus) ? ride.status : (srv.status || ride.status),
-      passenger: keep(ride.passenger, srv.passenger),
+      // #1052 — the passenger exactly as the server knows them, never a seed's demo
+      // note, rating or luggage (SIM_AUDIT). The note is the order comment the ride
+      // carries (ride.order.comment); a null rating means none.
+      passenger: {
+        name: srv.passenger?.name ?? null,
+        initials: srv.passenger?.initials ?? null,
+        rating: srv.passenger?.rating ?? null,
+        phoneMasked: srv.passenger?.phoneMasked ?? null,
+        note: srv.order?.comment ?? null,
+      },
       driver: keep(ride.driver, srv.driver),
       // A successful server read replaces route/order display projections.
       // Omitted fields must not survive from an old seed or direct-entry demo.
@@ -1146,7 +1155,9 @@ export default function activeRide({ isCurrent = () => true } = {}) {
 
   function passengerRowHtml(passenger) {
     const note = passenger.note || passenger.comment || '';
-    return `<div class="active-ride__passenger"><div class="active-ride__passenger-main"><div class="active-ride__avatar" aria-hidden="true">${escapeHtml(passenger.initials || 'АМ')}</div><div class="active-ride__passenger-info"><div class="active-ride__passenger-name">${escapeHtml(passenger.name || '')}<span class="active-ride__passenger-rating">★ ${escapeHtml(passenger.rating || '')}</span></div><div class="active-ride__passenger-meta">${escapeHtml(passenger.phoneMasked || '')}${passenger.luggage ? ` · ${escapeHtml(passenger.luggage)}` : ''}</div></div></div><div class="active-ride__passenger-actions"><button type="button" class="active-ride__icon-action" id="ar-msg" aria-label="Написать пассажиру">${arIcon('chat', 18)}</button><button type="button" class="active-ride__icon-action" id="ar-call" aria-label="Позвонить пассажиру">${arIcon('phone', 18)}</button></div></div>${note ? `<div class="active-ride__passenger-note">${escapeHtml(note)}</div>` : ''}`;
+    // No rating (a server ride carries none today) shows no star, not an empty «★».
+    const ratingHtml = passenger.rating ? `<span class="active-ride__passenger-rating">★ ${escapeHtml(passenger.rating)}</span>` : '';
+    return `<div class="active-ride__passenger"><div class="active-ride__passenger-main"><div class="active-ride__avatar" aria-hidden="true">${escapeHtml(passenger.initials || 'АМ')}</div><div class="active-ride__passenger-info"><div class="active-ride__passenger-name">${escapeHtml(passenger.name || '')}${ratingHtml}</div><div class="active-ride__passenger-meta">${escapeHtml(passenger.phoneMasked || '')}${passenger.luggage ? ` · ${escapeHtml(passenger.luggage)}` : ''}</div></div></div><div class="active-ride__passenger-actions"><button type="button" class="active-ride__icon-action" id="ar-msg" aria-label="Написать пассажиру">${arIcon('chat', 18)}</button><button type="button" class="active-ride__icon-action" id="ar-call" aria-label="Позвонить пассажиру">${arIcon('phone', 18)}</button></div></div>${note ? `<div class="active-ride__passenger-note">${escapeHtml(note)}</div>` : ''}`;
   }
 
   function bindPassengerActions() {

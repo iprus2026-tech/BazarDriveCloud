@@ -527,6 +527,18 @@ if (exists(orderLifecycleClientSmoke)) {
   }
 }
 
+// Slice 4c client (#1052, #1070 p.4): the driver's passenger row is the server's passenger (the
+// order comment as the note, no demo note/rating/luggage); no mock fare with the backend ON.
+const rideOrderCommentClientSmoke = path.join(root, 'scripts', 'smoke-ride-order-comment-client.mjs');
+if (exists(rideOrderCommentClientSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideOrderCommentClientSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-order-comment-client.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt
