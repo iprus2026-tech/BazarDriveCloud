@@ -11,7 +11,9 @@
 // to anonymous callers, so it is withheld here. `passenger.isCurrentUser` is recomputed PER
 // VIEWER from the order's owner (passenger_id) vs the authenticated viewer; an anonymous viewer
 // always gets false.
-//
+
+import { rideNoteText, rideOrderComment } from './domain/ride-order-comment.js';
+
 // The server computes passenger.isCurrentUser per viewer. The client feed mapper
 // (mock_api.rideOrderToFeedPost) consumes it for backend ownership and author labels;
 // the public /orders projection exposes no passenger PII.
@@ -111,6 +113,8 @@ export function serializeRide(row) {
     },
     order: {
       offerPrice: row.order_offer_price ?? null, // the agreed fare (accepted offer's bid, R10)
+      // #1052: the order comment the driver reads, seeded at /select (rides.passenger_note).
+      comment: rideNoteText(row.passenger_note),
     },
     cancel: {
       by: row.cancel_by ?? null,
@@ -230,7 +234,8 @@ export function serializeRecoveredRide(ride, { order, acceptedOffer }) {
       etaToPickup: null,
       etaToDestination: null,
     },
-    order: { offerPrice: price },
+    // #1052: reprojected from the immutable order by the same rule as the /select seed.
+    order: { offerPrice: price, comment: rideOrderComment(order) },
     cancel: {
       by: ride.cancel_by ?? null,
       reason: ride.cancel_reason ?? null,
