@@ -894,10 +894,19 @@ expect('the boarded handler still PATCHes the server first (when backendWriteCan
   })());
 expect('a boarding PATCH failure returns before any local save/update (catch block returns before saveActiveRide(ride))',
   (() => {
-    const catchIdx = boardedHandlerOuter.indexOf("catch (err) {\n              localToast");
+    const catchIdx = boardedHandlerOuter.indexOf("catch (err) {\n              toast(");
     const saveIdx = boardedHandlerOuter.indexOf('saveActiveRide(ride);');
     const catchBlock = boardedHandlerOuter.slice(catchIdx, saveIdx);
     return catchIdx !== -1 && saveIdx !== -1 && /return;/.test(catchBlock);
+  })());
+// #1102 review — localToast belongs to renderPassengerRideComplete only; a call from the
+// live-ride screen was a ReferenceError that swallowed the boarding-failure message.
+expect('localToast is called only inside renderPassengerRideComplete (its own scope)',
+  (() => {
+    const complete = functionBody(passenger, 'renderPassengerRideComplete');
+    const calls = passenger.match(/\blocalToast\(/g) || [];
+    const inside = complete.match(/\blocalToast\(/g) || [];
+    return complete.length > 0 && calls.length > 0 && calls.length === inside.length;
   })());
 expect('boarding did not gain a second/extra patchRideStatus call',
   (boardedHandlerOuter.match(/patchRideStatus\(/g) || []).length === 1);

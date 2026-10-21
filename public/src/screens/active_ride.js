@@ -755,9 +755,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       })
       .catch((err) => {
         pendingStatus = null;
-        showNotice(err && err.code === 'RIDE_TERMINAL'
-          ? 'Поездка уже завершена'
-          : 'Не удалось подтвердить «не вышел» на сервере');
+        showNotice(rideWriteFailureText(err, 'Не удалось подтвердить «не вышел» на сервере'));
         refetchRideAndRender();
         throw err;
       });

@@ -1041,6 +1041,12 @@ async function orderLifecycleMismatchChecks() {
     done.api.complete();
     await flush();
     assert.deepEqual(done.calls.notices.at(-1), [mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT]);
+    // #1102 review — the no-show refusal names the mismatch too, and still rejects to its caller.
+    const noShow = commandHarness({ status: 'WAITING_PASSENGER' });
+    noShow.patchQueue.push(mismatch);
+    const refused = await observe(noShow.api.noShow());
+    assert.equal(refused.error?.code, 'ORDER_LIFECYCLE_MISMATCH');
+    assert.deepEqual(noShow.calls.notices.at(-1), [mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT]);
   });
 
   await check('sheet shows a final refusal and keeps the command off', async () => {

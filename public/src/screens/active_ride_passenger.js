@@ -2467,7 +2467,7 @@ export default function activeRidePassenger(options = {}) {
           if (backendWriteCandidate) {
             try { await patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS); }
             catch (err) {
-              localToast(err && err.code === 'RIDE_TERMINAL'
+              toast(err && err.code === 'RIDE_TERMINAL'
                 ? 'Поездка уже завершена'
                 : (err && err.code === ORDER_LIFECYCLE_MISMATCH
                   ? ORDER_LIFECYCLE_MISMATCH_TEXT
