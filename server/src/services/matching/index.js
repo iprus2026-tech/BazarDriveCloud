@@ -8,32 +8,20 @@
 // Identity is recomputed per request; ownership is re-validated server-side (BD-DOCS-032 dec. 4).
 // BD-RIDE-AUTHORITY-01B-A (docs/ride-state-receipt-authority-contract.md §2): POST /offers requires a
 // granted, active driver role — current grants are read from users.roles inside the offer tx, BEFORE
-// the order lookup, so a non-driver learns nothing about order existence. GET /offers and /select keep
-// their owner checks; a passenger active-role gate on them is deferred to #830. No product path grants
-// the driver role yet (#1042 / #830). The PWA write cutover is R18; until then only this server + tests
-// exercise these routes.
+// the order lookup, so a non-driver learns nothing about order existence. BD-AUTH-POLICY-01B-C
+// (docs/driver-role-grant-contract.md §4): GET /offers and /select require a granted, active passenger
+// role, checked the same way before any order lookup; their owner checks are unchanged. /select also
+// re-checks that the selected driver still holds the driver grant (409 DRIVER_NOT_ELIGIBLE).
 import { newOfferId } from '../../infra/ids.js';
-import { resolveActorAuthority, requireDriverActor } from '../auth/authority.js';
+import { resolveActorAuthority, requireDriverActor, requirePassengerActor, roleAuthorityProblem } from '../auth/authority.js';
+import { lockUserGrantsForShare } from '../../repositories/users.js';
 import { serializeOffer, serializeOrder, serializeAssignment, serializeRide, serializeRecoveredOffer } from '../../serialize.js';
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
-import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
+import { upsertOffer, findOfferByOrderDriver, findLiveOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
 import { insertAssignment } from '../../repositories/assignment.js';
 import { bootstrapRide, lockConflictRideForSelection, findRecoveryBundleByOrderId } from '../../repositories/rides.js';
 import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
 import { validateRecoveryLinkage } from '../../domain/select-recovery-linkage.js';
-
-// Map a denied driver-authority result (services/auth/authority.js) to the offer route's problem
-// tuple [status, code, error, retryable] (contract §2).
-const UNAUTHENTICATED_AUTHORITY = new Set(['UNAUTHENTICATED', 'INVALID_SESSION_ACTOR', 'ACCOUNT_NOT_FOUND']);
-function driverAuthorityProblem(authority) {
-  if (authority.reason === 'AUTHORITY_LOOKUP_FAILED') {
-    return [503, 'AUTHORITY_LOOKUP_FAILED', 'authority lookup failed', true];
-  }
-  if (UNAUTHENTICATED_AUTHORITY.has(authority.reason)) {
-    return [401, 'UNAUTHENTICATED', 'authentication required', false];
-  }
-  return [403, 'DRIVER_ROLE_REQUIRED', 'a granted, active driver role is required', false];
-}
 
 // Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
 // client's `${n.toLocaleString('ru-RU')} ₽`. Returns null for a non-finite value.
@@ -121,7 +109,7 @@ export default async function matchingService(app) {
     const result = await app.db.tx(async (client) => {
       // Driver authority first (contract §2), on the same tx client as the offer write.
       const authority = requireDriverActor(await resolveActorAuthority(client, viewer));
-      if (!authority.ok) return { err: driverAuthorityProblem(authority) };
+      if (!authority.ok) return { err: roleAuthorityProblem(authority, 'driver') };
       const order = await lockOrderByLegacyId(client, b.orderId);
       if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found'] };
       // A driver cannot offer on their OWN order — no self-candidate (Codex #790).
@@ -171,6 +159,11 @@ export default async function matchingService(app) {
     const viewer = await req.resolveUser();
     if (req.authError) return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
     if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
+
+    // Passenger authority first (contract §4), before the order lookup: a driver-mode session
+    // learns nothing about order existence.
+    const authority = requirePassengerActor(await resolveActorAuthority(app.db, viewer));
+    if (!authority.ok) return problem(reply, ...roleAuthorityProblem(authority, 'passenger'));
 
     const order = await findOrderByLegacyId(app.db, req.query.orderId);
     if (!order) return problem(reply, 404, 'ORDER_NOT_FOUND', 'order not found');
@@ -238,6 +231,9 @@ export default async function matchingService(app) {
 
     const { orderId, driverId } = req.body;
     const result = await app.db.tx(async (client) => {
+      // Passenger authority first (contract §4), on the select tx client, before the order lock.
+      const authority = requirePassengerActor(await resolveActorAuthority(client, viewer));
+      if (!authority.ok) return { err: roleAuthorityProblem(authority, 'passenger') };
       const order = await lockOrderByLegacyId(client, orderId);
       if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found'] };
       if (String(order.passenger_id) !== String(viewer.userId)) {
@@ -254,6 +250,19 @@ export default async function matchingService(app) {
       // A malformed (non-uuid) driverId can have no offer — return 404 rather than letting it hit
       // the uuid column and raise a pg cast error (500).
       if (!UUID_RE.test(driverId)) return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
+      // A live offer from that driver first (acceptOffer's own predicate): without one the answer
+      // is 404 whatever the account is, so the grant check below reveals nothing about accounts
+      // that never offered on this order.
+      if (!(await findLiveOfferByOrderDriver(client, order.id, driverId))) {
+        return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
+      }
+      // The selected driver must still hold the driver grant (contract §4), before anything is
+      // written. FOR SHARE serializes with a concurrent revoke, which locks the same users row FOR
+      // UPDATE: the revoke either committed before this read, or waits for this selection.
+      const driverGrants = await lockUserGrantsForShare(client, driverId);
+      if (!driverGrants || !Array.isArray(driverGrants.roles) || !driverGrants.roles.includes('driver')) {
+        return { err: [409, 'DRIVER_NOT_ELIGIBLE', 'the selected driver can no longer take this order'] };
+      }
 
       const accepted = await acceptOffer(client, order.id, driverId);
       if (!accepted) return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
@@ -291,7 +300,7 @@ export default async function matchingService(app) {
       return { ok: { order: updatedOrder, accepted, assignment, ride } };
     });
 
-    if (result.err) return problem(reply, result.err[0], result.err[1], result.err[2]);
+    if (result.err) return problem(reply, ...result.err);
     return reply.code(200).send({
       order: serializeOrder(result.ok.order, { viewerId: viewer.userId }),
       offer: serializeOffer(result.ok.accepted, { orderLegacyId: orderId }),

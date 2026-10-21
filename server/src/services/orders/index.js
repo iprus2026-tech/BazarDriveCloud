@@ -2,7 +2,8 @@
 // #784. Routes (mounted at /api/v1/orders):
 //   GET  /  -> { items: [order] }   PUBLIC — the feed / nearby read (CREATED only, newest first,
 //                                   per-viewer isCurrentUser). The PWA feed seam (R13) calls this.
-//   POST /  -> 201 { order }        REQUIRES a verified session — the passenger creating the order.
+//   POST /  -> 201 { order }        REQUIRES a session with a granted, active passenger role and a
+//                                   verified phone (BD-AUTH-POLICY-01B-C; 403 PASSENGER_ROLE_REQUIRED).
 //
 // Geo "nearby" is #4 (deferred): today the list is newest CREATED. Identity is recomputed per
 // request (never trusts a client-sent authorId / isCurrentUser). The PWA write cutover is R18;
@@ -10,6 +11,7 @@
 import { newOrderId } from '../../infra/ids.js';
 import { serializeOrder } from '../../serialize.js';
 import { insertOrder, listCreatedOrders } from '../../repositories/orders.js';
+import { resolveActorAuthority, requirePassengerActor, roleAuthorityProblem } from '../auth/authority.js';
 
 // A route point. The SHIPPED client stores { id, label } today (order_map_draft.js / composer.js)
 // and the route-picker adds { hint, source, coords }; typed lng/lat geo is #4 (deferred, coords is
@@ -88,24 +90,34 @@ export default async function ordersService(app) {
     }
 
     const b = req.body;
-    const row = await insertOrder(app.db, {
-      legacyId: newOrderId(),
-      passengerId: viewer.userId,
-      type: b.type ?? 'passenger_request',
-      source: b.source ?? 'map',
-      pickup: b.pickup ?? null,
-      dropoff: b.dropoff ?? null,
-      distanceKm: b.distanceKm ?? 0,
-      durationMin: b.durationMin ?? 0,
-      estimatedPrice: b.estimatedPrice ?? 0,
-      estimatedPriceLabel: b.estimatedPriceLabel ?? '',
-      scheduledMode: b.scheduledMode ?? 'now',
-      scheduledAt: b.scheduledAt ?? '',
-      scheduledLabel: b.scheduledLabel ?? '',
-      comment: b.comment ?? '',
-      passengerSnapshot: sanitizeSnapshot(b.passenger, viewer.userId),
+    const result = await app.db.tx(async (client) => {
+      // Passenger authority first (contract §4), on the same tx client as the insert.
+      const authority = requirePassengerActor(await resolveActorAuthority(client, viewer));
+      if (!authority.ok) return { err: roleAuthorityProblem(authority, 'passenger') };
+      const row = await insertOrder(client, {
+        legacyId: newOrderId(),
+        passengerId: viewer.userId,
+        type: b.type ?? 'passenger_request',
+        source: b.source ?? 'map',
+        pickup: b.pickup ?? null,
+        dropoff: b.dropoff ?? null,
+        distanceKm: b.distanceKm ?? 0,
+        durationMin: b.durationMin ?? 0,
+        estimatedPrice: b.estimatedPrice ?? 0,
+        estimatedPriceLabel: b.estimatedPriceLabel ?? '',
+        scheduledMode: b.scheduledMode ?? 'now',
+        scheduledAt: b.scheduledAt ?? '',
+        scheduledLabel: b.scheduledLabel ?? '',
+        comment: b.comment ?? '',
+        passengerSnapshot: sanitizeSnapshot(b.passenger, viewer.userId),
+      });
+      return { row };
     });
-    return reply.code(201).send({ order: serializeOrder(row, { viewerId: viewer.userId }) });
+    if (result.err) {
+      const [status, code, error, retryable] = result.err;
+      return reply.code(status).send({ error, code, retryable });
+    }
+    return reply.code(201).send({ order: serializeOrder(result.row, { viewerId: viewer.userId }) });
   });
 }
 

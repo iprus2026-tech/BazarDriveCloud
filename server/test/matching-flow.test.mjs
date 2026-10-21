@@ -95,11 +95,14 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
   }
 
   // a granted driver: unknown order -> 404; the driver cannot offer on their OWN order (Codex #790).
-  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: 'order-nope' }, bearer(drvS))).statusCode, 404);
+  // The account creates that order while still a passenger (BD-AUTH-POLICY-01B-C: a driver-mode
+  // session cannot create orders), then becomes a driver.
+  const drvAsPassenger = await mintSession(app, drv);
   const drvOrder = (await post(app, '/api/v1/orders',
-    { pickup: { label: 'Гараж' }, dropoff: { label: 'Вокзал' } }, bearer(drvS))).json().order;
+    { pickup: { label: 'Гараж' }, dropoff: { label: 'Вокзал' } }, bearer(drvAsPassenger))).json().order;
   orderIds.push(drvOrder.id);
+  const drvS = await grantDriverRole(cleanup, drvAsPassenger);
+  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: 'order-nope' }, bearer(drvS))).statusCode, 404);
   const selfOffer = await post(app, '/api/v1/matching/offers', { orderId: drvOrder.id }, bearer(drvS));
   assert.equal(selfOffer.statusCode, 403, 'self-offer is forbidden');
   assert.equal(selfOffer.json().code, 'CANNOT_OFFER_OWN_ORDER');
