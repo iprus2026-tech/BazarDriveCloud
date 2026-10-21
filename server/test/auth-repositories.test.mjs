@@ -104,9 +104,13 @@ test('auth repositories round-trip against real Postgres (rolled back)',
       assert.equal(u2.id, u1.id, 'same phone => SAME account id (distinct identity per phone)');
       const found = await findUserByPhone(db, phone);
       assert.equal(found.id, u1.id);
+      // BD-AUTH-POLICY-01B-C: a legacy roleless identity is backfilled at login with the
+      // passenger grant every new OTP account has (#1017); without it the passenger gates
+      // would lock it out of orders and selection.
       const existingVerified = await resolveVerifiedLoginUser(db, { phone });
-      assert.deepEqual(existingVerified.roles, [], 'existing roleless identity gets no automatic grant');
-      assert.equal(existingVerified.active_role, null);
+      assert.equal(existingVerified.id, u1.id);
+      assert.deepEqual(existingVerified.roles, ['passenger'], 'existing roleless identity gets the passenger grant');
+      assert.equal(existingVerified.active_role, 'passenger');
       const newPhone = phone + '1';
       const passenger = await resolveVerifiedLoginUser(db, { phone: newPhone });
       assert.equal(passenger.phone_verified, true);
@@ -121,6 +125,18 @@ test('auth repositories round-trip against real Postgres (rolled back)',
       assert.equal(driver.active_role, 'driver');
       assert.deepEqual(await findUserAuthorityById(db, passenger.id),
         { id: passenger.id, roles: ['driver'], phone_verified: true }, 'reader observes changed current grants');
+      // Existing grants are never touched; an empty active role is filled only with a held passenger grant.
+      await db.query("UPDATE users SET roles = ARRAY['driver']::text[], active_role = NULL WHERE id = $1", [passenger.id]);
+      const driverOnly = await resolveVerifiedLoginUser(db, { phone: newPhone });
+      assert.deepEqual(driverOnly.roles, ['driver'], 'a driver-only grant gains no passenger grant');
+      assert.equal(driverOnly.active_role, null, 'no active role is invented for an ungranted passenger');
+      await db.query("UPDATE users SET roles = ARRAY['passenger','driver']::text[], active_role = NULL WHERE id = $1", [passenger.id]);
+      const dual = await resolveVerifiedLoginUser(db, { phone: newPhone });
+      assert.deepEqual(dual.roles, ['passenger', 'driver'], 'dual grants are kept as they are');
+      assert.equal(dual.active_role, 'passenger', 'an empty active role becomes the held passenger role');
+      await db.query("UPDATE users SET active_role = 'driver' WHERE id = $1", [passenger.id]);
+      const driverMode = await resolveVerifiedLoginUser(db, { phone: newPhone });
+      assert.equal(driverMode.active_role, 'driver', 'a set active role is never replaced');
 
       // OTP lifecycle. NOTE: now() is frozen for the whole transaction, so created_at is
       // stamped explicitly to give each row a distinct, deterministic recency.

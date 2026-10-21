@@ -29,11 +29,24 @@ async function fixture(t, existing = null, { failSession = false } = {}) {
       assert.equal(transactions, 1);
       assert.match(q, /VALUES \(\$1, TRUE, ARRAY\['passenger'\]::text\[\], 'passenger'\)/);
       const conflict = q.split('DO UPDATE SET ')[1].split(' RETURNING')[0];
-      assert.equal(conflict, 'phone_verified = TRUE, updated_at = now()',
-        'conflict cannot assign roles or active_role');
+      // BD-AUTH-POLICY-01B-C: the conflict keeps existing grants and a set active role; it only
+      // backfills an EMPTY grant set and an EMPTY active role (when passenger is or becomes granted).
+      assert.equal(conflict, "phone_verified = TRUE, "
+        + "roles = CASE WHEN cardinality(users.roles) = 0 THEN ARRAY['passenger']::text[] ELSE users.roles END, "
+        + "active_role = CASE WHEN users.active_role IS NULL AND (cardinality(users.roles) = 0 "
+        + "OR 'passenger' = ANY(users.roles)) THEN 'passenger' ELSE users.active_role END, updated_at = now()",
+      'the conflict only backfills empty grants and an empty active role');
       if (!state.user) state.user = { id: 'new-user', phone: args[0],
         role: null, roles: ['passenger'], active_role: 'passenger', phone_verified: true };
-      else state.user.phone_verified = true;
+      else {
+        // Mirror the SQL: every SET expression reads the OLD row.
+        const empty = state.user.roles.length === 0;
+        if (state.user.active_role == null && (empty || state.user.roles.includes('passenger'))) {
+          state.user.active_role = 'passenger';
+        }
+        if (empty) state.user.roles = ['passenger'];
+        state.user.phone_verified = true;
+      }
       return { rows: [structuredClone(state.user)] };
     }
     if (q.startsWith('INSERT INTO auth_session')) {
@@ -98,24 +111,27 @@ test('new verified user is passenger; session confirms it; replay cannot mint; r
   assert.notEqual(repeated.token, body.token);
 });
 
-for (const [label, roles, activeRole, expected] of [
-  ['passenger', ['passenger'], 'passenger', 'passenger'],
-  ['driver-only', ['driver'], 'driver', 'driver'],
-  ['dual driver selected', ['passenger', 'driver'], 'driver', 'driver'],
-  ['dual passenger selected', ['driver', 'passenger'], 'passenger', 'passenger'],
-  ['roleless', [], null, null],
-  ['passenger without selection', ['passenger'], null, null],
-  ['passenger without grant', [], 'passenger', null],
-  ['driver without grant', ['passenger'], 'driver', null],
+// Login keeps existing grants and a set active role. BD-AUTH-POLICY-01B-C backfills only an EMPTY
+// grant set (-> passenger) and an EMPTY active role when passenger is (or becomes) granted.
+for (const [label, roles, activeRole, rolesAfter, activeAfter, expected] of [
+  ['passenger', ['passenger'], 'passenger', ['passenger'], 'passenger', 'passenger'],
+  ['driver-only', ['driver'], 'driver', ['driver'], 'driver', 'driver'],
+  ['dual driver selected', ['passenger', 'driver'], 'driver', ['passenger', 'driver'], 'driver', 'driver'],
+  ['dual passenger selected', ['driver', 'passenger'], 'passenger', ['driver', 'passenger'], 'passenger', 'passenger'],
+  ['roleless', [], null, ['passenger'], 'passenger', 'passenger'],
+  ['passenger without selection', ['passenger'], null, ['passenger'], 'passenger', 'passenger'],
+  ['passenger without grant', [], 'passenger', ['passenger'], 'passenger', 'passenger'],
+  ['driver without grant', ['passenger'], 'driver', ['passenger'], 'driver', null],
+  ['driver-only without selection', ['driver'], null, ['driver'], null, null],
 ]) {
-  test('existing ' + label + ' preserves grants and selection; validates session snapshot', async t => {
+  test('existing ' + label + ': login keeps grants, backfills only empty ones; validates session snapshot', async t => {
     const existing = { id: 'existing-user', role: 'driver', roles, active_role: activeRole,
       phone_verified: false };
     const f = await fixture(t, existing);
     const res = await f.verify();
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(f.state().user.roles, roles);
-    assert.equal(f.state().user.active_role, activeRole);
+    assert.deepEqual(f.state().user.roles, rolesAfter);
+    assert.equal(f.state().user.active_role, activeAfter);
     assert.equal(f.state().user.role, 'driver');
     assert.equal(res.json().user.activeRole, expected);
     assert.equal(f.state().sessions[0].active_role, expected);

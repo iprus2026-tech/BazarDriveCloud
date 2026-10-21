@@ -1,5 +1,6 @@
 // Current-account authority: no session/account mutations. Wired into POST /matching/offers
-// (BD-RIDE-AUTHORITY-01B-A); the remaining protected mutations stay pending under #830.
+// (driver, BD-RIDE-AUTHORITY-01B-A) and into POST /orders, GET /matching/offers and
+// POST /matching/select (passenger, BD-AUTH-POLICY-01B-C; docs/driver-role-grant-contract.md §4).
 // This is a read snapshot, not a reusable permit for a later protected mutation — callers
 // resolve it on the same transaction client as the mutation it guards.
 import { findUserAuthorityById } from '../../repositories/users.js';
@@ -65,4 +66,23 @@ export function requirePassengerActor(authority) {
 
 export function requireDriverActor(authority) {
   return requireRoleActor(authority, 'driver');
+}
+
+// Map a denied role-guard result to a route problem tuple [status, code, error, retryable]
+// (contract §2 for the driver, §4 for the passenger). A lookup failure is retryable; the
+// unauthenticated family is 401; every other denial is the role's 403.
+const UNAUTHENTICATED_AUTHORITY = new Set(['UNAUTHENTICATED', 'INVALID_SESSION_ACTOR', 'ACCOUNT_NOT_FOUND']);
+const ROLE_REQUIRED = Object.freeze({
+  driver: ['DRIVER_ROLE_REQUIRED', 'a granted, active driver role is required'],
+  passenger: ['PASSENGER_ROLE_REQUIRED', 'a granted, active passenger role is required'],
+});
+export function roleAuthorityProblem(authority, role) {
+  if (authority.reason === 'AUTHORITY_LOOKUP_FAILED') {
+    return [503, 'AUTHORITY_LOOKUP_FAILED', 'authority lookup failed', true];
+  }
+  if (UNAUTHENTICATED_AUTHORITY.has(authority.reason)) {
+    return [401, 'UNAUTHENTICATED', 'authentication required', false];
+  }
+  const [code, error] = ROLE_REQUIRED[role];
+  return [403, code, error, false];
 }

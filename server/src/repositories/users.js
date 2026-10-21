@@ -65,14 +65,22 @@ export async function markPhoneVerified(db, userId) {
 }
 
 // Only called after OTP consumption, on the SAME transaction client as session creation.
-// INSERT is the first-user decision; a conflicting identity never receives new grants.
+// INSERT is the first-user decision. A conflicting identity keeps its grants, with one exception
+// (BD-AUTH-POLICY-01B-C): a legacy account with NO grants gets the passenger grant every new OTP
+// account has (#1017), and an empty active role becomes passenger only when passenger is granted.
 export async function resolveVerifiedLoginUser(db, { phone }) {
   if (!phone) throw new Error('resolveVerifiedLoginUser requires a non-empty phone');
   const { rows } = await db.query(
     `INSERT INTO users (phone, phone_verified, roles, active_role)
        VALUES ($1, TRUE, ARRAY['passenger']::text[], 'passenger')
        ON CONFLICT (phone) WHERE phone IS NOT NULL
-       DO UPDATE SET phone_verified = TRUE, updated_at = now()
+       DO UPDATE SET phone_verified = TRUE,
+         roles = CASE WHEN cardinality(users.roles) = 0
+                      THEN ARRAY['passenger']::text[] ELSE users.roles END,
+         active_role = CASE WHEN users.active_role IS NULL
+                             AND (cardinality(users.roles) = 0 OR 'passenger' = ANY(users.roles))
+                            THEN 'passenger' ELSE users.active_role END,
+         updated_at = now()
      RETURNING id, role, active_role, roles, phone, phone_verified`,
     [phone],
   );
@@ -82,6 +90,20 @@ export async function resolveVerifiedLoginUser(db, { phone }) {
 // --- Role grants (BD-AUTH-POLICY-01B-A, docs/driver-role-grant-contract.md §1) ---
 // Called only by services/driver-enrollment/decisions.js, on the transaction client of the
 // enrollment decision, so the application row and users.roles change together.
+
+// The selected driver's current grants inside the /matching/select transaction (BD-AUTH-POLICY-
+// 01B-C). FOR SHARE: a concurrent grant decision (lockUserForGrant, FOR UPDATE) waits for the
+// selection, or the selection reads the decision it waited for.
+export async function lockUserGrantsForShare(db, userId) {
+  const { rows } = await db.query(
+    `SELECT id, roles
+       FROM users
+      WHERE id = $1
+      FOR SHARE`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
 
 // Row-lock the account before a grant decision (serializes concurrent applications/decisions).
 export async function lockUserForGrant(db, userId) {
