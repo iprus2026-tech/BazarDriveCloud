@@ -175,7 +175,9 @@ export default async function matchingService(app) {
     const hasFootprint = bundle.candidate_ride_count >= 1
       || bundle.assignment != null
       || (bundle.offers ?? []).some((o) => o.status === 'accepted');
-    if (order.status === 'CREATED' && !hasFootprint) {
+    // Order-lifecycle contract: an order canceled before selection (#1049) has nothing to recover
+    // either — its (rejected) offers are served the same way.
+    if ((order.status === 'CREATED' || order.status === 'CANCELED') && !hasFootprint) {
       // #938 Codex Finding A — serve straight from bundle.offers, the SAME statement that just
       // computed hasFootprint above. A second, later listOffersByOrder() read here would be a
       // separate, non-atomic statement: a concurrent /select could commit between the two reads,

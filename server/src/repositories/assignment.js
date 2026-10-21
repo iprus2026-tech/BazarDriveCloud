@@ -17,3 +17,25 @@ export async function insertAssignment(db, { orderId, selectedDriverId }) {
   );
   return rows[0];
 }
+
+// #1049 — the order-cancel route refuses an order that has (or had) a driver: the selection overlay
+// is the record of that, and it outlives a ride cancel (status CANCELED), so it tells a cancel
+// before selection from a cancel through the ride.
+export async function findAssignmentByOrderId(db, orderId) {
+  const { rows } = await db.query('SELECT * FROM assignment WHERE order_id = $1', [orderId]);
+  return rows[0] ?? null;
+}
+
+// Order-lifecycle contract (#1051): a canceled or no-show ride cancels its assignment in the same
+// transaction. canceledBy is 'passenger' | 'driver' (assignment_cancel_stamp); only an ACCEPTED
+// assignment moves, so a replay is a no-op.
+export async function cancelAssignment(db, orderId, { canceledBy, canceledAt = null }) {
+  const { rows } = await db.query(
+    `UPDATE assignment
+        SET status = 'CANCELED', canceled_by = $2, canceled_at = coalesce($3, now()), updated_at = now()
+      WHERE order_id = $1 AND status = 'ACCEPTED'
+      RETURNING *`,
+    [orderId, canceledBy, canceledAt],
+  );
+  return rows[0] ?? null;
+}

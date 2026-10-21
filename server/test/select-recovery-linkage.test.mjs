@@ -44,11 +44,28 @@ function makeRide(overrides = {}) {
 }
 const OK_FACTS = Object.freeze({ pg_has_core_timestamps: true, pg_accepted_at_matches_order: true, pg_chronology_ok: true });
 
+// Order-lifecycle contract (#1051): by default the order and the assignment are the ones the ride
+// implies (ride IN_PROGRESS -> order IN_PROGRESS, COMPLETED -> COMPLETED, CANCELED / NO_SHOW ->
+// order CANCELED + assignment CANCELED by the ride's actor). A test overrides them to break it.
+const ORDER_FOR_RIDE = { IN_PROGRESS: 'IN_PROGRESS', COMPLETED: 'COMPLETED', CANCELED: 'CANCELED', NO_SHOW: 'CANCELED' };
+function orderForRide(ride) {
+  return makeOrder({ status: ORDER_FOR_RIDE[ride?.status] ?? 'ACCEPTED' });
+}
+function assignmentForRide(ride) {
+  if (ride?.status === 'NO_SHOW') return makeAssignment({ status: 'CANCELED', canceled_by: 'driver', canceled_at: T });
+  if (ride?.status === 'CANCELED') {
+    const by = ride.cancel_by === 'driver' || ride.cancel_by === 'passenger' ? ride.cancel_by : 'passenger';
+    return makeAssignment({ status: 'CANCELED', canceled_by: by, canceled_at: T });
+  }
+  return makeAssignment();
+}
+
 function check(overrides = {}) {
+  const ride = 'ride' in overrides ? overrides.ride : makeRide();
   return validateRecoveryLinkage({
-    ride: 'ride' in overrides ? overrides.ride : makeRide(),
-    order: 'order' in overrides ? overrides.order : makeOrder(),
-    assignment: 'assignment' in overrides ? overrides.assignment : makeAssignment(),
+    ride,
+    order: 'order' in overrides ? overrides.order : orderForRide(ride),
+    assignment: 'assignment' in overrides ? overrides.assignment : assignmentForRide(ride),
     offers: 'offers' in overrides ? overrides.offers : [makeOffer()],
     facts: 'facts' in overrides ? overrides.facts : OK_FACTS,
   });
@@ -125,11 +142,40 @@ CANCELED_PREFIXES.forEach((prefix, i) => {
 test('order missing fails', () => {
   assert.deepEqual(check({ order: null }), { ok: false, reason: 'order_missing' });
 });
-for (const status of ['CREATED', 'IN_PROGRESS', 'COMPLETED', 'CANCELED']) {
-  test(`order.status !== literal 'ACCEPTED' fails: ${status}`, () => {
-    assert.deepEqual(check({ order: makeOrder({ status }) }), { ok: false, reason: 'order_not_accepted' });
+test('a CREATED order (never selected) fails before anything else', () => {
+  assert.deepEqual(check({ order: makeOrder({ status: 'CREATED' }) }), { ok: false, reason: 'order_not_accepted' });
+});
+// Order-lifecycle contract (#1051): the order status must be the one the ride implies.
+for (const status of ['IN_PROGRESS', 'COMPLETED', 'CANCELED']) {
+  test(`an ACCEPTED-phase ride with order ${status} fails: order_status_mismatch`, () => {
+    assert.deepEqual(check({ order: makeOrder({ status }) }), { ok: false, reason: 'order_status_mismatch' });
   });
 }
+for (const [rideStatus, prefix] of [
+  ['IN_PROGRESS', { approaching_at: T, arrived_at: T, started_at: T }],
+  ['COMPLETED', { approaching_at: T, arrived_at: T, started_at: T, completed_at: T }],
+  ['CANCELED', { canceled_at: T, cancel_by: 'passenger' }],
+  ['NO_SHOW', { approaching_at: T, arrived_at: T, canceled_at: T, cancel_by: 'driver', cancel_reason: 'passenger_no_show' }],
+]) {
+  test(`order-lifecycle mapping holds for a ${rideStatus} ride`, () => {
+    const ride = makeRide({ status: rideStatus, ...prefix });
+    assert.equal(check({ ride }).ok, true);
+    assert.deepEqual(check({ ride, order: makeOrder({ status: 'ACCEPTED' }) }), { ok: false, reason: 'order_status_mismatch' },
+      'a pre-sync ACCEPTED order no longer passes (migration 0011 backfills it)');
+  });
+}
+test('a canceled ride needs a CANCELED assignment; an active ride an ACCEPTED one', () => {
+  const canceled = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: 'driver' });
+  assert.deepEqual(check({ ride: canceled, assignment: makeAssignment() }), { ok: false, reason: 'assignment_not_canceled' });
+  assert.deepEqual(check({ ride: canceled, assignment: makeAssignment({ status: 'CANCELED', canceled_by: 'passenger', canceled_at: T }) }),
+    { ok: false, reason: 'assignment_cancel_actor_mismatch' }, 'the assignment actor is the ride actor');
+  const noShow = makeRide({ status: 'NO_SHOW', approaching_at: T, arrived_at: T, canceled_at: T, cancel_by: 'driver', cancel_reason: 'passenger_no_show' });
+  assert.deepEqual(check({ ride: noShow, assignment: makeAssignment({ status: 'CANCELED', canceled_by: 'passenger', canceled_at: T }) }),
+    { ok: false, reason: 'assignment_cancel_actor_mismatch' }, 'a no-show is the driver\'s mark');
+  const legacy = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: null });
+  assert.equal(check({ ride: legacy, assignment: makeAssignment({ status: 'CANCELED', canceled_by: 'driver', canceled_at: T }) }).ok, true,
+    'a legacy ride without an actor accepts either participant on the assignment');
+});
 test('ride missing fails', () => {
   assert.deepEqual(check({ ride: null }), { ok: false, reason: 'ride_missing' });
 });
