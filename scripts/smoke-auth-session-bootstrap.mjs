@@ -1577,6 +1577,219 @@ async function loginAccessCase(name) {
   void router;
 }
 
+// BD-AUTH-POLICY-01C-2 — the real app's backend-ON profile role switch. An authenticated,
+// onboarded passenger on /profile. Stubbed transport mirrors the server: PUT active-role switches
+// only to a granted role (403 ROLE_NOT_GRANTED otherwise), /auth/session reports the server's
+// active role, /drivers/enrollment holds one application. The PUT and the follow-up session read
+// can be held open to observe the screen while the server decides.
+async function profileRoleCase(name) {
+  try {
+    await profileRoleCaseBody(name);
+  } finally {
+    // The driver chrome polls (driver_ride_return.js): unmount it so this child process can exit.
+    const router = await import('../public/src/router.js');
+    router.setScreenChromeMount(null);
+    router.setAdmissionGuard(null);
+    router.register('/role-cleanup', () => document.createElement('section'));
+    router.go('/role-cleanup');
+    await flush();
+  }
+}
+
+async function profileRoleCaseBody(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const focused = [];
+  dom.Element.prototype.focus = function focus() { focused.push(this.id); };
+  await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  const { SMOKE_ROLE_KEY } = await import('../public/src/smoke_role.js');
+  user.set({ welcomeSeen: true, onboarded: true, role: 'passenger', phoneVerified: true, firstName: 'Role fixture' });
+  sessionStorage.setItem(SMOKE_ROLE_KEY, 'passenger');
+  assert.equal(auth.setAuth({ token: 'role-A', userId: 'user-A' }), true);
+  auth.commitAuthCandidate(auth.getAuthOwnerVersion());
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  const notGranted = name.startsWith('not-granted');
+  const server = { roles: notGranted ? ['passenger'] : ['passenger', 'driver'], active: 'passenger', enrollment: null };
+  const requests = [];
+  const gates = { put: null, session: null };
+  let putFailures = name === 'failure-retry' ? 1 : 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    const body = options.body ? JSON.parse(options.body) : undefined;
+    requests.push({ url, method, body });
+    assert.equal(options.headers?.Authorization, 'Bearer role-A', 'every call carries the session bearer');
+    if (url.endsWith('/auth/session/active-role')) {
+      assert.equal(method, 'PUT');
+      if (gates.put) await gates.put.promise;
+      if (putFailures > 0) { putFailures--; return response({ code: 'ROLE_SWITCH_FAILED', retryable: true }, 503); }
+      if (name === 'session-lost') return response({ code: 'UNAUTHENTICATED' }, 401);
+      if (!server.roles.includes(body.activeRole)) return response({ code: 'ROLE_NOT_GRANTED' }, 403);
+      // 'unconfirmed': the reply claims a switch that the server's session never shows.
+      if (name !== 'unconfirmed' && name !== 'foreign-reply') server.active = body.activeRole;
+      // 'foreign-reply': the reply belongs to another account.
+      return response({ user: { userId: name === 'foreign-reply' ? 'user-B' : 'user-A', sessionId: 'session-user-A',
+        activeRole: body.activeRole,
+        phoneVerified: true, roles: server.roles.slice() } });
+    }
+    if (url.endsWith('/auth/session')) {
+      if (gates.session) await gates.session.promise;
+      if (name === 'session-lost' && requests.some(r => r.url.endsWith('/active-role'))) return response({ user: null });
+      return response({ user: { ...userDTO('user-A'), activeRole: server.active } });
+    }
+    if (url.endsWith('/drivers/enrollment')) {
+      if (method === 'POST') {
+        assert.equal(options.body, undefined, 'the application sends no body');
+        const created = !server.enrollment;
+        server.enrollment ??= { status: 'PENDING', requestedAt: '2026-10-21T10:00:00.000Z', decidedAt: null };
+        return response({ enrollment: server.enrollment, roles: server.roles.slice() }, created ? 201 : 200);
+      }
+      return response({ enrollment: server.enrollment, roles: server.roles.slice() });
+    }
+    // Profile hydration reads are not under test; nothing else may mutate.
+    assert.equal(method, 'GET', 'unexpected mutation ' + method + ' ' + url);
+    if (url.endsWith('/history') || url.endsWith('/orders')) return response({ items: [] });
+    return response({ code: 'NOT_FOUND' }, 404);
+  };
+  location.hash = '#/profile';
+  await import('../public/src/app.js');
+  const settle = async () => { for (let i = 0; i < 4; i++) await flush(); };
+  await settle();
+  const node = id => document.getElementById(id);
+  const screen = () => dom.elements.app.children[0];
+  const bootState = () => screen()?.dataset?.authBootState;
+  const sessionReads = () => requests.filter(r => r.url.endsWith('/auth/session')).length;
+  const puts = () => requests.filter(r => r.url.endsWith('/auth/session/active-role'));
+  assert.ok(node('pfp-role-switch'), 'the passenger profile is mounted');
+  assert.ok(screen().innerHTML.includes('Сменить роль аккаунта'), 'backend-ON names the account role switch');
+  assert.equal(node('pfp-role-switch-err').getAttribute('hidden'), '', 'the error line starts hidden');
+
+  if (name === 'both-ways') {
+    gates.put = deferred();
+    gates.session = deferred();
+    node('pfp-role-switch').click(); await settle();
+    assert.equal(puts().length, 1);
+    assert.deepEqual(puts()[0].body, { activeRole: 'driver' });
+    assert.equal(node('pfp-role-switch').disabled, true, 'the control is busy while the server decides');
+    assert.equal(node('pfp-role-switch').getAttribute('aria-busy'), 'true');
+    assert.equal(user.get().role, 'passenger', 'nothing local changes before the server answers');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), 'passenger');
+    const readsBefore = sessionReads();
+    gates.put.resolve(); await settle();
+    assert.equal(sessionReads(), readsBefore + 1, 'the PUT reply is re-read through the session');
+    assert.equal(bootState(), undefined, 'the profile stays mounted while the session read is pending');
+    assert.ok(node('pfp-role-switch'));
+    assert.equal(user.get().role, 'passenger', 'a PUT reply alone changes nothing locally');
+    gates.session.resolve(); await settle();
+    gates.put = null; gates.session = null;
+    assert.equal(user.get().role, 'driver', 'the confirmed session read changes the local role');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), null, 'the per-tab override is cleared');
+    assert.ok(node('pf2-act-role-switch'), 'the driver profile renders');
+    assert.equal(node('pfp-role-switch'), null);
+    assert.equal(bootState(), undefined);
+    node('pf2-act-role-switch').click(); await settle();
+    assert.deepEqual(puts().at(-1).body, { activeRole: 'passenger' });
+    assert.equal(user.get().role, 'passenger');
+    assert.ok(node('pfp-role-switch'), 'back on the passenger profile');
+    assert.equal(server.active, 'passenger');
+    return;
+  }
+
+  if (name === 'failure-retry' || name === 'unconfirmed') {
+    const readsBefore = sessionReads();
+    node('pfp-role-switch').click(); await settle();
+    assert.equal(puts().length, 1);
+    assert.equal(sessionReads(), readsBefore + (name === 'unconfirmed' ? 1 : 0),
+      name === 'unconfirmed' ? 'the claimed switch is re-read' : 'a refused PUT is not re-read');
+    assert.equal(bootState(), undefined, 'the profile that asked stays mounted');
+    assert.ok(node('pfp-role-switch'), 'still the passenger profile');
+    assert.equal(node('pfp-role-switch').disabled, false, 'the control is usable again');
+    assert.equal(node('pfp-role-switch-err').hidden, false);
+    assert.equal(node('pfp-role-switch-err').textContent, 'Не удалось переключить роль. Повторите попытку.');
+    assert.equal(user.get().role, 'passenger', 'the local role is unchanged');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), 'passenger', 'the per-tab override is unchanged');
+    if (name === 'unconfirmed') return;
+    node('pfp-role-switch').click(); await settle();
+    assert.equal(puts().length, 2, 'the retry repeats the switch');
+    assert.equal(user.get().role, 'driver');
+    assert.ok(node('pf2-act-role-switch'), 'the retry reaches the driver profile');
+    return;
+  }
+
+  if (name === 'foreign-reply') {
+    // A reply for another account is never applied: the session is re-read and admission
+    // re-renders the route for whoever the server confirms (here still user-A, passenger).
+    const readsBefore = sessionReads();
+    const before = node('pfp-role-switch');
+    before.click(); await settle();
+    assert.equal(puts().length, 1);
+    assert.equal(sessionReads(), readsBefore + 1, 'the bearer is re-read');
+    assert.equal(user.get().role, 'passenger', 'nothing from the foreign reply is applied');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), 'passenger');
+    assert.ok(node('pfp-role-switch'), 'the confirmed account is shown again');
+    assert.notEqual(node('pfp-role-switch'), before, 'admission re-rendered the route');
+    assert.equal(bootState(), undefined);
+    return;
+  }
+
+  if (name === 'session-lost') {
+    node('pfp-role-switch').click(); await settle();
+    assert.equal(puts().length, 1);
+    assert.equal(node('pfp-role-switch'), null, 'a dead session hands over to admission');
+    assert.equal(location.hash, '#/onboarding', 'the rejected session falls back to the login entry');
+    assert.equal(auth.getAuthToken(), null, 'the dead bearer is no longer the authority of this tab');
+    assert.equal(server.active, 'passenger');
+    return;
+  }
+
+  // Not granted: 403 opens the application sheet over the passenger profile.
+  const readsBefore = sessionReads();
+  focused.length = 0;
+  node('pfp-role-switch').click(); await settle();
+  assert.equal(puts().length, 1);
+  assert.equal(sessionReads(), readsBefore, 'a refused switch is not re-read');
+  const sheet = node('pf-enroll-sheet');
+  assert.ok(sheet, 'ROLE_NOT_GRANTED opens the driver application sheet');
+  assert.equal(sheet.getAttribute('role'), 'dialog');
+  assert.equal(sheet.getAttribute('aria-modal'), 'true');
+  assert.equal(sheet.getAttribute('aria-labelledby'), 'pfe-title');
+  assert.ok(requests.some(r => r.url.endsWith('/drivers/enrollment') && r.method === 'GET'), 'an application on file is read first');
+  assert.equal(sheet.querySelector('[data-enroll-status]')?.getAttribute('data-enroll-status'), 'NONE');
+  assert.ok(sheet.innerHTML.includes('Роль водителя пока не выдана'));
+  for (const id of ['pfe-apply', 'pfe-close']) assert.ok(node(id), id);
+  for (const id of ['pfe-exit', 'pfe-continue-passenger']) assert.equal(node(id), null, id + ' is not offered in the profile');
+  assert.equal(focused.at(-1), 'pfe-title', 'the sheet heading takes focus');
+  assert.equal(user.get().role, 'passenger');
+  assert.ok(node('pfp-role-switch'), 'the profile stays under the sheet');
+
+  if (name === 'not-granted-close') {
+    node('pfe-close').click(); await settle();
+    assert.equal(node('pf-enroll-sheet'), null, '«Закрыть» removes the sheet');
+    assert.equal(focused.at(-1), 'pfp-role-switch', 'focus returns to the control that opened the sheet');
+    assert.ok(node('pfp-role-switch'));
+    assert.equal(requests.filter(r => r.url.endsWith('/drivers/enrollment') && r.method === 'POST').length, 0);
+    return;
+  }
+
+  focused.length = 0;
+  node('pfe-apply').click(); await settle();
+  assert.equal(requests.filter(r => r.url.endsWith('/drivers/enrollment') && r.method === 'POST').length, 1);
+  assert.equal(node('pf-enroll-sheet').querySelector('[data-enroll-status]')?.getAttribute('data-enroll-status'), 'PENDING');
+  assert.ok(node('pfe-refresh'), 'PENDING offers «Проверить статус»');
+  assert.equal(node('pfe-continue-driver'), null);
+  assert.equal(focused.at(-1), 'pfe-title', 'the heading takes focus when the card changes');
+  // The operator approves meanwhile.
+  server.enrollment = { ...server.enrollment, status: 'APPROVED', decidedAt: '2026-10-21T10:05:00.000Z' };
+  server.roles.push('driver');
+  node('pfe-refresh').click(); await settle();
+  assert.equal(node('pf-enroll-sheet').querySelector('[data-enroll-status]')?.getAttribute('data-enroll-status'), 'APPROVED');
+  node('pfe-continue-driver').click(); await settle();
+  assert.deepEqual(puts().map(r => r.body), [{ activeRole: 'driver' }, { activeRole: 'driver' }]);
+  assert.equal(user.get().role, 'driver');
+  assert.ok(node('pf2-act-role-switch'), 'the approved application continues to the driver profile');
+  assert.equal(node('pf-enroll-sheet'), null);
+}
+
 async function devDocsRouteCase(name) {
   const dom = installDOM();
   const router = await import('../public/src/router.js');
@@ -2603,6 +2816,9 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--login-access-case') {
   await loginAccessCase(process.argv[3]);
   console.log('PASS actual app/onboarding chosen-role access (K4) — ' + process.argv[3]);
+} else if (process.argv[2] === '--profile-role-case') {
+  await profileRoleCase(process.argv[3]);
+  console.log('PASS actual app/profile server role switch (01C-2) — ' + process.argv[3]);
 } else if (process.argv[2] === '--guest-public-case') {
   await guestPublicCase(process.argv[3]);
   console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
@@ -3631,6 +3847,13 @@ if (process.argv[2] === '--onboarding-detach-case') {
     'switch-failure-retry', 'switch-failure-twice', 'switch-retry-revoked']) {
     await check('actual app/onboarding chosen-role access (K4, BD-AUTH-POLICY-01C-1): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-access-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['both-ways', 'failure-retry', 'unconfirmed', 'foreign-reply', 'session-lost',
+    'not-granted', 'not-granted-close']) {
+    await check('actual app/profile server role switch (BD-AUTH-POLICY-01C-2): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--profile-role-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }

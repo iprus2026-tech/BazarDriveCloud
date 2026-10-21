@@ -26,6 +26,8 @@ import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
 import { createLogoutControl } from '../auth_logout.js';
+import { readDriverEnrollment, submitDriverEnrollment, enrollmentView, renderEnrollmentCard,
+  enrollmentErrorText } from '../driver_enrollment.js';
 import {
   buildGarageVehicles,
   resolveActiveGarageVehicleId,
@@ -375,7 +377,7 @@ function wireExplicitLogout(root, button, label, logout, isCurrent) {
   button.addEventListener('click', () => { void control.submit(); });
 }
 
-function renderPassenger(root, u, model, isCurrent, logout, ownsScreen) {
+function renderPassenger(root, u, model, isCurrent, logout, ownsScreen, switchRole) {
   root.classList.add('pfp-experience');
   passengerModels.set(root, model);
   const hasDrafts = hasComposerDraft();
@@ -422,7 +424,9 @@ function renderPassenger(root, u, model, isCurrent, logout, ownsScreen) {
             <button type="button" class="bd-btn" id="pfp-support">Правила и помощь ${SVG_CHEVRON}</button>
           </div>
           <div class="bd-card pfp-support-card">
-            ${passengerMenuRow('pfp-role-switch', SVG_CAR_FRONT, 'Продолжить как водитель', 'Переключить режим этой вкладки')}
+            ${passengerMenuRow('pfp-role-switch', SVG_CAR_FRONT, 'Продолжить как водитель',
+              model.backend ? 'Сменить роль аккаунта' : 'Переключить режим этой вкладки')}
+            ${model.backend ? roleSwitchErrorHtml('pfp-role-switch-err') : ''}
             ${passengerMenuRow('pfp-logout', SVG_LOGOUT, 'Выйти', 'Завершить локальную сессию')}
           </div>
         </div>
@@ -442,9 +446,155 @@ function renderPassenger(root, u, model, isCurrent, logout, ownsScreen) {
   });
   root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
   root.querySelector('#pfp-menu-drafts')?.addEventListener('click', () => { if (hasComposerDraft()) go('/new'); });
-  root.querySelector('#pfp-role-switch')?.addEventListener('click', () => { setSmokeRole('driver'); go('/profile'); });
+  // Backend-OFF: the per-tab view switch (BD-ROLE-05). Backend-ON: the server switch (01C-2).
+  if (model.backend) {
+    wireServerRoleSwitch(root, root.querySelector('#pfp-role-switch'), root.querySelector('#pfp-role-switch-err'),
+      'driver', switchRole, ownsScreen);
+  } else {
+    root.querySelector('#pfp-role-switch')?.addEventListener('click', () => { setSmokeRole('driver'); go('/profile'); });
+  }
   const logoutBtn = root.querySelector('#pfp-logout');
   wireExplicitLogout(root, logoutBtn, logoutBtn?.querySelector('.pfp-menu-title'), logout, ownsScreen);
+}
+
+// ── Server role switch + driver application sheet (BD-AUTH-POLICY-01C-2, backend-ON) ──────────
+// The switch itself (PUT active-role, then the session read) lives in app.js and re-renders the
+// profile once the server confirms. Nothing local changes before that. A refusal keeps this
+// screen and shows why. 403 ROLE_NOT_GRANTED for the driver role opens the application sheet.
+
+function roleSwitchErrorHtml(id) {
+  return `<p class="pf-role-switch-err" id="${id}" role="alert" hidden></p>`;
+}
+
+function roleSwitchErrorText(code, role) {
+  if (code === 'NETWORK') return 'Не удалось связаться с сервером. Попробуйте ещё раз.';
+  if (code === 'PHONE_NOT_VERIFIED') return 'Подтвердите номер телефона и попробуйте снова.';
+  if (code === 'ROLE_NOT_GRANTED') {
+    return role === 'driver' ? enrollmentErrorText({ code }) : 'Роль пассажира для этого аккаунта не выдана.';
+  }
+  return 'Не удалось переключить роль. Повторите попытку.';
+}
+
+async function requestRoleSwitch(switchRole, role) {
+  if (typeof switchRole !== 'function') return { ok: false, code: 'ROLE_SWITCH_FAILED' };
+  try { return (await switchRole(role)) || { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
+  catch { return { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
+}
+
+function wireServerRoleSwitch(root, button, errorEl, role, switchRole, ownsScreen) {
+  if (!button) return;
+  const showError = (text) => {
+    if (!errorEl) return;
+    errorEl.textContent = text;
+    errorEl.hidden = !text;
+  };
+  button.addEventListener('click', async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    showError('');
+    const result = await requestRoleSwitch(switchRole, role);
+    // A confirmed switch (or a session hand-over) re-rendered the route: this screen is gone.
+    if (!ownsScreen() || !button.isConnected) return;
+    button.disabled = false;
+    button.setAttribute('aria-busy', 'false');
+    if (result.ok === true) return;
+    if (result.code === 'ROLE_NOT_GRANTED' && role === 'driver') {
+      openEnrollmentSheet(root, { switchRole, ownsScreen, trigger: button });
+      return;
+    }
+    showError(roleSwitchErrorText(result.code, role));
+  });
+}
+
+let activeEnrollmentSheet = null;
+
+function closeEnrollmentSheet() {
+  const sheet = activeEnrollmentSheet;
+  if (!sheet) return;
+  activeEnrollmentSheet = null;
+  sheet.release();
+  sheet.overlay.remove();
+  // The busy switch control lost focus while disabled, so the trap cannot restore it: return
+  // focus to the control that opened the sheet (if this screen still shows it).
+  if (sheet.trigger?.isConnected) sheet.trigger.focus({ preventScroll: true });
+}
+
+// The driver application as a sheet over the profile: the shared driver_enrollment.js card with
+// «Закрыть» in place of «Выйти». It reads the application on file first. «Продолжить как водитель»
+// (APPROVED) runs the same server switch. The heading takes focus whenever the card changes.
+function openEnrollmentSheet(root, { switchRole, ownsScreen, trigger = null }) {
+  closeEnrollmentSheet();
+  const overlay = document.createElement('div');
+  overlay.className = 'pf-enroll-sheet';
+  overlay.id = 'pf-enroll-sheet';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'pfe-title');
+  const state = { model: null, busy: false, error: '' };
+  const sheet = { overlay, trigger, release: () => {} };
+  const isOpen = () => activeEnrollmentSheet === sheet && ownsScreen() && overlay.isConnected;
+
+  function paint() {
+    const view = enrollmentView(state.model, { dismiss: 'close' });
+    overlay.innerHTML = `
+      <div class="pf-enroll-sheet__backdrop" data-enroll-dismiss="backdrop"></div>
+      <div class="pf-enroll-sheet__panel" role="document">
+        <span class="pf-enroll-sheet__handle" aria-hidden="true"></span>
+        ${renderEnrollmentCard(view, { idPrefix: 'pfe', busy: state.busy, error: state.error, layout: 'sheet' })}
+      </div>`;
+  }
+  function focusTitle() { overlay.querySelector('#pfe-title')?.focus({ preventScroll: true }); }
+
+  async function run(operation) {
+    if (state.busy) return;
+    state.busy = true;
+    state.error = '';
+    paint();
+    try {
+      const model = await operation();
+      if (!isOpen()) return;
+      state.model = model;
+    } catch (err) {
+      if (!isOpen()) return;
+      state.error = enrollmentErrorText(err);
+    }
+    state.busy = false;
+    paint();
+    focusTitle();
+  }
+
+  async function continueAsDriver() {
+    if (state.busy) return;
+    state.busy = true;
+    state.error = '';
+    paint();
+    const result = await requestRoleSwitch(switchRole, 'driver');
+    if (!isOpen()) return;
+    state.busy = false;
+    if (result.ok !== true) state.error = roleSwitchErrorText(result.code, 'driver');
+    paint();
+    focusTitle();
+  }
+
+  overlay.addEventListener('click', (event) => {
+    if (event.target.closest('[data-enroll-dismiss]')) {
+      if (!state.busy) closeEnrollmentSheet();
+      return;
+    }
+    const action = event.target.closest('[data-enroll-action]')?.getAttribute('data-enroll-action');
+    if (action === 'close') closeEnrollmentSheet();
+    else if (action === 'apply') void run(() => submitDriverEnrollment());
+    else if (action === 'refresh') void run(() => readDriverEnrollment());
+    else if (action === 'continue-driver') void continueAsDriver();
+  });
+
+  paint();
+  root.appendChild(overlay);
+  activeEnrollmentSheet = sheet;
+  sheet.release = trapFocus(overlay, { initialFocus: '#pfe-title',
+    onEscape: () => { if (!state.busy) closeEnrollmentSheet(); } });
+  void run(() => readDriverEnrollment());
 }
 
 function wirePassengerContext(root, model, isCurrent) {
@@ -708,6 +858,7 @@ function quickActionsHtml() {
         <button type="button" class="pf2-action-row" id="pf2-act-role-switch">
           <span class="pf2-action-row__label">Продолжить как пассажир</span>${SVG_CHEVRON}
         </button>
+        ${isBackendEnabled() ? roleSwitchErrorHtml('pf2-role-switch-err') : ''}
         <button type="button" class="pf2-action-row pf2-action-row--danger" id="pf2-act-logout">
           <span class="pf2-action-row__label">Выйти</span>${SVG_CHEVRON}
         </button>
@@ -2999,7 +3150,7 @@ function refreshGarageReadinessHint(root) {
   oldHint.replaceWith(newHint);
 }
 
-function renderDriver(root, u, logout, ownsScreen) {
+function renderDriver(root, u, logout, ownsScreen, switchRole) {
   // Render-time guard: if persisted driverOnline=true but readiness is no
   // longer satisfied (e.g. docs expired between sessions), demote to offline
   // before producing any HTML so toggle / status card cannot flash green.
@@ -3376,10 +3527,17 @@ function renderDriver(root, u, logout, ownsScreen) {
   // does not touch vehicle / documents / payouts / history. go('/profile')
   // re-runs the profile factory which picks the new effectiveRole from
   // getSmokeRole() and renders the passenger view.
-  root.querySelector('#pf2-act-role-switch')?.addEventListener('click', () => {
-    setSmokeRole('passenger');
-    go('/profile');
-  });
+  //
+  // BD-AUTH-POLICY-01C-2 — backend-ON switches the session role on the server instead.
+  if (isBackendEnabled()) {
+    wireServerRoleSwitch(root, root.querySelector('#pf2-act-role-switch'), root.querySelector('#pf2-role-switch-err'),
+      'passenger', switchRole, ownsScreen);
+  } else {
+    root.querySelector('#pf2-act-role-switch')?.addEventListener('click', () => {
+      setSmokeRole('passenger');
+      go('/profile');
+    });
+  }
 
   const logoutBtn = root.querySelector('#pf2-act-logout');
   wireExplicitLogout(root, logoutBtn, logoutBtn.querySelector('.pf2-action-row__label'), logout, ownsScreen);
@@ -3588,7 +3746,9 @@ function renderDriver(root, u, logout, ownsScreen) {
 
 // ── Main factory ──────────────────────────────────────────────────────────────
 
-export default function profile(renderContext, { logout = performLocalLogout } = {}) {
+export default function profile(renderContext, { logout = performLocalLogout, switchRole = null } = {}) {
+  // A sheet left by a previous mount (its root is gone) releases its focus trap.
+  closeEnrollmentSheet();
   const root = document.createElement('section');
   root.className = 'screen screen--profile';
   const ownsScreen = () => renderContext ? renderContext.isCurrent() : true;
@@ -3630,7 +3790,7 @@ export default function profile(renderContext, { logout = performLocalLogout } =
     // through to the live dashboard (where ?state=empty drives the payouts
     // empty state).
     if (stateParam === 'loading') renderDriverSkeleton(root);
-    else renderDriver(root, u, logout, ownsScreen);
+    else renderDriver(root, u, logout, ownsScreen, switchRole);
   } else {
     const model = readPassengerProfile();
     // Router generation + account identity fence late completions, including
@@ -3642,7 +3802,7 @@ export default function profile(renderContext, { logout = performLocalLogout } =
       && JSON.stringify(user.get()) === accountSnapshot
       && getSmokeRole() === smokeRole && getSessionToken() === authSnapshot
       && isBackendEnabled() === model.backend;
-    renderPassenger(root, u, model, isCurrent, logout, ownsScreen);
+    renderPassenger(root, u, model, isCurrent, logout, ownsScreen, switchRole);
     if (model.backend) {
       loadPassengerHistory(model).then(history => {
         if (!isCurrent()) return;

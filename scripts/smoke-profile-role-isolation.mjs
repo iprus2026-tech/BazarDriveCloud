@@ -376,16 +376,24 @@ setSmokeRole('driver');
 // ── Result ───────────────────────────────────────────────────────────────────
 let explicitLogoutCalls = 0;
 const sharedLogout = async () => { explicitLogoutCalls++; return { ok: true }; };
+// BD-AUTH-POLICY-01C-2 — the server role switch the real app injects is backend-ON only. With
+// the backend OFF the switch stays the per-tab sessionStorage override and never reaches it.
+let serverSwitchCalls = 0;
+const serverSwitch = async () => { serverSwitchCalls++; return { ok: true }; };
 for (const role of ['passenger', 'driver']) {
   reset();
   user.set({ onboarded: true, role, phone: '9001234567', phoneVerified: true,
     firstName: 'Logout test', vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'TEST' });
   currentHash = '#/profile';
-  profile(undefined, { logout: sharedLogout });
+  profile(undefined, { logout: sharedLogout, switchRole: serverSwitch });
   const roleSwitch = clickHandlers.get(role === 'passenger' ? '#pfp-role-switch' : '#pf2-act-role-switch');
   const before = explicitLogoutCalls;
   roleSwitch();
   expect(role + ' role switching never invokes logout', explicitLogoutCalls === before);
+  expect(role + ' backend-OFF role switching never calls the injected server switch (01C-2)',
+    serverSwitchCalls === 0, String(serverSwitchCalls));
+  expect(role + ' backend-OFF role switching stays the per-tab override (01C-2)',
+    getSmokeRole() === (role === 'passenger' ? 'driver' : 'passenger'), String(getSmokeRole()));
   const submit = clickHandlers.get(role === 'passenger' ? '#pfp-logout' : '#pf2-act-logout');
   expect(role + ' logout handler is present on actual rendered surface', typeof submit === 'function');
   submit();

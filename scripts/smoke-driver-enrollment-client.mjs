@@ -7,8 +7,10 @@
 //   - the view model covers no application / PENDING / APPROVED / REJECTED / REVOKED, with and
 //     without "continue as passenger"; a held driver grant reads as APPROVED;
 //   - the card markup: heading focus target, escaping, busy and error states;
-//   - api_client.putSessionActiveRole sends PUT { activeRole } and refuses a mismatched reply.
-// Static: the onboarding "Вход выполнен" wiring, app.js transport injection, the sw precache.
+//   - api_client.putSessionActiveRole sends PUT { activeRole } and refuses a mismatched reply;
+//   - (01C-2) the profile sheet variant: «Закрыть» in place of «Выйти», an h2 sheet layout.
+// Static: the onboarding "Вход выполнен" wiring, app.js transport injection, the profile
+// server switch (01C-2), the sw precache.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
@@ -107,6 +109,33 @@ await check('the card: focusable heading, re-apply label, busy and error states,
   assert.doesNotMatch(busy, /id="ob-err" role="alert" hidden/);
 });
 
+await check('01C-2: dismiss "close" replaces «Выйти» in every state and is never the primary action', async () => {
+  for (const status of ['NONE', 'PENDING', 'APPROVED', 'REJECTED', 'REVOKED']) {
+    const view = enrollment.enrollmentView({ status, driverGranted: false, roles: [] }, { dismiss: 'close' });
+    assert.equal(view.actions.at(-1), 'close', status);
+    assert.equal(view.actions.includes('exit'), false, status);
+    assert.equal(view.actions.includes('continue-passenger'), false, status + ': the profile is already passenger');
+  }
+  const only = enrollment.enrollmentView({ status: 'NONE', driverGranted: false }, { dismiss: 'close' });
+  const html = enrollment.renderEnrollmentCard({ ...only, actions: ['close'] }, { idPrefix: 'pfe' });
+  assert.match(html, /class="bd-btn ghost" id="pfe-close" data-enroll-action="close">Закрыть</);
+  assert.deepEqual(enrollment.enrollmentView({ status: 'NONE' }).actions, ['apply', 'exit'], 'the default stays «Выйти»');
+});
+
+await check('01C-2: the sheet layout is an h2 card with the same focus, error and status hooks', async () => {
+  const view = enrollment.enrollmentView({ status: 'PENDING', driverGranted: false }, { dismiss: 'close' });
+  const html = enrollment.renderEnrollmentCard(view, { idPrefix: 'pfe', layout: 'sheet' });
+  assert.match(html, /<h2 class="pf-enroll-sheet__title" id="pfe-title" tabindex="-1">Заявка на рассмотрении<\/h2>/);
+  assert.match(html, /class="pf-enroll-sheet__body" data-enroll-status="PENDING"/);
+  assert.match(html, /id="pfe-err" role="alert" hidden/);
+  assert.match(html, /class="bd-btn primary" id="pfe-refresh"/);
+  assert.match(html, /id="pfe-close"/);
+  assert.doesNotMatch(html, /ob-scroll|ob-footer|<h1/, 'no onboarding chrome inside the profile sheet');
+  const busy = enrollment.renderEnrollmentCard(view, { idPrefix: 'pfe', layout: 'sheet', busy: true, error: '<i>x</i>' });
+  assert.equal((busy.match(/disabled aria-disabled="true"/g) || []).length, view.actions.length);
+  assert.ok(busy.includes('&lt;i&gt;x&lt;/i&gt;') && !busy.includes('<i>'));
+});
+
 await check('error texts: network, not granted, generic (no raw codes shown)', async () => {
   assert.match(enrollment.enrollmentErrorText({ code: 'NETWORK' }), /связаться с сервером/);
   assert.match(enrollment.enrollmentErrorText({ code: 'ROLE_NOT_GRANTED' }), /ещё не выдана/);
@@ -159,6 +188,20 @@ await check('app.js injects the switch transport and exposes adoptRole; the boot
   assert.match(app, /adoptRole: role => bootSession\.adoptRole\(role\)/);
   assert.doesNotMatch(bootstrap, /from '\.\/api_client\.js'[\s\S]*putSessionActiveRole|apiFetch\(/,
     'the bootstrap never calls the network itself');
+});
+
+const profileSrc = read('../public/src/screens/profile.js');
+await check('01C-2: profile backend-ON switches through the injected server capability; OFF keeps smokeRole', async () => {
+  assert.match(app, /switchRole: role => switchProfileRole\(context, role\)/);
+  assert.match(app, /if \(profileSwitchOwner\?\.isCurrent\(\)\) return;/, 'the listener leaves the switching profile mounted');
+  assert.match(app, /clearSmokeRole\(\);\s*user\.set\(\{ role \}\);/, 'the local role changes only after the confirmed read');
+  assert.match(profileSrc, /export default function profile\(renderContext, \{ logout = performLocalLogout, switchRole = null \} = \{\}\)/);
+  assert.match(profileSrc, /if \(model\.backend\) \{\s*wireServerRoleSwitch\(root, root\.querySelector\('#pfp-role-switch'\)/);
+  assert.match(profileSrc, /\} else \{\s*root\.querySelector\('#pfp-role-switch'\)\?\.addEventListener\('click', \(\) => \{ setSmokeRole\('driver'\); go\('\/profile'\); \}\);/);
+  assert.match(profileSrc, /if \(isBackendEnabled\(\)\) \{\s*wireServerRoleSwitch\(root, root\.querySelector\('#pf2-act-role-switch'\)/);
+  assert.match(profileSrc, /result\.code === 'ROLE_NOT_GRANTED' && role === 'driver'\) \{\s*openEnrollmentSheet\(/);
+  assert.match(profileSrc, /enrollmentView\(state\.model, \{ dismiss: 'close' \}\)/);
+  assert.match(profileSrc, /layout: 'sheet'/);
 });
 
 await check('sw.js precaches driver_enrollment.js', async () => {

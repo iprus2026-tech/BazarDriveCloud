@@ -1,7 +1,7 @@
 // Driver enrollment client seam (BD-AUTH-POLICY-01C-1; docs/driver-role-grant-contract.md §1, §3).
 // Backend-ON only: the applicant's POST/GET /api/v1/drivers/enrollment, a pure view model for
 // the four states (no application / PENDING / APPROVED / REJECTED-REVOKED), and the card markup
-// shared by the onboarding "Вход выполнен" step and (01C-2) the profile. Backend-OFF never
+// shared by the onboarding "Вход выполнен" step and the profile sheet (01C-2). Backend-OFF never
 // reaches this module's network calls; the demo keeps its local driver flow.
 import { isBackendEnabled } from './api_config.js';
 import { apiFetch, ApiError } from './api_client.js';
@@ -45,32 +45,34 @@ export async function readDriverEnrollment() {
 }
 
 // What the card shows for a model. `granted` = the account already holds the driver grant;
-// `passengerAvailable` = "continue as passenger" is possible (the passenger grant is held).
-// Actions are ids the host wires: apply | refresh | continue-driver | continue-passenger | exit.
-export function enrollmentView(model, { passengerAvailable = false } = {}) {
+// `passengerAvailable` = "continue as passenger" is possible (the passenger grant is held);
+// `dismiss` = the last action: `exit` (log out, onboarding) or `close` (the profile sheet).
+// Actions are ids the host wires: apply | refresh | continue-driver | continue-passenger | exit | close.
+export function enrollmentView(model, { passengerAvailable = false, dismiss = 'exit' } = {}) {
   const status = model?.driverGranted ? 'APPROVED' : (model?.status ?? 'NONE');
   const passenger = passengerAvailable ? ['continue-passenger'] : [];
+  const exit = dismiss === 'close' ? 'close' : 'exit';
   switch (status) {
     case 'PENDING':
       return { status, title: 'Заявка на рассмотрении',
         body: 'Мы проверим данные и откроем доступ водителя. Пока можно пользоваться приложением как пассажир.',
-        actions: ['refresh', ...passenger, 'exit'] };
+        actions: ['refresh', ...passenger, exit] };
     case 'APPROVED':
       return { status, title: 'Доступ водителя открыт',
         body: 'Роль водителя выдана. Продолжите вход как водитель.',
-        actions: ['continue-driver', ...passenger, 'exit'] };
+        actions: ['continue-driver', ...passenger, exit] };
     case 'REJECTED':
       return { status, title: 'Заявка отклонена',
         body: 'Заявку водителя не одобрили. Можно подать её снова.',
-        actions: ['apply', ...passenger, 'exit'] };
+        actions: ['apply', ...passenger, exit] };
     case 'REVOKED':
       return { status, title: 'Доступ водителя отозван',
         body: 'Роль водителя для этого аккаунта отозвана. Можно подать заявку снова.',
-        actions: ['apply', ...passenger, 'exit'] };
+        actions: ['apply', ...passenger, exit] };
     default:
       return { status: 'NONE', title: 'Роль водителя пока не выдана',
         body: 'Подайте заявку — после проверки вы сможете принимать заказы.',
-        actions: ['apply', ...passenger, 'exit'] };
+        actions: ['apply', ...passenger, exit] };
   }
 }
 
@@ -80,6 +82,7 @@ const ACTION_LABELS = Object.freeze({
   'continue-driver': 'Продолжить как водитель',
   'continue-passenger': 'Продолжить как пассажир',
   exit: 'Выйти',
+  close: 'Закрыть',
 });
 
 // Re-applying after REJECTED / REVOKED reads as "again".
@@ -90,14 +93,28 @@ function actionLabel(action, status) {
 
 // Card markup. `idPrefix` keeps ids unique per host; the heading takes programmatic focus when
 // the card appears or changes (tabindex="-1"). `busy` disables every action; `error` renders a
-// role="alert" line and keeps the current state.
-export function renderEnrollmentCard(view, { idPrefix = 'drv-enroll', busy = false, error = '', lead = '' } = {}) {
+// role="alert" line and keeps the current state. `layout: 'sheet'` is the profile sheet body
+// (an h2 inside the host's dialog); the default is the onboarding step.
+export function renderEnrollmentCard(view, { idPrefix = 'drv-enroll', busy = false, error = '', lead = '',
+  layout = 'onboarding' } = {}) {
   const buttons = view.actions.map((action, i) => {
-    const primary = i === 0 && action !== 'exit';
+    const primary = i === 0 && action !== 'exit' && action !== 'close';
     return `<button type="button" class="bd-btn ${primary ? 'primary' : 'ghost'}" id="${idPrefix}-${action}"`
       + ` data-enroll-action="${action}"${busy ? ' disabled aria-disabled="true"' : ''}>`
       + `${escapeHtml(actionLabel(action, view.status))}</button>`;
   }).join('');
+  if (layout === 'sheet') {
+    return `
+    <div class="pf-enroll-sheet__body" data-enroll-status="${escapeHtml(view.status)}">
+      <h2 class="pf-enroll-sheet__title" id="${idPrefix}-title" tabindex="-1">${escapeHtml(view.title)}</h2>
+      <p class="pf-enroll-sheet__text">${escapeHtml(view.body)}</p>
+    </div>
+    <div class="pf-enroll-sheet__actions">
+      <p class="pf-enroll-sheet__err" id="${idPrefix}-err" role="alert"${error ? '' : ' hidden'}>${escapeHtml(error)}</p>
+      ${buttons}
+    </div>
+  `;
+  }
   return `
     <div class="ob-scroll" data-enroll-status="${escapeHtml(view.status)}">
       ${lead ? `<p class="ob-subtitle">${escapeHtml(lead)}</p>` : ''}
