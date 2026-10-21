@@ -1919,6 +1919,103 @@ async function omdModeCase() {
   assert.equal(scheduleModeFromTarget({}), null, 'a target without closest()');
 }
 
+// #1086 / #1088 — the real app's backend-ON profile adopts the server session's active role on mount.
+// The boot session read reports the same role as the server; the mount read is the one under test.
+async function profileSyncCase(name) {
+  try {
+    await profileSyncCaseBody(name);
+  } finally {
+    const router = await import('../public/src/router.js');
+    router.setScreenChromeMount(null);
+    router.setAdmissionGuard(null);
+    router.register('/profile-sync-cleanup', () => document.createElement('section'));
+    router.go('/profile-sync-cleanup');
+    await flush();
+  }
+}
+
+async function profileSyncCaseBody(name) {
+  const dom = installDOM({ parseMarkup: true });
+  await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  const { SMOKE_ROLE_KEY } = await import('../public/src/smoke_role.js');
+  const localRole = name === 'adopt-passenger' ? 'driver' : 'passenger';
+  const serverRole = name === 'adopt-driver' ? 'driver' : name === 'adopt-passenger' ? 'passenger'
+    : name === 'role-preview' ? 'driver' : 'passenger';
+  user.set({ welcomeSeen: true, onboarded: true, role: localRole, phoneVerified: true, firstName: 'Sync fixture' });
+  sessionStorage.setItem(SMOKE_ROLE_KEY, localRole);
+  assert.equal(auth.setAuth({ token: 'sync-A', userId: 'user-A' }), true);
+  auth.commitAuthCandidate(auth.getAuthOwnerVersion());
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  const requests = [];
+  let sessionReads = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    requests.push({ url, method });
+    assert.equal(method, 'GET', 'the mount sync never writes: ' + method + ' ' + url);
+    if (url.endsWith('/auth/session')) {
+      sessionReads++;
+      if (sessionReads > 1 && name === 'read-failure') return response({ code: 'SESSION_LOOKUP_FAILED', retryable: true }, 503);
+      if (sessionReads > 1 && name === 'session-gone') return response({ user: null });
+      return response({ user: { ...userDTO('user-A'), activeRole: sessionReads > 1 ? serverRole : localRole } });
+    }
+    if (url.endsWith('/history') || url.endsWith('/orders')) return response({ items: [] });
+    return response({ code: 'NOT_FOUND' }, 404);
+  };
+  location.hash = name === 'role-preview' ? '#/profile?role=passenger' : '#/profile';
+  await import('../public/src/app.js');
+  const settle = async () => {
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 4; i++) await flush();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    for (let i = 0; i < 4; i++) await flush();
+  };
+  await settle();
+  const node = id => document.getElementById(id);
+  const bootState = () => dom.elements.app.children[0]?.dataset?.authBootState;
+
+  if (name === 'adopt-driver' || name === 'adopt-passenger') {
+    const role = serverRole;
+    assert.equal(user.get().role, role, 'the local role follows the server session');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), null, 'the per-tab override is cleared');
+    if (role === 'driver') {
+      assert.ok(node('pf2-act-role-switch'), 'the driver profile renders, offering «Продолжить как пассажир»');
+      assert.equal(node('pf2-act-passenger-mode'), null, '#1088: no «Перейти в режим пассажира» with the backend ON');
+    } else {
+      assert.ok(node('pfp-role-switch'), 'the passenger profile renders, offering «Продолжить как водитель»');
+    }
+    assert.equal(bootState(), undefined, 'no boot screen');
+    assert.ok(sessionReads >= 2, 'the mount re-read the session');
+    return;
+  }
+  if (name === 'in-sync') {
+    const mounted = node('pfp-role-switch');
+    assert.ok(mounted);
+    assert.equal(sessionReads, 2, 'boot read + one mount read');
+    assert.equal(user.get().role, 'passenger');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), 'passenger', 'nothing local changes when the roles agree');
+    return;
+  }
+  if (name === 'read-failure') {
+    assert.equal(sessionReads, 2);
+    assert.ok(node('pfp-role-switch'), 'the profile stays mounted');
+    assert.equal(bootState(), undefined, 'no boot screen replaces it');
+    assert.equal(user.get().role, 'passenger', 'a failed read changes nothing');
+    return;
+  }
+  if (name === 'session-gone') {
+    assert.equal(node('pfp-role-switch'), null, 'a dead session hands over to admission');
+    assert.equal(location.hash, '#/onboarding');
+    return;
+  }
+  // role-preview: an explicit ?role= preview is not synced.
+  assert.equal(sessionReads, 1, 'only the boot read');
+  assert.equal(user.get().role, 'passenger');
+  assert.ok(node('pfp-role-switch'));
+}
+
 async function devDocsRouteCase(name) {
   const dom = installDOM();
   const router = await import('../public/src/router.js');
@@ -2957,6 +3054,9 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--omd-mode-case') {
   await omdModeCase();
   console.log('PASS order-map-draft schedule-mode click scope (#1085)');
+} else if (process.argv[2] === '--profile-sync-case') {
+  await profileSyncCase(process.argv[3]);
+  console.log('PASS actual app/profile adopts the server role on mount (#1086) — ' + process.argv[3]);
 } else if (process.argv[2] === '--guest-public-case') {
   await guestPublicCase(process.argv[3]);
   console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
@@ -4005,6 +4105,12 @@ if (process.argv[2] === '--onboarding-detach-case') {
     ['--omd-mode-case', 'order-map-draft: only the schedule tabs are mode clicks (#1085)']]) {
     await check(label, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), flag],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['adopt-driver', 'adopt-passenger', 'in-sync', 'read-failure', 'session-gone', 'role-preview']) {
+    await check('actual app/profile adopts the server role on mount (#1086, #1088): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--profile-sync-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }

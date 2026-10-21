@@ -975,6 +975,9 @@ function renderDriverSkeleton(root) {
 // to driver intents (nearby orders on DriverMap, a driver offer in Composer)
 // and only reach the passenger request flow through the clearly-labelled
 // "Перейти в режим пассажира" entry — never silently.
+// #1088 — with the backend ON the row is hidden: it only opened the passenger-request composer,
+// which a driver-mode session cannot publish (#1084), next to the real server switch
+// «Продолжить как пассажир». Backend-OFF keeps the demo entry.
 function driverCreateActionsHtml() {
   return `
     <div class="pf2-actions-section">
@@ -986,9 +989,9 @@ function driverCreateActionsHtml() {
         <button type="button" class="pf2-action-row" id="pf2-act-offer">
           <span class="pf2-action-row__label">Предложить поездку</span>${SVG_CHEVRON}
         </button>
-        <button type="button" class="pf2-action-row" id="pf2-act-passenger-mode">
+        ${isBackendEnabled() ? '' : `<button type="button" class="pf2-action-row" id="pf2-act-passenger-mode">
           <span class="pf2-action-row__label">Перейти в режим пассажира</span>${SVG_CHEVRON}
-        </button>
+        </button>`}
       </div>
     </div>`;
 }
@@ -3746,7 +3749,7 @@ function renderDriver(root, u, logout, ownsScreen, switchRole) {
 
 // ── Main factory ──────────────────────────────────────────────────────────────
 
-export default function profile(renderContext, { logout = performLocalLogout, switchRole = null } = {}) {
+export default function profile(renderContext, { logout = performLocalLogout, switchRole = null, syncRole = null } = {}) {
   // A sheet left by a previous mount (its root is gone) releases its focus trap.
   closeEnrollmentSheet();
   const root = document.createElement('section');
@@ -3860,6 +3863,14 @@ export default function profile(renderContext, { logout = performLocalLogout, sw
     } else {
       setTimeout(scrollToHistory, 0);
     }
+  }
+
+  // #1086 — backend-ON: adopt the server session's active role on mount (not for the Guest view or
+  // an explicit ?role= preview). app.js re-renders /profile when the role changed. A macrotask starts
+  // the read only once the router has mounted this root: the session read publishes a reconciling
+  // snapshot, which must not reach the router's post-loader admission check.
+  if (isBackendEnabled() && typeof syncRole === 'function' && view !== 'guest' && !roleParam) {
+    setTimeout(() => { if (ownsScreen() && root.isConnected) void syncRole(); }, 0);
   }
 
   return root;

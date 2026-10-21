@@ -195,7 +195,7 @@ await check('01C-2: profile backend-ON switches through the injected server capa
   assert.match(app, /switchRole: role => switchProfileRole\(context, role\)/);
   assert.match(app, /if \(profileSwitchOwner\?\.isCurrent\(\)\) return;/, 'the listener leaves the switching profile mounted');
   assert.match(app, /clearSmokeRole\(\);\s*user\.set\(\{ role \}\);/, 'the local role changes only after the confirmed read');
-  assert.match(profileSrc, /export default function profile\(renderContext, \{ logout = performLocalLogout, switchRole = null \} = \{\}\)/);
+  assert.match(profileSrc, /export default function profile\(renderContext, \{ logout = performLocalLogout, switchRole = null(?:, syncRole = null)? \} = \{\}\)/);
   assert.match(profileSrc, /if \(model\.backend\) \{\s*wireServerRoleSwitch\(root, root\.querySelector\('#pfp-role-switch'\)/);
   assert.match(profileSrc, /\} else \{\s*root\.querySelector\('#pfp-role-switch'\)\?\.addEventListener\('click', \(\) => \{ setSmokeRole\('driver'\); go\('\/profile'\); \}\);/);
   assert.match(profileSrc, /if \(isBackendEnabled\(\)\) \{\s*wireServerRoleSwitch\(root, root\.querySelector\('#pf2-act-role-switch'\)/);
