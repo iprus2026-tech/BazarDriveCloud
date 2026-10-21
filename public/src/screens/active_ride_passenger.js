@@ -33,7 +33,10 @@ import {
   pollRide,
   patchRideStatus,
   reconcileCanonicalOrderFromAuthoritativeTerminalRide,
+  ORDER_LIFECYCLE_MISMATCH,
+  ORDER_LIFECYCLE_MISMATCH_TEXT,
 } from '../mock_api.js';
+import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { isBackendEnabled } from '../api_config.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { openPassengerSafetySheet, openPassengerCancelSheet } from './active_ride_passenger_sheets.js';
@@ -1971,7 +1974,7 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
 
   // BD-RIDE-P-06/07 polish — NO_SHOW badge uses the canonical label
   // (resolveRideStatusLabel), not the raw enum string.
-  const title = isNoShow ? 'Поездка закрыта' : 'Поездка отменена';
+  const title = isNoShow ? 'Поездка закрыта' : (byDriver ? 'Водитель отменил поездку' : 'Поездка отменена');
   const badgeLabel = isNoShow ? 'Поездка закрыта' : 'Поездка отменена';
   const badgeText = isNoShow ? resolveRideStatusLabel(RIDE_STATUS.NO_SHOW) : 'Отменена';
   const description = isNoShow
@@ -1979,14 +1982,24 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
     : (byPassenger
       ? 'Вы отменили эту поездку. Вернитесь на главную или создайте новую заявку.'
       : (byDriver
-        ? 'Водитель отменил эту поездку. Вы можете вернуться на главную или создать новую заявку.'
+        ? 'Водитель отменил эту поездку. Можно создать заказ заново или вернуться на главную.'
         : 'Мы закрыли эту поездку. Вы можете вернуться на главную или создать новую заявку.'));
+  // #1049/#1050 — a driver-side cancel ends the order too (re-matching is
+  // #1097). The passenger gets «Создать заказ заново»: the same addresses and
+  // price go to the composer through the one-time repeat-route prefill.
+  const repeatEntry = !isNoShow && byDriver ? {
+    role: 'passenger',
+    route: ride && ride.route,
+    fare: ride && ride.order && ride.order.offerPrice,
+  } : null;
+  const canRepeat = !!(repeatEntry && buildRepeatRouteDraft(repeatEntry));
   const metaVerb = isNoShow ? 'закрыто в' : 'отменено в';
+  const primaryLabel = canRepeat ? 'Создать заказ заново' : 'Создать новую поездку';
   const primaryHtml = isNoShow
     ? ''
     : `<button type="button" class="passenger-cancel-fallback__btn-primary" id="arp-canceled-new">
          <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PLUS_SVG}</span>
-         Создать новую поездку
+         ${escapeHtml(primaryLabel)}
        </button>`;
 
   root.innerHTML = `
@@ -2024,8 +2037,9 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
   if (newBtn) {
     newBtn.addEventListener('click', () => {
       // Composer is the canonical "new trip" entry on the passenger
-      // side; no real backend call — same stub story as the rest of the
-      // passenger flow.
+      // side; it publishes the order itself (the server when ON). After a
+      // driver-side cancel it opens prefilled with the canceled route.
+      if (canRepeat) writeRepeatRouteDraft(repeatEntry);
       go('/new');
     });
   }
@@ -2266,6 +2280,71 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
+  // #1050 — passenger cancel on a SERVER_BACKED ride: the server decides, then
+  // the device follows. The PATCH carries the chosen reason (the comment only
+  // for «Другая причина» — the server keeps no other). Nothing terminal is
+  // written locally until the server answers CANCELED; the local record is
+  // then the server's own terminal projection, the same one a terminal read
+  // persists. CANCELED is idempotent on the server, so a failed or unanswered
+  // attempt is safely repeated from the sheet.
+  function passengerCancelFailure(err) {
+    const code = (err && err.code) || 'RIDE_CANCEL_UNKNOWN';
+    if (code === ORDER_LIFECYCLE_MISMATCH) {
+      return { code, final: true, userMessage: ORDER_LIFECYCLE_MISMATCH_TEXT };
+    }
+    const status = Number(err && err.status);
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+      return { code, final: false, userMessage: 'Сервер отклонил отмену. Поездка остаётся активной.' };
+    }
+    return { code, final: false, userMessage: '' };
+  }
+
+  async function commitPassengerServerCancel(reasonId, comment) {
+    const tripId = ride.tripId;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), PASSENGER_RIDE_POLL_TIMEOUT_MS);
+    let srv;
+    try {
+      srv = await patchRideStatus(tripId, RIDE_STATUS.CANCELED, {
+        signal: controller.signal,
+        cancel: { reason: reasonId, ...(reasonId === 'other' && comment ? { comment } : {}) },
+      });
+    } catch (err) {
+      // The ride already ended another way, or the trip has started: nothing
+      // to cancel. The sheet closes and the poll brings the server's state.
+      if (err && (err.code === 'RIDE_TERMINAL' || err.code === 'RIDE_TRANSITION_NOT_ALLOWED')) {
+        toast(err.code === 'RIDE_TERMINAL'
+          ? 'Поездка уже завершена. Обновляем статус.'
+          : 'Поездка уже началась — отменить её нельзя. Обновляем статус.');
+        return { aborted: true, reconcile: 'server-refused' };
+      }
+      throw passengerCancelFailure(err);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    const terminalRide = projectPassengerServerConfirmedTerminalRide(srv, tripId);
+    if (!terminalRide || terminalRide.status !== RIDE_STATUS.CANCELED) {
+      throw passengerCancelFailure(null);
+    }
+    persistPassengerServerConfirmedTerminalProjection(terminalRide, tripId);
+    // The ride is over on the server: stop the reads so a deferred poll status
+    // cannot re-navigate over the canceled card's own CTAs, and keep a reload
+    // on the terminal screen.
+    deferredPassengerServerStatus = null;
+    syncTerminalStatusIntoUrl(RIDE_STATUS.CANCELED);
+    teardownPassengerReads();
+    ride = terminalRide;
+    if (!terminalRide.cancel || terminalRide.cancel.by !== 'passenger') {
+      // The driver canceled first (the repeat was a server no-op): show that,
+      // not «Вы отменили».
+      Promise.resolve().then(() => {
+        if (document.body.contains(root)) swapToTerminalPassengerScreen(terminalRide);
+      });
+      return { aborted: true, reconcile: 'canceled-by-other' };
+    }
+    return { tripLabel, timeLabel: formatCanceledAt(terminalRide) };
+  }
+
   // BD-RIDE-P-06 polish — shared binder for the cancel affordance.
   // Used by both the en-route family (ACCEPTED, DRIVER_EN_ROUTE,
   // DRIVER_APPROACHING_PICKUP) and the WAITING_PASSENGER sheet so a
@@ -2288,6 +2367,7 @@ export default function activeRidePassenger(options = {}) {
       openPassengerCancelSheet(root, {
         ride,
         tripLabel,
+        canCommit: () => !passengerMutationIsBlocked() && !deferredTerminalPassengerStatusBlocksCancel(),
         onConfirm: (reasonId, comment) => {
           // Review9 P1: a terminal server snapshot deferred behind this overlay is
           // authoritative enough to close the stale cancel commit path immediately.
@@ -2300,6 +2380,9 @@ export default function activeRidePassenger(options = {}) {
               reconcile: 'deferred-terminal',
             };
           }
+          // #1050 — a SERVER_BACKED ride is canceled on the server first; the
+          // local terminal record is written only from its confirmed answer.
+          if (backendWriteCandidate) return commitPassengerServerCancel(reasonId, comment);
           // BD-RIDE-SIM-01 — passenger cancels after the driver has
           // already accepted. Persist the current view first so the
           // ride's passenger identity (sim overrides — Алексей,
@@ -2344,13 +2427,6 @@ export default function activeRidePassenger(options = {}) {
               && canceledRide.status === RIDE_STATUS.CANCELED) {
             updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
           }
-          // #784 CUT-5 (B2) — mirror the passenger cancel to the server so the driver (polling) sees
-          // it cross-device (the PATCH is participant-gated). Fire-and-forget: the local terminal stub
-          // is the user-facing truth; a server-sync failure leaves the local cancel standing (the
-          // driver-side poll reconciles). OFF / authoritative local-only ride: no server write candidate.
-          if (backendWriteCandidate && canceledRide && canceledRide.status === RIDE_STATUS.CANCELED) {
-            patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED).catch(() => {});
-          }
           // Hand the canceled-state copy back to the sheet. The
           // ?status=CANCELED fallback screen still renders on direct
           // entry / reload via renderPassengerCanceledFallback.
@@ -2391,9 +2467,11 @@ export default function activeRidePassenger(options = {}) {
           if (backendWriteCandidate) {
             try { await patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS); }
             catch (err) {
-              localToast(err && err.code === 'RIDE_TERMINAL'
+              toast(err && err.code === 'RIDE_TERMINAL'
                 ? 'Поездка уже завершена'
-                : 'Не удалось подтвердить посадку. Попробуйте ещё раз.');
+                : (err && err.code === ORDER_LIFECYCLE_MISMATCH
+                  ? ORDER_LIFECYCLE_MISMATCH_TEXT
+                  : 'Не удалось подтвердить посадку. Попробуйте ещё раз.'));
               return;
             }
           }

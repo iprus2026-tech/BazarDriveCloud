@@ -1119,6 +1119,8 @@ const BACKEND_AWARE_HELPERS = [
   'submitReceiptToBackend', 'pollOfferOutcome', 'getReceiptFromBackend', 'getReceiptResolved',
   // #1059 — saveDriverReceipt is local-only now; the server receipt write is requestServerDriverReceipt.
   'requestServerDriverReceipt',
+  // #1049 — the owner's order cancel before selection (/responses).
+  'cancelOrderOnBackend',
 ];
 const BACKEND_SIGNAL = new Set(['isBackendEnabled', 'apiFetch', ...BACKEND_AWARE_HELPERS]);
 // #807 review (R1 follow-up) — SELF-POLICE the deny-list: derive every mock_api export that carries an

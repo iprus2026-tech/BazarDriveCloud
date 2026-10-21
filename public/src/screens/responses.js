@@ -1,7 +1,10 @@
 import { go } from '../router.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
-import { getOrderById, listOrderOffers, selectOfferOnBackend, DEMO_RESPONSE_KIND } from '../mock_api.js';
+import {
+  getOrderById, listOrderOffers, selectOfferOnBackend, cancelOrderOnBackend, DEMO_RESPONSE_KIND, ORDER_NOT_CANCELABLE,
+} from '../mock_api.js';
+import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED, DRIVER_NOT_ELIGIBLE } from '../role_gate.js';
 import { isBackendEnabled } from '../api_config.js';
 import { findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
@@ -1040,6 +1043,64 @@ function renderRoleGateState() {
     </div>`;
 }
 
+// #1049 — the owner withdraws a published order before any driver is selected
+// (backend ON only). An inline confirm inside the order card; the server answer
+// decides: success settles the read region to «Заказ отменён», a refusal stays
+// here with its reason (a retry only where a repeat can help).
+const ORDER_CANCEL_QUESTION = 'Отменить заказ? Водители перестанут его видеть, их отклики будут отклонены.';
+
+function renderOrderCancelHtml(stage, { message = '', retry = false, profile = false } = {}) {
+  if (stage === 'confirm' || stage === 'pending') {
+    const pending = stage === 'pending';
+    const lock = pending ? ' disabled aria-disabled="true"' : '';
+    return `
+      <p class="responses__order-cancel-text">${escapeHtml(ORDER_CANCEL_QUESTION)}</p>
+      <div class="responses__order-cancel-actions">
+        <button type="button" class="bd-btn sm responses__order-cancel-btn" data-order-action="keep"${lock}>Не отменять</button>
+        <button type="button" class="bd-btn sm danger responses__order-cancel-btn" data-order-action="confirm-cancel"${lock}${pending ? ' aria-busy="true"' : ''}>${pending ? 'Отменяем…' : 'Да, отменить заказ'}</button>
+      </div>`;
+  }
+  if (stage === 'error') {
+    const primary = profile
+      ? `<button type="button" class="bd-btn sm responses__order-cancel-btn" data-order-action="open-profile">${escapeHtml(PROFILE_CTA_LABEL)}</button>`
+      : (retry
+        ? '<button type="button" class="bd-btn sm danger responses__order-cancel-btn" data-order-action="confirm-cancel">Повторить</button>'
+        : '');
+    return `
+      <p class="responses__order-cancel-error" role="alert">${escapeHtml(message)}</p>
+      <div class="responses__order-cancel-actions">
+        <button type="button" class="bd-btn sm responses__order-cancel-btn" data-order-action="keep">${retry || profile ? 'Не отменять' : 'Понятно'}</button>
+        ${primary}
+      </div>`;
+  }
+  return '<button type="button" class="responses__cancel-order" data-order-action="ask-cancel">Отменить заказ</button>';
+}
+
+// #1049 — the read region after a confirmed cancel (or on entry to an order
+// whose local copy is already CANCELED): no offers read, no fabricated board.
+function renderOrderCanceledState(canRepeat) {
+  const repeat = canRepeat
+    ? `<button type="button" class="bd-btn primary responses__cta" data-order-action="recreate">
+         <span>Создать заказ заново</span>
+       </button>`
+    : '';
+  return `
+    <div class="responses__empty responses__empty--canceled">
+      <div class="responses__empty-icon" aria-hidden="true">
+        <span class="responses__empty-glow"></span>
+        <span class="responses__empty-icon-inner">${CLOSE_SVG}</span>
+      </div>
+      <h2 class="responses__empty-title">Заказ отменён</h2>
+      <p class="responses__empty-body">Водители больше не видят этот заказ, их отклики отклонены.</p>
+    </div>
+    <div class="responses__footer responses__footer--in-scroll">
+      ${repeat}
+      <button type="button" class="bd-btn responses__cta responses__cta--secondary" data-order-action="home">
+        <span>На главную</span>
+      </button>
+    </div>`;
+}
+
 // BD-DRIVER-MAP-X-15 — accepted-driver handoff card. Rendered in place of the
 // empty search once the linked order has an active trip. Reads the driver-seeded
 // (or passenger-selected) active ride record, falling back to the request when a
@@ -1599,6 +1660,9 @@ export default function responses() {
   // synthetic id. A real local/cross-device order (isDemoOrder: false) keeps
   // the exact prior behavior unchanged.
   const backendAuthoritative = isRequestBackendAuthoritative(request, fixture);
+  // #1049 — the owner's order already withdrawn (its local copy follows a
+  // confirmed server cancel): no offers read, the canceled state only.
+  const orderCanceledOnEntry = backendAuthoritative && !!canonicalOrder && canonicalOrder.status === 'CANCELED';
 
   // BD-DRIVER-MAP-X-15 — handoff detection. The URL `state` is only a UI hint;
   // once the linked order is actually accepted (a driver took it on DriverMap,
@@ -1670,6 +1734,10 @@ export default function responses() {
         ? []
         : buildDriversForOrder(request, null, false));
   let readState = isAccepted ? 'loaded' : (fixture || (backendAuthoritative ? 'loading' : 'loaded'));
+  if (!isAccepted && orderCanceledOnEntry) {
+    readState = 'canceled';
+    effectiveState = 'canceled';
+  }
   let selectedDriver = null;
   let selectedDriverId = null;
 
@@ -1733,6 +1801,9 @@ export default function responses() {
     if (readState === 'role-gate') {
       return { subtitle: 'Нужен режим пассажира', chip: 'Режим водителя', tone: 'declined' };
     }
+    if (readState === 'canceled') {
+      return { subtitle: 'Заказ отменён', chip: 'Заказ отменён', tone: 'declined' };
+    }
     return responseStatus(effectiveState);
   }
 
@@ -1789,6 +1860,7 @@ export default function responses() {
             <span>На карту</span>
           </button>
         </div>
+        <div class="responses__order-cancel" id="responses-order-cancel" data-stage="idle" hidden></div>
       </div>
       <div class="responses__read-region" id="responses-read-region"
            data-read-state="${escapeHtml(readState)}"
@@ -1909,6 +1981,122 @@ export default function responses() {
   const readRegion = root.querySelector('#responses-read-region');
   let boardEl = null;
   let offersReadRunId = 0;
+
+  // #1049 — order cancel before selection (backend ON). Shown only for the
+  // owner's local copy in CREATED with no driver handed off; the server
+  // decides (403 role gate, 409 a driver already chosen).
+  const orderCancelEl = root.querySelector('#responses-order-cancel');
+  let orderCancelStage = 'idle';
+  let orderCancelPending = false;
+
+  function orderCancelable() {
+    return backendAuthoritative && !fixture && !!canonicalOrder && canonicalOrder.status === 'CREATED'
+      && !isAccepted && readState !== 'role-gate' && readState !== 'canceled';
+  }
+
+  function renderOrderCancel(stage = 'idle', opts = {}) {
+    orderCancelStage = stage;
+    if (!orderCancelEl) return;
+    orderCancelEl.dataset.stage = stage;
+    orderCancelEl.innerHTML = renderOrderCancelHtml(stage, opts);
+  }
+
+  function syncOrderCancel() {
+    if (!orderCancelEl) return;
+    const show = orderCancelPending || orderCancelable();
+    orderCancelEl.hidden = !show;
+    if (!show && orderCancelStage !== 'idle') renderOrderCancel('idle');
+  }
+
+  function focusOrderCancel(selector) {
+    const target = orderCancelEl && orderCancelEl.querySelector(selector);
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+
+  function repeatEntryForOrder() {
+    const order = canonicalOrder;
+    if (!order) return null;
+    return {
+      role: 'passenger',
+      route: { pickupLabel: order.pickup && order.pickup.label, dropoffLabel: order.dropoff && order.dropoff.label },
+      fare: Number(order.estimatedPrice) || null,
+    };
+  }
+
+  async function cancelOrder() {
+    if (orderCancelPending || !request.orderId || !orderCancelable()) return;
+    orderCancelPending = true;
+    renderOrderCancel('pending');
+    try {
+      await cancelOrderOnBackend(request.orderId);
+    } catch (err) {
+      orderCancelPending = false;
+      if (!document.body.contains(root)) return;
+      const status = Number(err && err.status);
+      if (roleGateCode(err) === PASSENGER_ROLE_REQUIRED) {
+        renderOrderCancel('error', { message: ROLE_GATE_TEXT.orderCancel, profile: true });
+      } else if (err && err.code === ORDER_NOT_CANCELABLE) {
+        renderOrderCancel('error', { message: 'У заказа уже есть водитель — отменить можно только поездку.' });
+        void loadServerOffers();
+      } else if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+        renderOrderCancel('error', { message: 'Сервер отклонил отмену заказа.' });
+      } else {
+        renderOrderCancel('error', {
+          message: 'Не удалось связаться с сервером. Заказ пока не отменён — повторите попытку.',
+          retry: true,
+        });
+      }
+      syncOrderCancel();
+      focusOrderCancel('button');
+      return;
+    }
+    orderCancelPending = false;
+    if (!document.body.contains(root)) return;
+    // A late offers read must not repaint the withdrawn order.
+    offersReadRunId += 1;
+    canonicalOrder = resolveCanonicalOrder();
+    drivers = [];
+    selectedDriver = null;
+    selectedDriverId = null;
+    readState = 'canceled';
+    effectiveState = 'canceled';
+    renderOrderCancel('idle');
+    renderReadRegion();
+    if (typeof readRegion.focus === 'function') readRegion.focus({ preventScroll: true });
+  }
+
+  if (orderCancelEl) {
+    renderOrderCancel('idle');
+    orderCancelEl.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-order-action]');
+      if (!btn || btn.disabled) return;
+      const action = btn.dataset.orderAction;
+      if (action === 'ask-cancel') {
+        renderOrderCancel('confirm');
+        focusOrderCancel('[data-order-action="keep"]');
+      } else if (action === 'keep') {
+        renderOrderCancel('idle');
+        syncOrderCancel();
+        focusOrderCancel('[data-order-action="ask-cancel"]');
+      } else if (action === 'open-profile') {
+        go('/profile');
+      } else if (action === 'confirm-cancel') {
+        void cancelOrder();
+      }
+    });
+  }
+
+  readRegion?.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-order-action]');
+    if (!btn) return;
+    if (btn.dataset.orderAction === 'recreate') {
+      const entry = repeatEntryForOrder();
+      if (entry) writeRepeatRouteDraft(entry);
+      go('/new');
+    } else if (btn.dataset.orderAction === 'home') {
+      go('/feed');
+    }
+  });
   let missingSelectedAnnounced = false;
   let missingSelectedAnnouncementPending = false;
 
@@ -1927,6 +2115,7 @@ export default function responses() {
     if (subEl) subEl.textContent = liveStatus.subtitle;
     const chipEl = root.querySelector('.responses__status-chip');
     if (chipEl) chipEl.outerHTML = renderStatusChip(liveStatus, { announce: readState !== 'loading' });
+    syncOrderCancel();
   }
 
   function announceMissingSelectedAfterMount() {
@@ -1951,6 +2140,8 @@ export default function responses() {
     let content;
     if (readState === 'loading') {
       content = renderOffersLoading();
+    } else if (readState === 'canceled') {
+      content = renderOrderCanceledState(!!buildRepeatRouteDraft(repeatEntryForOrder()));
     } else if (isAccepted) {
       content = renderAcceptedDriver(handoffRide, request);
     } else if (readState === 'role-gate') {
@@ -2028,7 +2219,7 @@ export default function responses() {
   }
 
   async function loadServerOffers({ isRetry = false } = {}) {
-    if (!backendAuthoritative || fixture || !document.body.contains(root)) return;
+    if (!backendAuthoritative || fixture || readState === 'canceled' || !document.body.contains(root)) return;
     const runId = ++offersReadRunId;
     if (isRetry) setRetryBusy(true);
 

@@ -9113,6 +9113,43 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .responses__edit:active { opacity: 0.7; }
 
+/* #1049 — withdraw the published order before a driver is chosen (backend ON). */
+.responses__order-cancel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.responses__order-cancel[hidden] { display: none; }
+.responses__order-cancel[data-stage="idle"] { align-items: flex-start; }
+.responses__cancel-order {
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 6px 4px;
+}
+.responses__cancel-order:active { opacity: 0.7; }
+.responses__order-cancel-text,
+.responses__order-cancel-error {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.responses__order-cancel-error { color: var(--danger); font-weight: 600; }
+.responses__order-cancel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.responses__order-cancel-actions .responses__order-cancel-btn {
+  flex: 1 1 0;
+  min-height: 44px;
+}
+
 /* ── BD-CLOUD-DESIGN-LOADING-02A — offers read owner ────── */
 .responses__read-region {
   min-height: 280px;
@@ -10612,14 +10649,27 @@ button.pfp-menu-row:active { opacity: 0.7; }
   display: flex;
 }
 
-/* Optional comment — only visible once a reason is selected. */
+/* #1050 — the server's verdict on a failed cancel (shown until the next attempt). */
+.passenger-cancel-sheet__request-error {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--danger);
+  padding: 8px 12px;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  border-radius: var(--radius-md);
+}
+.passenger-cancel-sheet__request-error[hidden] { display: none; }
+
+/* Optional comment — only for «Другая причина» (the server keeps no other). */
 .passenger-cancel-sheet__comment {
   display: none;
   flex-direction: column;
   gap: 6px;
 }
-.passenger-cancel-overlay[data-stage="reason_selected"] .passenger-cancel-sheet__comment,
-.passenger-cancel-overlay[data-stage="loading"] .passenger-cancel-sheet__comment {
+.passenger-cancel-overlay[data-custom="true"][data-stage="reason_selected"] .passenger-cancel-sheet__comment,
+.passenger-cancel-overlay[data-custom="true"][data-stage="loading"] .passenger-cancel-sheet__comment {
   display: flex;
 }
 .passenger-cancel-sheet__comment-label {

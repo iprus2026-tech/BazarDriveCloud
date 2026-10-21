@@ -355,6 +355,9 @@ function bindCancelEvents(overlay, options) {
   let selected = DRIVER_CANCEL_REASONS.some(([v]) => v === options.reason) ? options.reason : '';
   let checking = Boolean(options.needsReconciliation);
   let pending = false;
+  // A final server refusal (error.final, e.g. #1051's ride/order mismatch)
+  // keeps the command off: a repeat cannot change the verdict.
+  let refusedFinally = false;
   const ownsSheet = () => overlay.isConnected
     && (typeof options.isCurrent !== 'function' || options.isCurrent());
 
@@ -371,7 +374,7 @@ function bindCancelEvents(overlay, options) {
     const done = overlay.dataset.stage === 'canceled';
     optionBtns.forEach((btn) => { btn.disabled = value || checking || done; });
     if (customInput) customInput.disabled = value || checking || done;
-    confirm.disabled = value || done;
+    confirm.disabled = value || done || refusedFinally;
     confirm.setAttribute('aria-busy', value ? 'true' : 'false');
     closeBtns.forEach((btn) => { btn.disabled = value || done; });
     doneBtns.forEach((btn) => { if (btn) btn.disabled = !done; });
@@ -398,7 +401,7 @@ function bindCancelEvents(overlay, options) {
   }));
 
   confirm.addEventListener('click', async () => {
-    if (!ownsSheet() || pending || overlay.dataset.stage === 'canceled') return;
+    if (!ownsSheet() || pending || refusedFinally || overlay.dataset.stage === 'canceled') return;
     if (!checking && !selected) { overlay.dataset.stage = 'validation_error'; return; }
     const reasonCode = selected;
     const customText = customInput ? customInput.value.trim() : '';
@@ -443,14 +446,17 @@ function bindCancelEvents(overlay, options) {
         overlay.__closeSheet && overlay.__closeSheet();
         return;
       }
-      checking = !['RIDE_CANCEL_NOT_CONFIRMED', 'RIDE_CANCEL_BUSY'].includes(error?.code);
+      refusedFinally = error?.final === true;
+      checking = !refusedFinally && !['RIDE_CANCEL_NOT_CONFIRMED', 'RIDE_CANCEL_BUSY'].includes(error?.code);
       overlay.dataset.stage = selected ? 'reason_selected' : 'default';
       if (requestError) {
-        requestError.textContent = checking
-          ? 'Не удалось узнать, отменена ли поездка. Проверьте статус перед повторной отменой.'
-          : error?.code === 'RIDE_CANCEL_BUSY'
-            ? 'Дождитесь обновления статуса поездки и повторите попытку.'
-            : 'Отмена не подтверждена. Поездка остаётся активной. Можно повторить попытку.';
+        requestError.textContent = refusedFinally && error?.userMessage
+          ? error.userMessage
+          : checking
+            ? 'Не удалось узнать, отменена ли поездка. Проверьте статус перед повторной отменой.'
+            : error?.code === 'RIDE_CANCEL_BUSY'
+              ? 'Дождитесь обновления статуса поездки и повторите попытку.'
+              : 'Отмена не подтверждена. Поездка остаётся активной. Можно повторить попытку.';
         requestError.hidden = false;
       }
       setPending(false);

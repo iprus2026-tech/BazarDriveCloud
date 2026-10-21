@@ -47,6 +47,8 @@ import {
   patchRideStatus,
   pollRide,
   reconcileCanonicalOrderFromAuthoritativeTerminalRide,
+  ORDER_LIFECYCLE_MISMATCH,
+  ORDER_LIFECYCLE_MISMATCH_TEXT,
 } from '../mock_api.js';
 import { getApiBase, isBackendEnabled } from '../api_config.js';
 import {
@@ -345,6 +347,14 @@ function syncCanonicalOrderStatus(ride, activeStatus) {
     updateTripStatus(orderId, RIDE_STATUS.IN_PROGRESS);
     updateTripStatus(orderId, RIDE_STATUS.COMPLETED);
   }
+}
+
+// RIDE_TERMINAL and #1051's ORDER_LIFECYCLE_MISMATCH are server verdicts a
+// repeat cannot change; anything else is a failed write worth retrying.
+function rideWriteFailureText(err, fallback) {
+  if (err && err.code === 'RIDE_TERMINAL') return 'Поездка уже завершена';
+  if (err && err.code === ORDER_LIFECYCLE_MISMATCH) return ORDER_LIFECYCLE_MISMATCH_TEXT;
+  return fallback;
 }
 
 function appendDriverChatMessage(tripId, text) {
@@ -692,9 +702,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
         if (!ownsWrite()) return;
         driverStatusOperation = null;
         pendingStatus = null;
-        showNotice(err && err.code === 'RIDE_TERMINAL'
-          ? 'Поездка уже завершена'
-          : 'Не удалось обновить статус на сервере');
+        showNotice(rideWriteFailureText(err, 'Не удалось обновить статус на сервере'));
         refetchRideAndRender();
       });
   }
@@ -706,9 +714,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       .then(() => { pendingStatus = null; ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); })
       .catch((err) => {
         pendingStatus = null;
-        showNotice(err && err.code === 'RIDE_TERMINAL'
-          ? 'Поездка уже завершена'
-          : 'Не удалось завершить поездку на сервере');
+        showNotice(rideWriteFailureText(err, 'Не удалось завершить поездку на сервере'));
         refetchRideAndRender();
       });
   }
@@ -749,9 +755,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       })
       .catch((err) => {
         pendingStatus = null;
-        showNotice(err && err.code === 'RIDE_TERMINAL'
-          ? 'Поездка уже завершена'
-          : 'Не удалось подтвердить «не вышел» на сервере');
+        showNotice(rideWriteFailureText(err, 'Не удалось подтвердить «не вышел» на сервере'));
         refetchRideAndRender();
         throw err;
       });
@@ -979,6 +983,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
         } catch (writeError) {
           if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
           operation.ambiguousWrite = !isDefinitiveDriverCancelRejection(writeError);
+          operation.writeRefusal = writeError?.code || null;
           serverRide = await requestDriverCancel(operation, false);
         }
       } else {
@@ -1019,10 +1024,16 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       }
       if (ride.status === RIDE_STATUS.CANCELED) return ride;
       if (isTerminalRideStatus(ride.status)) throw driverCancelError('RIDE_CANCEL_TERMINAL');
+      // #1051 — the ride and its order are out of step on the server; a repeat
+      // cannot fix that, so the sheet says so instead of offering a retry.
+      if (operation.writeRefusal === ORDER_LIFECYCLE_MISMATCH) {
+        throw Object.assign(driverCancelError(ORDER_LIFECYCLE_MISMATCH),
+          { final: true, userMessage: ORDER_LIFECYCLE_MISMATCH_TEXT });
+      }
       throw driverCancelError('RIDE_CANCEL_NOT_CONFIRMED');
     } catch (error) {
       if (!ownsDriverCancelOperation(operation)) throw driverCancelError('RIDE_CANCEL_STALE');
-      if (['RIDE_CANCEL_NOT_CONFIRMED', 'RIDE_CANCEL_TERMINAL'].includes(error?.code)) throw error;
+      if (['RIDE_CANCEL_NOT_CONFIRMED', 'RIDE_CANCEL_TERMINAL', ORDER_LIFECYCLE_MISMATCH].includes(error?.code)) throw error;
       driverCancelNeedsReconcile = true;
       throw driverCancelError('RIDE_CANCEL_UNKNOWN');
     } finally {

@@ -515,6 +515,18 @@ if (exists(driverCancelServerAckSmoke)) {
   }
 }
 
+// Order lifecycle, client side (#1049/#1050/#1051): the passenger ride cancel awaits the
+// server with its reason, the /responses order cancel and the driver-canceled re-order.
+const orderLifecycleClientSmoke = path.join(root, 'scripts', 'smoke-order-lifecycle-client.mjs');
+if (exists(orderLifecycleClientSmoke)) {
+  try {
+    execFileSync(process.execPath, [orderLifecycleClientSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-lifecycle-client.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt
