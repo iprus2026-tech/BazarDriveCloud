@@ -32,6 +32,20 @@ export async function findOfferByOrderDriver(db, orderId, driverId) {
   return rows[0] ?? null;
 }
 
+// Whether the driver has a LIVE offer on the order — the exact predicate acceptOffer updates on
+// (sent, not expired; now() is the transaction start, so both reads agree inside one tx).
+// BD-AUTH-POLICY-01B-C: /select checks this before the driver's grant, so the grant answer is
+// only ever given for a driver who actually offered.
+export async function findLiveOfferByOrderDriver(db, orderId, driverId) {
+  const { rows } = await db.query(
+    `SELECT id FROM offers
+      WHERE order_id = $1 AND driver_id = $2 AND status = 'sent' AND expires_at > now()
+      LIMIT 1`,
+    [orderId, driverId],
+  );
+  return rows[0] ?? null;
+}
+
 // All offers for an order (the owner's read), newest first. Served by idx_offers_order_status.
 export async function listOffersByOrder(db, orderId) {
   const { rows } = await db.query(

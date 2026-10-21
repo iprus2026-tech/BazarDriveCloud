@@ -149,7 +149,9 @@ test('select re-checks the driver grant: a driver revoked after offering is not 
   const tag = String(process.pid).padStart(7, '0');
   const pax = `+1603${tag}`;
   const drv = `+1604${tag}`;
-  const { cleanup, orderIds } = harness(t, [pax, drv]);
+  const other = `+1608${tag}`;
+  const idle = `+1609${tag}`;
+  const { cleanup, orderIds } = harness(t, [pax, drv, other, idle]);
   await cleanup.connect();
 
   const paxS = await mintSession(app, pax);
@@ -157,6 +159,15 @@ test('select re-checks the driver grant: a driver revoked after offering is not 
   orderIds.push(order.id);
   const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id, price: 900 }, bearer(drvS))).statusCode, 201);
+
+  // No grant oracle: an account that never offered on this order is 404 OFFER_NOT_FOUND whether
+  // it holds the driver grant or not (the live offer is checked before the grant).
+  const noOfferPassenger = await mintSession(app, other);
+  const noOfferDriver = await grantDriverRole(cleanup, await mintSession(app, idle));
+  for (const [label, s] of [['a passenger-only account', noOfferPassenger], ['a granted driver', noOfferDriver]]) {
+    const res = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: s.user.userId }, bearer(paxS));
+    assert.deepEqual([res.statusCode, res.json().code], [404, 'OFFER_NOT_FOUND'], label + ' without an offer');
+  }
 
   // The driver grant is revoked after the offer (as decideDriverEnrollment's revoke leaves it).
   await cleanup.query("UPDATE users SET roles = ARRAY['passenger']::text[], active_role = 'passenger' WHERE id = $1", [drvS.user.userId]);
@@ -168,10 +179,11 @@ test('select re-checks the driver grant: a driver revoked after offering is not 
     { error: 'the selected driver can no longer take this order', code: 'DRIVER_NOT_ELIGIBLE', retryable: false });
   assert.deepEqual(await footprint(cleanup, order.id), before, 'nothing written');
   assert.deepEqual(before, { status: 'CREATED', offers: ['sent'], assignment: 0, rides: 0 });
-  // Lock order: passenger authority, then the order row, then the driver's grant FOR SHARE.
+  // Order: passenger authority, the order lock, the live offer, then the driver's grant FOR SHARE.
   const first = (re) => sql.findIndex((text) => re.test(text));
   assert.ok(first(/\bFROM\s+users\b/i) < first(/\bFROM\s+orders\b/i), 'authority before the order lock');
-  assert.ok(first(/\bFROM\s+orders\b/i) < first(/\bFOR\s+SHARE\b/i), 'the driver grant is read after the order lock');
+  assert.ok(first(/\bFROM\s+orders\b/i) < first(/\bFROM\s+offers\b/i), 'the live offer is read under the order lock');
+  assert.ok(first(/\bFROM\s+offers\b/i) < first(/\bFOR\s+SHARE\b/i), 'the driver grant is read only after a live offer is found');
   assert.equal(sql.some((text) => /^\s*UPDATE\s+offers\b/i.test(text)), false, 'no offer is accepted');
 
   // The grant is restored: the same selection succeeds.

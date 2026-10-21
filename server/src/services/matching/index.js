@@ -17,7 +17,7 @@ import { resolveActorAuthority, requireDriverActor, requirePassengerActor, roleA
 import { lockUserGrantsForShare } from '../../repositories/users.js';
 import { serializeOffer, serializeOrder, serializeAssignment, serializeRide, serializeRecoveredOffer } from '../../serialize.js';
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
-import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
+import { upsertOffer, findOfferByOrderDriver, findLiveOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
 import { insertAssignment } from '../../repositories/assignment.js';
 import { bootstrapRide, lockConflictRideForSelection, findRecoveryBundleByOrderId } from '../../repositories/rides.js';
 import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
@@ -250,12 +250,17 @@ export default async function matchingService(app) {
       // A malformed (non-uuid) driverId can have no offer — return 404 rather than letting it hit
       // the uuid column and raise a pg cast error (500).
       if (!UUID_RE.test(driverId)) return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
+      // A live offer from that driver first (acceptOffer's own predicate): without one the answer
+      // is 404 whatever the account is, so the grant check below reveals nothing about accounts
+      // that never offered on this order.
+      if (!(await findLiveOfferByOrderDriver(client, order.id, driverId))) {
+        return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
+      }
       // The selected driver must still hold the driver grant (contract §4), before anything is
       // written. FOR SHARE serializes with a concurrent revoke, which locks the same users row FOR
       // UPDATE: the revoke either committed before this read, or waits for this selection.
       const driverGrants = await lockUserGrantsForShare(client, driverId);
-      if (!driverGrants) return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
-      if (!Array.isArray(driverGrants.roles) || !driverGrants.roles.includes('driver')) {
+      if (!driverGrants || !Array.isArray(driverGrants.roles) || !driverGrants.roles.includes('driver')) {
         return { err: [409, 'DRIVER_NOT_ELIGIBLE', 'the selected driver can no longer take this order'] };
       }
 
