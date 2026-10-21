@@ -46,3 +46,16 @@ export const ORDER_FROM_STATUSES = Object.freeze({
   COMPLETED: Object.freeze(['ACCEPTED', 'IN_PROGRESS']),
   CANCELED: Object.freeze(['ACCEPTED', 'IN_PROGRESS']),
 });
+
+// Thrown inside the ride-state PATCH transaction when the order (or, on a cancel, the assignment)
+// is not in a state the ride step may move it from. Throwing rolls the ride transition back with
+// it, so a ride never commits ahead of its order; the PATCH answers 409 ORDER_LIFECYCLE_MISMATCH.
+// The reason and tripId are for server logs only.
+export class OrderLifecycleMismatchError extends Error {
+  constructor(tripId, reason) {
+    super(`order lifecycle mismatch for ${tripId}: ${reason}`);
+    this.name = 'OrderLifecycleMismatchError';
+    this.tripId = tripId;
+    this.reason = reason;
+  }
+}

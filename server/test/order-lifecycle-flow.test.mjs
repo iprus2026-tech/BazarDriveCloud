@@ -1,11 +1,13 @@
 // /server/test/order-lifecycle-flow.test.mjs — DB-gated end-to-end for the order-lifecycle contract
 // (2026-10-21; #1049 D8, #1050 D9 server side, #1051 D10) through the real Fastify app + Postgres:
 //   - POST /orders/:orderId/cancel: the owner withdraws an order before selection (CREATED ->
-//     CANCELED, open offers rejected); repeat 200; ACCEPTED+ -> 409 ORDER_NOT_CANCELABLE;
-//     passenger gate, owner check, 404;
+//     CANCELED, open offers rejected); repeat 200; an order with a driver (ACCEPTED+, or CANCELED
+//     through its ride) -> 409 ORDER_NOT_CANCELABLE; passenger gate, owner check, 404;
 //   - the order (and on a cancel / no-show the assignment) follows the ride in the PATCH transaction:
 //     IN_PROGRESS -> IN_PROGRESS, COMPLETED -> COMPLETED, CANCELED / NO_SHOW -> CANCELED (+ the
 //     assignment canceled by the ride's actor; NO_SHOW -> driver); both recovery GETs keep passing;
+//   - an out-of-step order or assignment refuses the ride step (409 ORDER_LIFECYCLE_MISMATCH) and
+//     rolls the ride back with it: no status change, no event;
 //   - migration 0011 on an ISOLATED temporary database: it refuses an underivable cancel actor and
 //     changes nothing, then aligns pre-sync rows, and a second apply changes nothing.
 // SKIPPED without DATABASE_URL; runs in server-ci's app job.
@@ -154,6 +156,52 @@ test('an order with a driver is not canceled through the order route (409); the 
   const { rows: [r] } = await db.query('SELECT cancel_reason FROM rides WHERE trip_id = $1', [tripId]);
   assert.equal(r.cancel_reason, 'changed_mind', 'the passenger reason is stored (D9 server side)');
   assert.deepEqual(await recoveryReads(app, paxS, orderId, tripId), [200, 200], 'both recovery GETs still pass');
+
+  // The ride cancel made the order CANCELED, but the order had a driver: the order route still
+  // refuses it rather than answering as if it had canceled the order itself.
+  const after = await post(app, `/api/v1/orders/${encodeURIComponent(orderId)}/cancel`, undefined, bearer(paxS));
+  assert.deepEqual([after.statusCode, after.json().code], [409, 'ORDER_NOT_CANCELABLE']);
+  assert.equal((await pair(db, orderId)).order_status, 'CANCELED');
+});
+
+test('an out-of-step order or assignment refuses the ride step and rolls it back (409 ORDER_LIFECYCLE_MISMATCH)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config: baseConfig });
+  const db = new pg.Client({ connectionString: DATABASE_URL });
+  await db.connect();
+  const tag = String(process.pid).padStart(7, '0');
+  const phones = Array.from({ length: 4 }, (_, i) => `+165${i}${tag}`);
+  const orderIds = harness(t, db, phones);
+  t.after(async () => { await db.end(); await app.close(); });
+  const events = async (tripId) => Number((await db.query('SELECT count(*) FROM ride_events WHERE trip_id = $1', [tripId])).rows[0].count);
+
+  // The order is not where the ride says it is (a legacy CREATED order under a waiting ride).
+  const fwd = await acceptedRide(app, db, phones[0], phones[1]);
+  orderIds.push(fwd.orderId);
+  await drive(app, fwd.drvS, fwd.tripId, ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER']);
+  await db.query(`UPDATE orders SET status = 'CREATED' WHERE legacy_id = $1`, [fwd.orderId]);
+  const before = await events(fwd.tripId);
+  const refused = await patch(app, rideUrl(fwd.tripId) + '/status', { status: 'IN_PROGRESS' }, bearer(fwd.drvS));
+  assert.deepEqual([refused.statusCode, refused.json().code], [409, 'ORDER_LIFECYCLE_MISMATCH']);
+  assert.deepEqual([(await pair(db, fwd.orderId)).ride_status, (await pair(db, fwd.orderId)).order_status], ['WAITING_PASSENGER', 'CREATED'],
+    'the ride step is rolled back with the order');
+  assert.equal(await events(fwd.tripId), before, 'no status-change event is kept');
+  // Back in step, the same step goes through.
+  await db.query(`UPDATE orders SET status = 'ACCEPTED' WHERE legacy_id = $1`, [fwd.orderId]);
+  await drive(app, fwd.drvS, fwd.tripId, ['IN_PROGRESS']);
+  assert.equal((await pair(db, fwd.orderId)).order_status, 'IN_PROGRESS');
+
+  // The assignment is already canceled while the ride and order are live.
+  const cx = await acceptedRide(app, db, phones[2], phones[3]);
+  orderIds.push(cx.orderId);
+  await db.query(
+    `UPDATE assignment SET status = 'CANCELED', canceled_by = 'driver', canceled_at = now()
+       WHERE order_id = (SELECT id FROM orders WHERE legacy_id = $1)`, [cx.orderId]);
+  const cxBefore = await events(cx.tripId);
+  const cxRes = await patch(app, rideUrl(cx.tripId) + '/status', { status: 'CANCELED', cancel: { reason: 'changed_mind' } }, bearer(cx.paxS));
+  assert.deepEqual([cxRes.statusCode, cxRes.json().code], [409, 'ORDER_LIFECYCLE_MISMATCH']);
+  const cxp = await pair(db, cx.orderId);
+  assert.deepEqual([cxp.ride_status, cxp.order_status], ['DRIVER_EN_ROUTE', 'ACCEPTED'], 'neither the ride nor the order moved');
+  assert.equal(await events(cx.tripId), cxBefore, 'no status-change event is kept');
 });
 
 test('the order follows the ride: IN_PROGRESS, COMPLETED; driver cancel; NO_SHOW', { skip: SKIP }, async (t) => {

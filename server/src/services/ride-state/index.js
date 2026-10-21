@@ -19,7 +19,9 @@ import {
 import { insertStatusChangeEvent } from '../../repositories/ride_events.js';
 import { insertRideStatusNotificationOutbox } from '../../repositories/notification_outbox.js';
 import { validateRecoveryLinkage, validateStandaloneCandidate } from '../../domain/select-recovery-linkage.js';
-import { expectedOrderStatus, ORDER_FROM_STATUSES, assignmentCancelActor } from '../../domain/order-lifecycle.js';
+import {
+  expectedOrderStatus, ORDER_FROM_STATUSES, assignmentCancelActor, OrderLifecycleMismatchError,
+} from '../../domain/order-lifecycle.js';
 import { advanceOrderStatus } from '../../repositories/orders.js';
 import { cancelAssignment } from '../../repositories/assignment.js';
 
@@ -77,16 +79,22 @@ async function appendStatusChangeSource(
 
 // Order-lifecycle contract (#1051): the order — and on a cancel / no-show its assignment — follows
 // the ride in the SAME transaction as the ride transition. `ride` is the UPDATED row. A ride with
-// no order (a standalone demo ride) is left alone; an actor that cannot be derived leaves the
-// assignment as it is (only the PATCH writes rides, and it always records passenger | driver).
+// no order (a standalone demo ride) is left alone. An order (or assignment) that is not in a
+// from-state of this step fails the whole transition (OrderLifecycleMismatchError rolls the ride
+// back too), so the pair never splits; replays never get here (they return before the patch).
 async function syncOrderWithRide(client, ride) {
   if (!ride?.order_id) return;
   const toStatus = expectedOrderStatus(ride.status);
   if (!toStatus || toStatus === 'ACCEPTED') return;
-  await advanceOrderStatus(client, ride.order_id, toStatus, ORDER_FROM_STATUSES[toStatus]);
+  const order = await advanceOrderStatus(client, ride.order_id, toStatus, ORDER_FROM_STATUSES[toStatus]);
+  if (!order) throw new OrderLifecycleMismatchError(ride.trip_id, 'order_status_mismatch');
   if (toStatus === 'CANCELED') {
+    // Only the PATCH writes rides and it always records passenger | driver (NO_SHOW -> driver).
     const canceledBy = assignmentCancelActor(ride);
-    if (canceledBy) await cancelAssignment(client, ride.order_id, { canceledBy, canceledAt: ride.canceled_at ?? null });
+    const assignment = canceledBy
+      ? await cancelAssignment(client, ride.order_id, { canceledBy, canceledAt: ride.canceled_at ?? null })
+      : null;
+    if (!assignment) throw new OrderLifecycleMismatchError(ride.trip_id, 'assignment_not_accepted');
   }
 }
 
@@ -262,6 +270,10 @@ export default async function rideStateService(app) {
       });
       await syncOrderWithRide(client, updated);
       return { ok: { ride: updated } };
+    }).catch((err) => {
+      if (!(err instanceof OrderLifecycleMismatchError)) throw err;
+      req.log.warn({ tripId: err.tripId, reason: err.reason }, 'ride transition refused: order lifecycle mismatch');
+      return { err: [409, 'ORDER_LIFECYCLE_MISMATCH', 'the ride and its order are out of step'] };
     });
 
     if (result.err) return problem(reply, result.err[0], result.err[1], result.err[2]);

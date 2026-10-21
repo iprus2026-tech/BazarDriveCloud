@@ -6,7 +6,8 @@
 //                                   verified phone (BD-AUTH-POLICY-01B-C; 403 PASSENGER_ROLE_REQUIRED).
 //   POST /:orderId/cancel -> 200 { order }   the owner cancels an order that has no driver yet
 //                                   (CREATED -> CANCELED; open offers rejected). Repeat -> 200.
-//                                   ACCEPTED or later -> 409 ORDER_NOT_CANCELABLE (cancel the ride).
+//                                   An order with a driver (ACCEPTED or later, or CANCELED through
+//                                   its ride) -> 409 ORDER_NOT_CANCELABLE (cancel the ride).
 //
 // Geo "nearby" is #4 (deferred): today the list is newest CREATED. Identity is recomputed per
 // request (never trusts a client-sent authorId / isCurrentUser). The PWA write cutover is R18;
@@ -15,6 +16,7 @@ import { newOrderId } from '../../infra/ids.js';
 import { serializeOrder } from '../../serialize.js';
 import { insertOrder, listCreatedOrders, lockOrderByLegacyId, cancelCreatedOrder } from '../../repositories/orders.js';
 import { rejectOpenOffersOnOrderCancel } from '../../repositories/offers.js';
+import { findAssignmentByOrderId } from '../../repositories/assignment.js';
 import { resolveActorAuthority, requirePassengerActor, roleAuthorityProblem } from '../auth/authority.js';
 
 // A route point. The SHIPPED client stores { id, label } today (order_map_draft.js / composer.js)
@@ -152,10 +154,12 @@ export default async function ordersService(app) {
       if (String(order.passenger_id) !== String(viewer.userId)) {
         return { err: [403, 'FORBIDDEN', 'only the order owner can cancel it', false] };
       }
+      // An order with a driver (an assignment exists, even after its ride was canceled) is
+      // canceled through the ride; only this route's own cancel repeats idempotently.
+      const notCancelable = [409, 'ORDER_NOT_CANCELABLE', 'the order already has a driver; cancel the ride instead', false];
+      if (await findAssignmentByOrderId(client, order.id)) return { err: notCancelable };
       if (order.status === 'CANCELED') return { row: order };
-      if (order.status !== 'CREATED') {
-        return { err: [409, 'ORDER_NOT_CANCELABLE', 'the order already has a driver; cancel the ride instead', false] };
-      }
+      if (order.status !== 'CREATED') return { err: notCancelable };
       const canceled = await cancelCreatedOrder(client, order.id);
       await rejectOpenOffersOnOrderCancel(client, order.id);
       return { row: canceled };
