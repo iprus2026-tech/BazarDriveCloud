@@ -120,3 +120,13 @@ export async function removeRoleGrant(db, userId, role, fallbackActiveRole) {
   );
   return rows[0] ?? null;
 }
+
+// The active-role switch (BD-AUTH-POLICY-01B-B): users.active_role seeds the next login's
+// session role. The caller has already checked that `role` is a current grant.
+export async function setUserActiveRole(db, userId, role) {
+  const { rows } = await db.query(
+    `UPDATE users SET active_role = $2 WHERE id = $1 RETURNING id, roles, active_role`,
+    [userId, role],
+  );
+  return rows[0] ?? null;
+}

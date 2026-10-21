@@ -47,6 +47,12 @@ async function fixture(t, existing = null, { failSession = false } = {}) {
     if (q.includes('FROM auth_session')) {
       return { rows: state.sessions.filter(s => s.token_hash === args[0]) };
     }
+    // GET /auth/session reads the account's current grants (BD-AUTH-POLICY-01B-B).
+    if (q.startsWith('SELECT id, roles, phone_verified FROM users WHERE id = $1')) {
+      return { rows: state.user && state.user.id === args[0]
+        ? [{ id: state.user.id, roles: structuredClone(state.user.roles), phone_verified: state.user.phone_verified }]
+        : [] };
+    }
     throw new Error('Unexpected diagnostic SQL in hermetic fixture');
   };
   const db = { query, async tx(fn) {

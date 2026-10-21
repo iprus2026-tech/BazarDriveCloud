@@ -49,7 +49,9 @@ async function authPlugin(app) {
   });
 }
 
-function bearerToken(authHeader) {
+// Exported for OTP verify, which revokes a presented same-account session inside its own
+// transaction (BD-AUTH-POLICY-01B-B) instead of resolving it through the lazy request seam.
+export function bearerToken(authHeader) {
   if (typeof authHeader !== 'string') return '';
   const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
   return match ? match[1].trim() : '';

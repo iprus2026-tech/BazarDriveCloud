@@ -1,9 +1,16 @@
 // /server/src/services/auth/index.js — BD-DOCS-032 phone+OTP + session service (ADR
-// BD-DOCS-041 §API). All four routes are LIVE (OTP R02; logout #829 B1):
-//   GET  /api/v1/auth/session       -> { user } (null when anonymous)            [LIVE]
-//   POST /api/v1/auth/otp/request   -> { ok, expiresInSeconds, devCode? }        [LIVE]
-//   POST /api/v1/auth/otp/verify    -> { token, user }                           [LIVE]
-//   POST /api/v1/auth/logout        -> { ok: true }                             [LIVE]
+// BD-DOCS-041 §API). All five routes are LIVE (OTP R02; logout #829 B1; active role
+// BD-AUTH-POLICY-01B-B):
+//   GET  /api/v1/auth/session             -> { user } (null when anonymous; user.roles = current grants)
+//   POST /api/v1/auth/otp/request         -> { ok, expiresInSeconds, devCode? }
+//   POST /api/v1/auth/otp/verify          -> { token, user }
+//   POST /api/v1/auth/logout              -> { ok: true }
+//   PUT  /api/v1/auth/session/active-role -> { user }   switch THIS session to a granted role
+//
+// Same-account session replacement (docs/driver-role-grant-contract.md §2, CWE-613): verify
+// revokes a presented live bearer of the SAME account in the transaction that mints the new
+// session; a failure there fails the verify (503) — a successful verify never leaves the
+// replaced session live. Another account's bearer is untouched (B2-C account switch, #829).
 //
 // request mints a numeric code, stores ONLY its hash (auth_otp), and — in dev-mode — echoes
 // the plaintext in the response (there is no SMS provider yet; BD-DOCS-032 open question).
@@ -20,8 +27,20 @@
 import { generateToken, generateOtpCode, hashOtpCode, hashToken, hashesEqual } from './tokens.js';
 import { normalizePhone, isValidPhone } from './phone.js';
 import { insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts } from '../../repositories/otps.js';
-import { resolveVerifiedLoginUser } from '../../repositories/users.js';
-import { insertSession, revokeSessionById } from '../../repositories/sessions.js';
+import {
+  resolveVerifiedLoginUser, findUserAuthorityById, lockUserForGrant, setUserActiveRole,
+} from '../../repositories/users.js';
+import {
+  insertSession, revokeSessionById, resolveLiveSessionByTokenHash, setSessionActiveRole,
+  lockLiveSessionById,
+} from '../../repositories/sessions.js';
+import { bearerToken } from '../../plugins/auth.js';
+
+const SWITCHABLE_ROLES = ['passenger', 'driver'];
+
+// Thrown inside the verify transaction when the presented same-account session cannot be
+// looked up or revoked: the whole login rolls back (no session minted, no OTP consumed).
+class SessionReplacementError extends Error {}
 
 // Uniform problem shape { error, code, retryable } — matches plugins/error-handler.js so the
 // client loadResource overlay reads these the same as a thrown error.
@@ -63,6 +82,8 @@ export default async function authService(app) {
                 sessionId: { type: 'string' },
                 activeRole: { type: ['string', 'null'] },
                 phoneVerified: { type: 'boolean' },
+                // BD-AUTH-POLICY-01B-B — the account's CURRENT grants (additive field).
+                roles: { type: 'array', items: { type: 'string' } },
               },
             },
           },
@@ -82,7 +103,16 @@ export default async function authService(app) {
         retryable: true,
       });
     }
-    return { user: user ?? null };
+    if (!user) return { user: null };
+    // Current grants come from the account row, not the session snapshot (a revoked grant shows
+    // at once). A failed read is retryable, never a silent "no roles".
+    let account;
+    try {
+      account = await findUserAuthorityById(app.db, user.userId);
+    } catch {
+      return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
+    }
+    return { user: { ...user, roles: Array.from(account?.roles ?? []) } };
   });
 
   app.register(async logoutApp => {
@@ -253,20 +283,44 @@ export default async function authService(app) {
       ? new Date(Date.now() + config.session.ttlSeconds * 1000)
       : null;
     const token = generateToken();
-    const result = await app.db.tx(async (client) => {
-      const consumed = await markOtpConsumed(client, otp.id);
-      if (!consumed) return null;
-      const verified = await resolveVerifiedLoginUser(client, { phone });
-      const session = await insertSession(client, {
-        userId: verified.id,
-        tokenHash: hashToken(token),
-        activeRole: sessionRole(verified),
-        phoneVerified: true,
-        otpId: otp.id,
-        expiresAt,
+    // The tab's current bearer, if any (the client transport attaches it). Only its hash is used.
+    const presented = bearerToken(req.headers?.authorization);
+    let result;
+    try {
+      result = await app.db.tx(async (client) => {
+        const consumed = await markOtpConsumed(client, otp.id);
+        if (!consumed) return null;
+        const verified = await resolveVerifiedLoginUser(client, { phone });
+        // Same-account session replacement (BD-AUTH-POLICY-01B-B, CWE-613): a presented LIVE
+        // session of THIS account is revoked in this transaction. Missing / revoked / expired
+        // presented sessions are ignored; another account's session is left alone (B2-C).
+        if (presented) {
+          try {
+            const previous = await resolveLiveSessionByTokenHash(client, hashToken(presented));
+            if (previous && String(previous.user_id) === String(verified.id)) {
+              await revokeSessionById(client, previous.id);
+            }
+          } catch (err) {
+            throw new SessionReplacementError('session replacement failed', { cause: err });
+          }
+        }
+        const session = await insertSession(client, {
+          userId: verified.id,
+          tokenHash: hashToken(token),
+          activeRole: sessionRole(verified),
+          phoneVerified: true,
+          otpId: otp.id,
+          expiresAt,
+        });
+        return { user: verified, session };
       });
-      return { user: verified, session };
-    });
+    } catch (err) {
+      if (err instanceof SessionReplacementError) {
+        req.log.warn('auth session replacement failed');
+        return problem(reply, 503, 'SESSION_REPLACEMENT_FAILED', 'session replacement failed', true);
+      }
+      throw err;
+    }
     if (!result) {
       return problem(reply, 401, 'OTP_INVALID', 'invalid or expired code');
     }
@@ -280,5 +334,80 @@ export default async function authService(app) {
         roles: result.user.roles ?? [],
       },
     });
+  });
+
+  // PUT /session/active-role — switch THIS session to one of the account's current grants
+  // (BD-AUTH-POLICY-01B-B; docs/driver-role-grant-contract.md §2). One transaction updates the
+  // current session's active_role and users.active_role (which seeds the next login). Other
+  // sessions keep theirs; there is no token rotation (#829). Same role -> 200, no write.
+  app.put('/session/active-role', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['activeRole'],
+        additionalProperties: false,
+        properties: { activeRole: { type: 'string', enum: SWITCHABLE_ROLES } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          required: ['user'],
+          properties: {
+            user: {
+              type: 'object',
+              required: ['userId', 'sessionId', 'activeRole', 'phoneVerified', 'roles'],
+              properties: {
+                userId: { type: 'string' },
+                sessionId: { type: 'string' },
+                activeRole: { type: 'string' },
+                phoneVerified: { type: 'boolean' },
+                roles: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async (req, reply) => {
+    const viewer = await req.resolveUser();
+    if (req.authError) {
+      return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
+    }
+    if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
+    const role = req.body.activeRole;
+    let outcome;
+    try {
+      outcome = await app.db.tx(async (client) => {
+        // Lock order user -> session, the same as verify and the enrollment decisions.
+        const account = await lockUserForGrant(client, viewer.userId);
+        if (!account) return { code: 'UNAUTHENTICATED' };
+        // Re-read THIS session under a lock: the request-time snapshot may be stale (a concurrent
+        // switch) or the session may have been revoked since (a logout). The locked row decides
+        // both liveness and the no-op.
+        const session = await lockLiveSessionById(client, viewer.sessionId);
+        if (!session || String(session.user_id) !== String(account.id)) return { code: 'UNAUTHENTICATED' };
+        if (session.phone_verified !== true || account.phone_verified !== true) return { code: 'PHONE_NOT_VERIFIED' };
+        const roles = Array.from(account.roles ?? []);
+        if (!roles.includes(role)) return { code: 'ROLE_NOT_GRANTED' };
+        if (session.active_role !== role) await setSessionActiveRole(client, session.id, role);
+        if (account.active_role !== role) await setUserActiveRole(client, account.id, role);
+        return { code: 'OK', roles };
+      });
+    } catch {
+      req.log.warn('auth active-role switch failed');
+      return problem(reply, 503, 'ROLE_SWITCH_FAILED', 'active role switch failed', true);
+    }
+    if (outcome.code === 'UNAUTHENTICATED') return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
+    if (outcome.code === 'PHONE_NOT_VERIFIED') return problem(reply, 403, 'PHONE_NOT_VERIFIED', 'a verified phone is required');
+    if (outcome.code === 'ROLE_NOT_GRANTED') return problem(reply, 403, 'ROLE_NOT_GRANTED', `the account does not hold the ${role} role`);
+    return {
+      user: {
+        userId: viewer.userId,
+        sessionId: viewer.sessionId,
+        activeRole: role,
+        phoneVerified: true,
+        roles: outcome.roles,
+      },
+    };
   });
 }

@@ -45,6 +45,36 @@ export async function resetLiveSessionsActiveRole(db, userId, fromRole, toRole) 
   return rowCount;
 }
 
+// The active-role switch (BD-AUTH-POLICY-01B-B): row-lock ONE session if it is still live, on
+// the switch's transaction client. null when it was revoked or expired in the meantime.
+export async function lockLiveSessionById(db, sessionId) {
+  const { rows } = await db.query(
+    `SELECT id, user_id, active_role, phone_verified
+       FROM auth_session
+      WHERE id = $1
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > now())
+      FOR UPDATE`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+// The active-role switch (BD-AUTH-POLICY-01B-B): set the active role of ONE live session.
+// Returns the updated row, or null when the session is no longer live (revoked/expired).
+export async function setSessionActiveRole(db, sessionId, role) {
+  const { rows } = await db.query(
+    `UPDATE auth_session
+        SET active_role = $2
+      WHERE id = $1
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > now())
+      RETURNING id, user_id, active_role, phone_verified`,
+    [sessionId, role],
+  );
+  return rows[0] ?? null;
+}
+
 // Mint a verified session row (the OTP-verify cutover, R02). Stores only the token HASH
 // (hashToken of the plaintext returned to the client). expires_at NULL = no expiry modeled
 // (config.session.ttlSeconds === 0; lifetime/refresh policy deferred per BD-DOCS-032). The
