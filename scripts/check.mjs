@@ -1528,6 +1528,19 @@ if (exists(apiClientSmoke)) {
   }
 }
 
+// BD-AUTH-POLICY-01C-1 — the driver enrollment client seam (driver_enrollment.js) and the
+// session active-role transport (api_client.putSessionActiveRole): dark when backend OFF, strict
+// envelope parsing, the four card states, the onboarding/app wiring and the precache entry.
+const driverEnrollmentClientSmoke = path.join(root, 'scripts', 'smoke-driver-enrollment-client.mjs');
+if (exists(driverEnrollmentClientSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverEnrollmentClientSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-600);
+    errors.push(`smoke-driver-enrollment-client.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ROUTER-LIFECYCLE-01A (#917) — LATEST_ROUTE_RENDER_WINS: a real runtime
 // smoke that imports router.js against a minimal DOM shim and drives it with
 // hand-resolved deferred loaders to prove a stale, slower navigation can

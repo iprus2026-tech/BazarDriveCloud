@@ -254,7 +254,8 @@
 // v375: wait for server-confirmed driver cancellation and reconcile uncertain outcomes.
 // v378 (#1059): refresh precached driver completion runtime — server-derived receipt amounts.
 // v379 (#1043): refresh precached auth bootstrap — authenticated /onboarding skips the welcome guard.
-const VERSION    = 'v379';
+// v380 (BD-AUTH-POLICY-01C-1): login role handling + driver enrollment card (new driver_enrollment.js).
+const VERSION    = 'v380';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -289,6 +290,7 @@ const PRECACHE = [
   './src/auth_token.js',
   './src/auth_session_bootstrap.js',
   './src/auth_logout.js',
+  './src/driver_enrollment.js',
   './src/mock_api.js',
   './src/sw-update.js',
   './src/daily_communication_store.js',

@@ -1413,6 +1413,135 @@ async function appAuthenticatedIncompleteCase(entry) {
   go('/boot-cleanup'); await flush();
 }
 
+// BD-AUTH-POLICY-01C-1 (K4) — the real app + onboarding choosing «Водитель» when the account
+// does NOT hold the chosen role, or holds it inactive. Stubbed transport mirrors the server:
+// /auth/session reports the server's current active role, PUT /auth/session/active-role switches
+// it only to a granted role (403 ROLE_NOT_GRANTED otherwise), /drivers/enrollment holds one
+// application. Focus is recorded by patching the shim's no-op focus().
+async function loginAccessCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const focused = [];
+  dom.Element.prototype.focus = function focus() { focused.push(this.id); };
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  user.set({ welcomeSeen: true, onboarded: false, role: 'driver' });
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  location.hash = '#/onboarding?step=phone';
+  const grantedInactive = ['granted-inactive', 'switch-failure-retry'].includes(name);
+  const server = { roles: grantedInactive ? ['passenger', 'driver'] : ['passenger'], active: 'passenger', enrollment: null };
+  const requests = [];
+  let switchFailures = name === 'switch-failure-retry' ? 1 : 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : undefined;
+    requests.push({ url, method: options.method || 'GET', body, auth: options.headers?.Authorization });
+    if (url.endsWith('/otp/request')) return response({ ok: true, expiresInSeconds: 300, devCode: '1234' });
+    if (url.endsWith('/otp/verify')) return response({ token: 'new-token', user: {
+      userId: 'new-user', roles: server.roles.slice(), activeRole: server.active, phoneVerified: true } });
+    assert.equal(options.headers?.Authorization, 'Bearer new-token', 'every follow-up call carries the new bearer');
+    if (url.endsWith('/auth/session/active-role')) {
+      assert.equal(options.method, 'PUT');
+      if (switchFailures > 0) { switchFailures--; return response({ code: 'ROLE_SWITCH_FAILED', retryable: true }, 503); }
+      if (!server.roles.includes(body.activeRole)) return response({ code: 'ROLE_NOT_GRANTED' }, 403);
+      server.active = body.activeRole;
+      return response({ user: { userId: 'new-user', sessionId: 'new-session', activeRole: server.active,
+        phoneVerified: true, roles: server.roles.slice() } });
+    }
+    if (url.endsWith('/drivers/enrollment')) {
+      if ((options.method || 'GET') === 'POST') {
+        assert.equal(options.body, undefined, 'the application sends no body');
+        const created = !server.enrollment;
+        server.enrollment ??= { status: 'PENDING', requestedAt: '2026-10-21T10:00:00.000Z', decidedAt: null };
+        return response({ enrollment: server.enrollment, roles: server.roles.slice() }, created ? 201 : 200);
+      }
+      return response({ enrollment: server.enrollment, roles: server.roles.slice() });
+    }
+    if (url.endsWith('/auth/logout')) return response({ ok: true });
+    assert.ok(url.endsWith('/auth/session'), 'unexpected endpoint ' + url);
+    return response({ user: { userId: 'new-user', sessionId: 'new-session', activeRole: server.active, phoneVerified: true } });
+  };
+  await import('../public/src/app.js'); await flush();
+  const node = id => document.getElementById(id);
+  const screen = () => dom.elements.app.children[0];
+  function input(id, value) {
+    const element = node(id); assert.ok(element, id);
+    element.value = value;
+    for (const fn of element.handlers.input ?? []) fn({ target: element });
+  }
+  const settle = async () => { for (let i = 0; i < 4; i++) await flush(); };
+  input('ob-phone-input', '9990000002');
+  node('ob-next').click(); await settle();
+  input('ob-otp-input', '1234');
+  node('ob-next').click(); await settle();
+  const puts = () => requests.filter(r => r.url.endsWith('/auth/session/active-role'));
+  assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1);
+
+  if (grantedInactive) {
+    if (name === 'switch-failure-retry') {
+      assert.equal(puts().length, 1);
+      assert.ok(node('ob-otp-input'), 'a failed switch stays on the verified OTP step');
+      assert.match(node('ob-err').textContent, /Не удалось переключить роль/);
+      node('ob-next').click(); await settle();
+      assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1, 'the retry needs no new OTP');
+      assert.equal(puts().length, 2, 'the retry repeats the switch');
+    } else {
+      assert.equal(puts().length, 1, 'a granted but inactive role is switched automatically');
+    }
+    assert.deepEqual(puts().at(-1).body, { activeRole: 'driver' });
+    assert.ok(node('ob-firstname'), 'the login continues to the driver profile step');
+    assert.equal(screen().dataset.step, 'profile');
+    return;
+  }
+
+  // Not granted: the identity stays installed and «Вход выполнен» opens (no auto switch).
+  assert.equal(puts().length, 0, 'an ungranted role is never switched blindly');
+  assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).token, 'new-token', 'the identity stays installed');
+  assert.equal(screen().dataset.step, 'access');
+  assert.ok(screen().innerHTML.includes('Вход выполнен.') && screen().innerHTML.includes('Роль водителя пока не выдана'));
+  assert.equal(screen().querySelector('[data-enroll-status]')?.getAttribute('data-enroll-status'), 'NONE');
+  for (const id of ['ob-apply', 'ob-continue-passenger', 'ob-exit']) assert.ok(node(id), id);
+  assert.equal(focused.at(-1), 'ob-title', 'the heading takes focus when the state appears');
+  assert.ok(requests.some(r => r.url.endsWith('/drivers/enrollment') && r.method === 'GET'), 'an application on file is read first');
+
+  if (name === 'not-granted-exit') {
+    node('ob-exit').click(); await settle();
+    assert.ok(requests.some(r => r.url.endsWith('/auth/logout') && r.auth === 'Bearer new-token'), '«Выйти» revokes server-first');
+    assert.equal(location.hash, '#/welcome');
+    return;
+  }
+
+  focused.length = 0;
+  node('ob-apply').click(); await settle();
+  assert.equal(requests.filter(r => r.url.endsWith('/drivers/enrollment') && r.method === 'POST').length, 1);
+  assert.ok(node('ob-refresh'), 'PENDING offers «Проверить статус»');
+  assert.equal(node('ob-apply'), null);
+  assert.ok(screen().innerHTML.includes('Заявка на рассмотрении'));
+  assert.equal(screen().querySelector('[data-enroll-status]')?.getAttribute('data-enroll-status'), 'PENDING');
+  assert.equal(focused.at(-1), 'ob-title', 'the heading takes focus when the card changes');
+  node('ob-refresh').click(); await settle();
+  assert.ok(node('ob-refresh'), 'a repeated status check is safe');
+
+  if (name === 'not-granted-approved') {
+    // The operator approves meanwhile: the status check offers «Продолжить как водитель».
+    server.enrollment = { ...server.enrollment, status: 'APPROVED', decidedAt: '2026-10-21T10:05:00.000Z' };
+    server.roles.push('driver');
+    node('ob-refresh').click(); await settle();
+    assert.equal(screen().querySelector('[data-enroll-status]')?.getAttribute('data-enroll-status'), 'APPROVED');
+    assert.ok(node('ob-continue-driver'));
+    node('ob-continue-driver').click(); await settle();
+    assert.deepEqual(puts().map(r => r.body), [{ activeRole: 'driver' }]);
+    assert.equal(screen().dataset.step, 'profile', 'the login continues as driver');
+    return;
+  }
+
+  // «Продолжить как водитель» is not offered while PENDING; continuing as passenger switches.
+  assert.equal(node('ob-continue-driver'), null);
+  node('ob-continue-passenger').click(); await settle();
+  assert.deepEqual(puts().map(r => r.body), [{ activeRole: 'passenger' }]);
+  assert.equal(screen().dataset.step, 'profile', 'the login continues as passenger');
+  assert.ok(node('ob-firstname'));
+  void router;
+}
+
 async function devDocsRouteCase(name) {
   const dom = installDOM();
   const router = await import('../public/src/router.js');
@@ -2436,6 +2565,9 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--login-handoff-case') {
   await loginHandoffCase(process.argv[3]);
   console.log('PASS actual app/onboarding handoff — ' + process.argv[3]);
+} else if (process.argv[2] === '--login-access-case') {
+  await loginAccessCase(process.argv[3]);
+  console.log('PASS actual app/onboarding chosen-role access (K4) — ' + process.argv[3]);
 } else if (process.argv[2] === '--guest-public-case') {
   await guestPublicCase(process.argv[3]);
   console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
@@ -2735,6 +2867,98 @@ if (process.argv[2] === '--onboarding-detach-case') {
     assert.equal((await f.begin({ expectedRole: 'driver' })(verified('b', 'driver'))).ok, true);
     assert.equal(f.c.roleConfirmed('driver'), true);
     assert.equal(f.c.passengerConfirmed(), false);
+  });
+
+  // BD-AUTH-POLICY-01C-1 (K4) — the server-side role switch inside the login handoff.
+  const dualRole = (id = 'b', active = 'passenger') => ({ token: 'token-' + id,
+    user: { userId: id, activeRole: active, phoneVerified: true, roles: ['passenger', 'driver'] } });
+  const passengerOnly = (id = 'b') => ({ token: 'token-' + id,
+    user: { userId: id, activeRole: 'passenger', phoneVerified: true, roles: ['passenger'] } });
+  function switchFixture({ sessionRole = () => 'passenger', switchImpl } = {}) {
+    let serverRole = 'passenger';
+    const calls = [];
+    const f = loginFixture({ requestSession: async () => sessionFor('b', sessionRole(serverRole)) });
+    const switchRole = async (role) => {
+      calls.push(role);
+      const out = await (switchImpl ?? (async r => ({ userId: 'b', activeRole: r })))(role, calls.length);
+      serverRole = out.activeRole;
+      return out;
+    };
+    return { f, calls, switchRole, serverRole: () => serverRole };
+  }
+  await check('K4: a granted but inactive chosen role is switched on the server before authority', async () => {
+    const s = switchFixture({ sessionRole: role => role });
+    const result = await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole })(dualRole());
+    assert.equal(result.ok, true, result.code);
+    assert.deepEqual(s.calls, ['driver']);
+    assert.equal(s.f.c.roleConfirmed('driver'), true);
+    assert.equal(s.f.c.finishLogin(), true);
+  });
+  await check('K4: a switch is trusted only once the session read shows the role', async () => {
+    const s = switchFixture({ sessionRole: () => 'passenger' }); // the server never really switched
+    const result = await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole })(dualRole());
+    assert.equal(result.ok, false);
+    assert.equal(s.f.c.roleConfirmed('driver'), false);
+    assert.equal(s.f.c.finishLogin(), false);
+  });
+  await check('K4: a failed switch is retryable through resumeLogin without a new OTP', async () => {
+    const s = switchFixture({ sessionRole: role => role, switchImpl: async (role, n) => {
+      if (n === 1) throw Object.assign(new Error('fixture network'), { code: 'NETWORK' });
+      return { userId: 'b', activeRole: role };
+    } });
+    const first = await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole })(dualRole());
+    assert.deepEqual([first.ok, first.code, first.handoffInstalled], [false, 'ROLE_SWITCH_FAILED', true]);
+    assert.equal(s.f.record().token, 'token-b', 'the verified identity stays installed');
+    assert.equal(s.f.c.roleConfirmed('driver'), false);
+    const retry = await s.f.c.resumeLogin();
+    assert.equal(retry.ok, true);
+    assert.deepEqual(s.calls, ['driver', 'driver']);
+    assert.equal(s.f.c.roleConfirmed('driver'), true);
+  });
+  await check('K4: a switch reply for another role or account is not a switch', async () => {
+    for (const reply of [{ userId: 'b', activeRole: 'passenger' }, { userId: 'other', activeRole: 'driver' }, null]) {
+      const s = switchFixture({ sessionRole: () => 'driver', switchImpl: async () => reply });
+      const result = await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole })(dualRole());
+      assert.equal(result.code, 'ROLE_SWITCH_FAILED', JSON.stringify(reply));
+      assert.equal(s.f.c.roleConfirmed('driver'), false);
+    }
+  });
+  await check('K4: an ungranted chosen role keeps the identity, reports roles and never switches blindly', async () => {
+    const s = switchFixture();
+    const result = await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole })(passengerOnly());
+    assert.deepEqual([result.ok, result.code, result.handoffInstalled], [false, 'ROLE_AUTHORITY_REQUIRED', true]);
+    assert.deepEqual([...result.roles], ['passenger']);
+    assert.deepEqual(s.calls, [], 'no switch is attempted for a role the account does not hold');
+    assert.equal(s.f.record().token, 'token-b');
+    assert.equal(s.f.c.roleConfirmed('driver'), false);
+  });
+  await check('K4: adoptRole lets the server decide — 403 grants nothing, a held role is confirmed', async () => {
+    const s = switchFixture({ sessionRole: role => role, switchImpl: async (role) => {
+      if (role === 'driver') throw Object.assign(new Error('fixture 403'), { code: 'ROLE_NOT_GRANTED' });
+      return { userId: 'b', activeRole: role };
+    } });
+    await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole })(passengerOnly());
+    const refused = await s.f.c.adoptRole('driver');
+    assert.deepEqual([refused.ok, refused.code], [false, 'ROLE_NOT_GRANTED']);
+    assert.equal(s.f.c.roleConfirmed('driver'), false);
+    const asPassenger = await s.f.c.adoptRole('passenger');
+    assert.equal(asPassenger.ok, true, asPassenger.code);
+    assert.equal(s.f.c.roleConfirmed('passenger'), true);
+    assert.equal(s.f.c.roleConfirmed('driver'), false);
+    assert.equal(s.f.c.finishLogin(), true);
+  });
+  await check('K4: adoptRole without an owned handoff or a transport is stale', async () => {
+    const bare = loginFixture();
+    assert.equal((await bare.c.adoptRole('passenger')).code, 'AUTH_STALE', 'no handoff');
+    await bare.begin({ expectedRole: 'driver' })(passengerOnly());
+    assert.equal((await bare.c.adoptRole('passenger')).code, 'AUTH_STALE', 'no injected transport');
+    assert.equal((await bare.c.adoptRole('guest')).code, 'AUTH_STALE', 'unsupported role');
+    const s = switchFixture();
+    let current = true;
+    await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole, isCurrent: () => current })(passengerOnly());
+    current = false;
+    assert.equal((await s.f.c.adoptRole('passenger')).code, 'AUTH_STALE', 'the screen lost ownership');
+    assert.deepEqual(s.calls, []);
   });
   await check('authority mismatch may replace identity but never grants the selected role', async () => {
     const f = loginFixture();
@@ -3348,6 +3572,13 @@ if (process.argv[2] === '--onboarding-detach-case') {
     'off-demo']) {
     await check('actual app/onboarding handoff: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['not-granted', 'not-granted-approved', 'not-granted-exit', 'granted-inactive',
+    'switch-failure-retry']) {
+    await check('actual app/onboarding chosen-role access (K4, BD-AUTH-POLICY-01C-1): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-access-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
