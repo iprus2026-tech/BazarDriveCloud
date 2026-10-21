@@ -93,8 +93,13 @@ expect('one guarded offers-read call settles to loaded or empty',
   (responses.match(/listOrderOffers\s*\(/g) || []).length === 1
   && /readState = drivers\.length \? 'loaded' : 'empty'/.test(loader));
 expect('rejected or unusable read settles to explicit error, not empty',
-  /catch \{[\s\S]*?readState = 'error'/.test(loader)
+  /catch (?:\(err\) )?\{[\s\S]*?readState = 'error'/.test(loader)
   && /readState === 'error'[\s\S]{0,180}renderEmptyState\(request, \{ error: true \}\)/.test(responses));
+// BD-AUTH-POLICY-01B-C (K3-2): only the role refusal leaves that path — to the role-gate state with
+// the profile way out, never to an empty list and never with a retry.
+expect('a driver-mode refusal settles to the role-gate state, every other failure still to error',
+  /catch \(err\) \{[\s\S]*?roleGateCode\(err\) === PASSENGER_ROLE_REQUIRED\)[\s\S]*?enterRoleGate\(\);[\s\S]*?return;[\s\S]*?readState = 'error'/.test(loader)
+  && /readState === 'role-gate'\) \{\s*content = renderRoleGateState\(\);/.test(responses));
 expect('retry repeats only loadServerOffers and carries button-local aria-busy',
   /data-action="retry-offers"/.test(responses)
   && /await loadServerOffers\(\{ isRetry: true \}\)/.test(responses)

@@ -671,6 +671,12 @@
   word-wrap: break-word;
 }
 
+/* BD-AUTH-POLICY-01B-C (K3-2): the «Перейти в профиль» way out of a role refusal. */
+.omd-notice__action {
+  grid-column: 2;
+  justify-self: start;
+}
+
 .omd-notice--info {
   background: rgba(10, 132, 255, 0.10);
   border-color: rgba(10, 132, 255, 0.32);

@@ -3,6 +3,7 @@ import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listFeedPosts, submitOfferToBackend, pollOfferOutcome } from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
+import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, DRIVER_ROLE_REQUIRED } from '../role_gate.js';
 import { loadResource } from '../data_layer.js';
 import { resolveActiveGarageVehicle } from '../garage.js';
 
@@ -496,6 +497,7 @@ function renderPassengerRide(root, post) {
         <div class="respond__error" id="respond-error" hidden role="alert">
           ${ERR_SVG}
           <span id="respond-error-text"></span>
+          <button type="button" class="bd-btn ghost sm respond__error-cta" id="respond-error-profile" hidden>${PROFILE_CTA_LABEL}</button>
         </div>
 
       </form>
@@ -538,6 +540,7 @@ function renderPassengerRide(root, post) {
   const counter     = root.querySelector('#respond-counter');
   const errorBox    = root.querySelector('#respond-error');
   const errorText   = root.querySelector('#respond-error-text');
+  const errorProfile = root.querySelector('#respond-error-profile');
   const submitBtn   = root.querySelector('#respond-submit');
   const submitLabel = root.querySelector('.respond__submit-label');
   const bodyEl     = root.querySelector('#respond-body');
@@ -578,7 +581,9 @@ function renderPassengerRide(root, post) {
   function clearError() {
     errorBox.hidden = true;
     errorText.textContent = '';
+    if (errorProfile) errorProfile.hidden = true;
   }
+  errorProfile?.addEventListener('click', () => go('/profile'));
   function setLoading(on) {
     submitBtn.disabled = on;
     submitBtn.classList.toggle('loading', on);
@@ -753,9 +758,16 @@ function renderPassengerRide(root, post) {
           price:      priceNum,
           message,
         });
-      } catch {
+      } catch (err) {
         setLoading(false);
-        showError('Не удалось отправить предложение. Попробуйте ещё раз.');
+        // BD-AUTH-POLICY-01B-C (K3-2): a passenger-mode (or ungranted) session is refused with
+        // DRIVER_ROLE_REQUIRED — point at the profile switch / driver application (#1080).
+        if (roleGateCode(err) === DRIVER_ROLE_REQUIRED) {
+          showError(ROLE_GATE_TEXT.offerCreate);
+          if (errorProfile) errorProfile.hidden = false;
+        } else {
+          showError('Не удалось отправить предложение. Попробуйте ещё раз.');
+        }
         return;
       }
     }

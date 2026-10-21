@@ -1577,6 +1577,9 @@ body {
   margin-bottom: 10px;
 }
 .composer__error svg { flex-shrink: 0; }
+/* BD-AUTH-POLICY-01B-C (K3-2): the «Перейти в профиль» way out of a role refusal. */
+.composer__error-cta,
+.respond__error-cta { margin-left: auto; flex-shrink: 0; }
 /* Composer alerts (.composer__error, .bd-alert notes) set display:flex, which
    beats the bare UA [hidden] rule — without this reset the empty error card and
    prefill/role notes render visible on load. Mirrors .screen--respond. */

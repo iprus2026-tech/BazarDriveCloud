@@ -1541,6 +1541,19 @@ if (exists(driverEnrollmentClientSmoke)) {
   }
 }
 
+// BD-AUTH-POLICY-01B-C (K3-2) — role-gate refusals on the client: role_gate.js codes and texts, the
+// real select orchestration's reasons, the /responses role-gate state and the composer /
+// order_map_draft / respond mappings, the precache entry.
+const roleGateClientSmoke = path.join(root, 'scripts', 'smoke-role-gate-client.mjs');
+if (exists(roleGateClientSmoke)) {
+  try {
+    execFileSync(process.execPath, [roleGateClientSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-600);
+    errors.push(`smoke-role-gate-client.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ROUTER-LIFECYCLE-01A (#917) — LATEST_ROUTE_RENDER_WINS: a real runtime
 // smoke that imports router.js against a minimal DOM shim and drives it with
 // hand-resolved deferred loaders to prove a stale, slower navigation can

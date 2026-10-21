@@ -1790,6 +1790,71 @@ async function profileRoleCaseBody(name) {
   assert.equal(node('pf-enroll-sheet'), null);
 }
 
+// BD-AUTH-POLICY-01B-C (K3-2) — the real app's /responses when the server refuses the offers read
+// of a driver-mode session (403 PASSENGER_ROLE_REQUIRED): the role-gate state with the profile way
+// out, no retry. 'responses-unavailable' is the control: a 503 keeps the generic retry state.
+async function roleGateCase(name) {
+  try {
+    await roleGateCaseBody(name);
+  } finally {
+    const router = await import('../public/src/router.js');
+    router.setScreenChromeMount(null);
+    router.setAdmissionGuard(null);
+    router.register('/role-gate-cleanup', () => document.createElement('section'));
+    router.go('/role-gate-cleanup');
+    await flush();
+  }
+}
+
+async function roleGateCaseBody(name) {
+  const dom = installDOM({ parseMarkup: true });
+  await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  user.set({ welcomeSeen: true, onboarded: true, role: 'passenger', phoneVerified: true, firstName: 'Gate fixture' });
+  assert.equal(auth.setAuth({ token: 'gate-A', userId: 'user-A' }), true);
+  auth.commitAuthCandidate(auth.getAuthOwnerVersion());
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    requests.push({ url, method });
+    assert.equal(method, 'GET', 'no mutation on this screen: ' + url);
+    if (url.endsWith('/auth/session')) return response({ user: { ...userDTO('user-A'), activeRole: 'passenger' } });
+    if (url.includes('/matching/offers')) {
+      return name === 'responses-refused'
+        ? response({ error: 'a granted, active passenger role is required', code: 'PASSENGER_ROLE_REQUIRED', retryable: false }, 403)
+        : response({ error: 'authority lookup failed', code: 'AUTHORITY_LOOKUP_FAILED', retryable: true }, 503);
+    }
+    if (url.endsWith('/history') || url.endsWith('/orders')) return response({ items: [] });
+    return response({ code: 'NOT_FOUND' }, 404);
+  };
+  location.hash = '#/responses?orderId=order-gate';
+  await import('../public/src/app.js');
+  const settle = async () => { for (let i = 0; i < 4; i++) await flush(); };
+  await settle();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await settle();
+  const screen = () => dom.elements.app.children[0];
+  assert.equal(requests.filter(r => r.url.includes('/matching/offers')).length, 1, 'one guarded offers read');
+  const region = screen().querySelector('#responses-read-region');
+  assert.ok(region, 'the responses read region is mounted');
+  if (name === 'responses-unavailable') {
+    assert.equal(region.dataset.readState, 'error');
+    assert.ok(region.querySelector('[data-action="retry-offers"]'), 'a transient failure keeps the retry');
+    assert.equal(region.querySelector('[data-action="open-profile"]'), null);
+    return;
+  }
+  assert.equal(region.dataset.readState, 'role-gate');
+  assert.ok(region.innerHTML.includes('Отклики доступны в режиме пассажира'));
+  assert.equal(region.querySelector('[data-action="retry-offers"]'), null, 'no retry that cannot succeed');
+  assert.equal(region.querySelector('#responses-check'), null);
+  const cta = region.querySelector('[data-action="open-profile"]');
+  assert.ok(cta, 'the profile way out is offered');
+  cta.click(); await settle();
+  assert.equal(location.hash, '#/profile', '«Перейти в профиль» opens the profile switch');
+}
+
 async function devDocsRouteCase(name) {
   const dom = installDOM();
   const router = await import('../public/src/router.js');
@@ -2819,6 +2884,9 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--profile-role-case') {
   await profileRoleCase(process.argv[3]);
   console.log('PASS actual app/profile server role switch (01C-2) — ' + process.argv[3]);
+} else if (process.argv[2] === '--role-gate-case') {
+  await roleGateCase(process.argv[3]);
+  console.log('PASS actual app /responses role gate (K3-2) — ' + process.argv[3]);
 } else if (process.argv[2] === '--guest-public-case') {
   await guestPublicCase(process.argv[3]);
   console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
@@ -3854,6 +3922,12 @@ if (process.argv[2] === '--onboarding-detach-case') {
     'not-granted', 'not-granted-close']) {
     await check('actual app/profile server role switch (BD-AUTH-POLICY-01C-2): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--profile-role-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['responses-refused', 'responses-unavailable']) {
+    await check('actual app /responses role gate (BD-AUTH-POLICY-01B-C K3-2): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--role-gate-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }

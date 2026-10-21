@@ -9,6 +9,7 @@ import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { user } from '../state.js';
 import { createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
+import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
 import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
@@ -40,8 +41,8 @@ const form = {
   notice: null,
 };
 
-function setNotice(tone, text) {
-  form.notice = { tone, text };
+function setNotice(tone, text, action = null) {
+  form.notice = { tone, text, action };
 }
 
 function clearNotice() {
@@ -90,7 +91,7 @@ function pushDebugTrail(label, detail) {
 // while preserving scroll, and scrolls the notice into view so the user
 // sees feedback without having to chase the form.
 function publishFeedback(root, tone, text, draft, opts = {}) {
-  setNotice(tone, text);
+  setNotice(tone, text, opts.action || null);
   if (typeof opts.publishing === 'boolean') form.publishing = opts.publishing;
   const ctx = opts.missing
     ? { state: STATE.MISSING, draft: null }
@@ -547,6 +548,9 @@ function renderNotice() {
     <div class="omd-notice omd-notice--${tone}" role="status" aria-live="polite" data-notice="1">
       <span class="omd-notice__dot" aria-hidden="true"></span>
       <span class="omd-notice__text">${escapeHtml(form.notice.text)}</span>
+      ${form.notice.action === 'open-profile'
+        ? `<button type="button" class="bd-btn ghost sm omd-notice__action" data-action="open-profile">${PROFILE_CTA_LABEL}</button>`
+        : ''}
     </div>
   `;
 }
@@ -884,6 +888,11 @@ function handlePublish(root, draft) {
       order = await publishOrder(draft);
     } catch (err) {
       debugPublish('publishOrder:threw', err);
+      // BD-AUTH-POLICY-01B-C (K3-2): a driver-mode session is refused — point at the profile switch.
+      if (roleGateCode(err) === PASSENGER_ROLE_REQUIRED) {
+        publishFeedback(root, 'error', ROLE_GATE_TEXT.orderCreate, draft, { publishing: false, action: 'open-profile' });
+        return;
+      }
       publishFeedback(root, 'error', 'Не удалось создать заказ. Попробуйте ещё раз.', draft, { publishing: false });
       return;
     }
@@ -928,6 +937,10 @@ const DRAFT_REQUIRED_ACTIONS = new Set([
 ]);
 
 function handleAction(root, action, draft, state) {
+  if (action === 'open-profile') {
+    go('/profile');
+    return;
+  }
   if (action === 'back') {
     go('/route-preview');
     return;
