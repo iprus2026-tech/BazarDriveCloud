@@ -428,7 +428,8 @@ export function openPassengerSafetySheet(root, options = {}) {
 // ── BD-RIDE-P-06 PassengerCancelRideSheet ────────────────────
 // Single bottom sheet whose stage lives in overlay.dataset.stage:
 //   "default"          — reasons unselected
-//   "reason_selected"  — a reason is chosen → comment field revealed
+//   "reason_selected"  — a reason is chosen; «Другая причина» reveals the
+//                        comment field (overlay.dataset.custom)
 //   "validation_error" — confirm pressed with no reason → inline error
 //   "confirm"          — "Точно отменить?" confirmation gate; the first
 //                        red tap after a reason lands here, NOT in
@@ -438,7 +439,12 @@ export function openPassengerSafetySheet(root, options = {}) {
 //   "canceled"         — terminal confirmation card (in-sheet)
 // onConfirm(reasonId, comment) is the data-layer hook owned by the
 // passenger screen: it persists CANCELED + syncs the canonical order and
-// returns { tripLabel, timeLabel } for the canceled card.
+// returns { tripLabel, timeLabel } for the canceled card. The comment is
+// passed only for «Другая причина» (the server keeps no other).
+// #1050 — on a server-backed ride onConfirm returns a Promise instead: the
+// sheet stays in "loading" until the server confirms; a rejection returns
+// to the form with a role="alert" message ({ userMessage, final }) and a
+// deliberate retry, unless the refusal is final.
 // BD-RIDE-P-06 polish — canonical 5 reasons from the fresh Cloud Design
 // audit. Replaces the legacy "Ошибка в адресе" / "Нашёл другой способ"
 // pair with the truer-to-flow "Ошибка в маршруте" / "Не могу выйти" pair.
@@ -449,6 +455,9 @@ const CANCEL_REASONS = [
   { id: 'cannot_leave',  label: 'Не могу выйти' },
   { id: 'other',         label: 'Другая причина' },
 ];
+// The server accepts a cancel comment of up to 500 characters.
+const PASSENGER_CANCEL_COMMENT_MAX = 500;
+const PASSENGER_CANCEL_RETRY_TEXT = 'Отмена не подтверждена сервером. Проверьте соединение и повторите попытку.';
 
 function cancelReasonsHtml() {
   return CANCEL_REASONS.map((r) => `
@@ -547,11 +556,14 @@ export function openPassengerCancelSheet(root, options = {}) {
           Выберите причину отмены, чтобы продолжить
         </div>
 
+        <div class="passenger-cancel-sheet__request-error" id="arp-cancel-request-error" role="alert" hidden></div>
+
         <div class="passenger-cancel-sheet__comment">
           <label class="passenger-cancel-sheet__comment-label" for="arp-cancel-comment">Комментарий (необязательно)</label>
           <textarea class="passenger-cancel-sheet__comment-input"
             id="arp-cancel-comment"
             rows="2"
+            maxlength="${PASSENGER_CANCEL_COMMENT_MAX}"
             placeholder="Добавьте детали для водителя"></textarea>
         </div>
 
@@ -620,6 +632,11 @@ export function openPassengerCancelSheet(root, options = {}) {
   const closeBtn = overlay.querySelector('#arp-cancel-close');
   const commentInput = overlay.querySelector('#arp-cancel-comment');
   const doneMeta = overlay.querySelector('#arp-cancel-done-meta');
+  const requestError = overlay.querySelector('#arp-cancel-request-error');
+  // #1050 — a final server refusal (e.g. the ride and its order are out of
+  // step) keeps both commit buttons off; only the way back stays open.
+  let refusedFinally = false;
+  overlay.dataset.custom = 'false';
 
   let releaseTrap = () => {};
 
@@ -658,6 +675,7 @@ export function openPassengerCancelSheet(root, options = {}) {
       if (overlay.dataset.stage === 'loading') return;
       selectedReason = btn.dataset.reasonId || null;
       reasonBtns.forEach((b) => b.setAttribute('aria-checked', b === btn ? 'true' : 'false'));
+      overlay.dataset.custom = selectedReason === 'other' ? 'true' : 'false';
       overlay.dataset.stage = selectedReason ? 'reason_selected' : 'default';
     });
   });
@@ -671,17 +689,65 @@ export function openPassengerCancelSheet(root, options = {}) {
     close();
   });
 
+  function showRequestError(text) {
+    if (!requestError) return;
+    requestError.textContent = text || '';
+    requestError.hidden = !text;
+  }
+
+  function showCanceled(meta) {
+    if (doneMeta) {
+      const label = meta.tripLabel || tripLabel;
+      const time = meta.timeLabel || '14:21';
+      doneMeta.textContent = `${label} · отменено в ${time}`;
+    }
+    overlay.dataset.stage = 'canceled';
+  }
+
+  function setCommitEnabled(enabled) {
+    for (const btn of [confirmBtn, confirmYesBtn]) {
+      if (!btn) continue;
+      btn.disabled = !enabled;
+      btn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    }
+  }
+
+  // #1050 — the server answer decides. Success shows the canceled card; an
+  // abort hands reconciliation back to the screen; a refusal returns to the
+  // form with the reason (and comment) kept and the server's verdict shown.
+  function settleServerCancel(pending) {
+    pending.then((meta) => {
+      if (!overlay.isConnected || (meta && meta.aborted === true)) { close(); return; }
+      showCanceled(meta || {});
+    }, (error) => {
+      if (!overlay.isConnected) { close(); return; }
+      refusedFinally = error?.final === true;
+      overlay.dataset.stage = selectedReason ? 'reason_selected' : 'default';
+      setCommitEnabled(!refusedFinally
+        && (typeof options.canCommit !== 'function' || options.canCommit()));
+      if (confirmNoBtn) confirmNoBtn.disabled = false;
+      if (closeBtn) closeBtn.disabled = false;
+      showRequestError(error?.userMessage || PASSENGER_CANCEL_RETRY_TEXT);
+    });
+  }
+
   function commitCancel() {
-    if (overlay.dataset.stage === 'loading') return;
+    if (overlay.dataset.stage === 'loading' || refusedFinally) return;
     overlay.dataset.stage = 'loading';
     confirmBtn.disabled = true;
     if (confirmYesBtn) confirmYesBtn.disabled = true;
     if (confirmNoBtn) confirmNoBtn.disabled = true;
     if (closeBtn) closeBtn.disabled = true;
-    const comment = commentInput ? commentInput.value.trim() : '';
+    showRequestError('');
+    const comment = selectedReason === 'other' && commentInput ? commentInput.value.trim() : '';
     // Persist immediately so the cancel is durable even if the brief
     // loading delay is interrupted; the screen returns the display meta.
-    const meta = (onConfirm && onConfirm(selectedReason, comment)) || {};
+    const result = onConfirm ? onConfirm(selectedReason, comment) : null;
+    if (result && typeof result.then === 'function') {
+      settleServerCancel(result);
+      return;
+    }
+    const meta = result || {};
     // Review10 P2: an authoritative terminal snapshot can invalidate the
     // cancel while this overlay is in-flight. Honor the screen's explicit
     // abort result, close the stale overlay, and let the screen observer
@@ -692,19 +758,14 @@ export function openPassengerCancelSheet(root, options = {}) {
     }
     cancelTimer = setTimeout(() => {
       cancelTimer = null;
-      if (doneMeta) {
-        const label = meta.tripLabel || tripLabel;
-        const time = meta.timeLabel || '14:21';
-        doneMeta.textContent = `${label} · отменено в ${time}`;
-      }
-      overlay.dataset.stage = 'canceled';
+      showCanceled(meta);
     }, 600);
   }
 
   // First red tap (from reason_selected) lands in the confirm gate, not
   // straight in loading — only the inner "Да, отменить поездку" commits.
   confirmBtn.addEventListener('click', () => {
-    if (overlay.dataset.stage === 'loading') return;
+    if (overlay.dataset.stage === 'loading' || refusedFinally) return;
     if (!selectedReason) {
       overlay.dataset.stage = 'validation_error';
       return;

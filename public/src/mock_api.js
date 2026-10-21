@@ -709,6 +709,28 @@ export async function patchRideStatus(tripId, status, { signal, cancel } = {}) {
   return null;
 }
 
+// A ride write the server refused because the ride and its order are out of step (#1051). The
+// pair is repaired on the server, never by repeating the request — the copy says so.
+export const ORDER_LIFECYCLE_MISMATCH = 'ORDER_LIFECYCLE_MISMATCH';
+export const ORDER_LIFECYCLE_MISMATCH_TEXT = 'Поездка и заказ на сервере расходятся. Повтор не поможет — обратитесь в поддержку.';
+
+// #1049 — the owner withdraws an order before any driver is selected: POST /orders/:id/cancel
+// (CREATED -> CANCELED, open offers rejected; a repeat is 200). An order that already has a driver
+// is 409 ORDER_NOT_CANCELABLE (its ride is canceled instead); a driver-mode session is 403
+// PASSENGER_ROLE_REQUIRED. Only a confirmed CANCELED order moves the transitional local copy.
+export const ORDER_NOT_CANCELABLE = 'ORDER_NOT_CANCELABLE';
+export async function cancelOrderOnBackend(orderId, { signal } = {}) {
+  if (isBackendEnabled()) {
+    const r = await apiFetch(`/orders/${encodeURIComponent(orderId)}/cancel`, { method: 'POST', signal });
+    if (!r || typeof r.order !== 'object' || !r.order || r.order.status !== 'CANCELED') {
+      throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed order cancel response' });
+    }
+    updateTripStatus(orderId, 'CANCELED');
+    return r.order;
+  }
+  return null;
+}
+
 // POLL the realtime cursor. Returns { tripId, status, events, cursor }; pass the prior cursor as
 // `since` for an incremental read. The caller re-fetches the full snapshot when `status` changes.
 export async function pollRide(tripId, since, { signal } = {}) {

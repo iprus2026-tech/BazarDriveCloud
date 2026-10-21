@@ -459,6 +459,8 @@ function commandHarness({ backend = true, status = 'DRIVER_EN_ROUTE' } = {}) {
   const context = vm.createContext({
     console, AbortController, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     window: { removeEventListener() {} },
+    ORDER_LIFECYCLE_MISMATCH: mockApi.ORDER_LIFECYCLE_MISMATCH,
+    ORDER_LIFECYCLE_MISMATCH_TEXT: mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT,
     root, sheet, ride: rideState.findActiveRide(TRIP_ID), backendRead: backend, backendRide: backend,
     driverFixtureMode: false, destroyed: false, hasMounted: true, pendingStatus: null,
     driverCancelOperation: null, driverCancelNeedsReconcile: false, driverCancelReason: '', driverStatusOperation: null,
@@ -1007,8 +1009,61 @@ async function commandChecks() {
   });
 }
 
+// #1051 — 409 ORDER_LIFECYCLE_MISMATCH: the ride and its order are out of step on the
+// server. A repeat cannot fix that, so the driver is told so and not offered a retry.
+async function orderLifecycleMismatchChecks() {
+  const mismatch = () => Promise.reject(problem('ORDER_LIFECYCLE_MISMATCH', 409));
+
+  await check('mismatch refusal plus GET active is a final verdict, not a retry or an unknown outcome', async () => {
+    const h = commandHarness();
+    h.patchQueue.push(mismatch);
+    h.getQueue.push(() => Promise.resolve(rideFixture()));
+    const outcome = await observe(h.api.commit('car_problem'));
+    assertRefused(outcome, 'ORDER_LIFECYCLE_MISMATCH');
+    assert.equal(outcome.error.final, true);
+    assert.equal(outcome.error.userMessage, mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT);
+    assert.equal(h.api.inspect().driverCancelNeedsReconcile, false);
+    assert.equal(h.stored().status, 'DRIVER_EN_ROUTE');
+    assert.equal(h.order().status, 'ACCEPTED');
+    assert.equal(h.calls.patch.length, 1);
+    assert.equal(h.calls.get.length, 1, 'the ride is still read back, as for any definitive refusal');
+    assert.equal(h.calls.legacySync.length, 0);
+  });
+
+  await check('active-status and completion failures name the mismatch instead of a generic failure', async () => {
+    const h = commandHarness();
+    h.patchQueue.push(mismatch);
+    h.api.startStatus('DRIVER_APPROACHING_PICKUP');
+    await flush();
+    assert.deepEqual(h.calls.notices.at(-1), [mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT]);
+    const done = commandHarness({ status: 'IN_PROGRESS' });
+    done.patchQueue.push(mismatch);
+    done.api.complete();
+    await flush();
+    assert.deepEqual(done.calls.notices.at(-1), [mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT]);
+  });
+
+  await check('sheet shows a final refusal and keeps the command off', async () => {
+    let calls = 0;
+    const h = sheetHarness({ onConfirm: () => {
+      calls += 1;
+      return Promise.reject(Object.assign(problem('ORDER_LIFECYCLE_MISMATCH'),
+        { final: true, userMessage: mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT }));
+    } });
+    await h.$('#driver-cancel-confirm').fire();
+    assert.notEqual(h.overlay.dataset.stage, 'canceled');
+    assert.equal(h.$('#driver-cancel-request-error').hidden, false);
+    assert.equal(h.$('#driver-cancel-request-error').textContent, mockApi.ORDER_LIFECYCLE_MISMATCH_TEXT);
+    assert.doesNotMatch(h.$('#driver-cancel-confirm').textContent, /Проверить статус/);
+    assert.equal(h.$('#driver-cancel-confirm').disabled, true);
+    await h.$('#driver-cancel-confirm').fire();
+    assert.equal(calls, 1, 'a final refusal is not resubmitted');
+  });
+}
+
 await commandChecks();
 await sheetChecks();
+await orderLifecycleMismatchChecks();
 
 console.log(`\n${passed} passed; ${failures.length} failed`);
 if (failures.length) process.exitCode = 1;

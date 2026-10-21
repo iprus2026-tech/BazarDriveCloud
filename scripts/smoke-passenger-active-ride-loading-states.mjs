@@ -982,13 +982,19 @@ expect('deferred terminal status immediately blocks stale cancel confirmation be
     && review9CancelBinder.includes('deferredTerminalPassengerStatusBlocksCancel()')
     && review9CancelBinder.indexOf('deferredTerminalPassengerStatusBlocksCancel()') < review9CancelBinder.indexOf('saveActiveRide(ride)'));
 const cancelSheetCommit = functionBody(passengerSheets, 'commitCancel');
+const cancelSheetShowCanceled = functionBody(passengerSheets, 'showCanceled');
+const cancelSheetServerSettle = functionBody(passengerSheets, 'settleServerCancel');
 expect('terminal cancel abort closes the stale sheet before false canceled UI and exposes reconciliation intent',
   review9CancelBinder.includes('aborted: true')
     && review9CancelBinder.includes("reconcile: 'deferred-terminal'")
     && cancelSheetCommit.includes('if (meta.aborted === true)')
     && cancelSheetCommit.includes('close()')
     && cancelSheetCommit.indexOf('if (meta.aborted === true)') < cancelSheetCommit.indexOf('cancelTimer = setTimeout')
-    && cancelSheetCommit.indexOf('close()') < cancelSheetCommit.indexOf("overlay.dataset.stage = 'canceled'"));
+    && cancelSheetCommit.indexOf('close()') < cancelSheetCommit.indexOf('showCanceled(meta)')
+    && cancelSheetShowCanceled.includes("overlay.dataset.stage = 'canceled'")
+    // #1050 — the server-backed (Promise) path honors the same abort before any canceled UI.
+    && cancelSheetServerSettle.includes('meta.aborted === true')
+    && cancelSheetServerSettle.indexOf('close()') < cancelSheetServerSettle.indexOf('showCanceled('));
 expect('deferred forward status keeps the highest pending lifecycle rank while overlays stay open',
   remount.includes('const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1')
     && remount.includes('const nextRank = STATUS_RANK[srvStatus] ?? 0')
@@ -1014,9 +1020,13 @@ expect('background recovery settlement preserves controls/focus and refreshes th
     && loadedRenderer.includes('setReadState(PASSENGER_RIDE_READ_STATE.LOADED)'));
 const cancelBinder = functionBody(passenger, 'bindCancelAffordance');
 const sheetRenderer = functionBody(passenger, 'renderSheet');
+const serverCancel = functionBody(passenger, 'commitPassengerServerCancel');
 expect('cancel and boarded PATCH writers run only for confirmed SERVER_BACKED ownership',
-  cancelBinder.includes('if (backendWriteCandidate && canceledRide')
-    && cancelBinder.includes('patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED)')
+  // #1050 — the cancel PATCH is server-first (awaited, with the reason) and precedes every local write.
+  cancelBinder.includes('if (backendWriteCandidate) return commitPassengerServerCancel(reasonId, comment);')
+    && cancelBinder.indexOf('if (backendWriteCandidate) return commitPassengerServerCancel(') < cancelBinder.indexOf('saveActiveRide(ride)')
+    && !cancelBinder.includes('patchRideStatus(')
+    && serverCancel.includes('await patchRideStatus(tripId, RIDE_STATUS.CANCELED, {')
     && sheetRenderer.includes('if (backendWriteCandidate)')
     && sheetRenderer.includes('patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)')
     && ownershipSetter.includes('PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED'));
