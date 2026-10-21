@@ -4,7 +4,7 @@ import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
 import { initGlobalErrorOverlay } from './app_error_overlay.js';
 import { initAppConnectionStatus } from './app_connection_status.js';
-import { getSmokeRole, resolveRole } from './smoke_role.js';
+import { getSmokeRole, resolveRole, clearSmokeRole } from './smoke_role.js';
 import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
 import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from './auth_token.js';
@@ -47,8 +47,13 @@ register('/route-picker', routePicker);
 register('/route-preview', routePreview);
 register('/order-map-draft', orderMapDraft);
 register('/rules',       rules);
-register('/profile', context => profile(context, { logout: options => authLogout.logout(options) }));
+register('/profile', context => profile(context, {
+  logout: options => authLogout.logout(options),
+  switchRole: role => switchProfileRole(context, role),
+}));
 let onboardingHandoffOwner = null;
+// BD-AUTH-POLICY-01C-2 — the profile whose server role switch is in flight (see switchProfileRole).
+let profileSwitchOwner = null;
 let pendingRecoveryTransfer = false;
 register('/onboarding', (context) => {
   const recoveredLogin = pendingRecoveryTransfer
@@ -86,6 +91,55 @@ register('/onboarding', (context) => {
   recoveredLogin,
   });
 });
+// BD-AUTH-POLICY-01C-2 — the profile role switch (backend-ON). The server decides: PUT the active
+// role, then re-read the session. Only a session read that shows the new role for the same account
+// changes the local role (and clears the per-tab smokeRole), and this function then re-renders the
+// profile itself. While it runs, the snapshot listener leaves the profile mounted, so a refusal
+// stays on the screen that asked. 403 ROLE_NOT_GRANTED reaches the profile, which opens the
+// driver application. A session that no longer confirms this account hands over to admission.
+async function switchProfileRole(context, role) {
+  const before = bootSession.getSnapshot();
+  if (!isBackendEnabled() || profileSwitchOwner || !context.isCurrent() || bootSession.hasUncommittedLogin()
+      || before.state !== 'AUTHENTICATED' || !before.user) return { ok: false, code: 'AUTH_STALE' };
+  const userId = before.user.userId;
+  profileSwitchOwner = context;
+  let outcome;
+  try {
+    outcome = await runProfileRoleSwitch(role, userId);
+  } finally {
+    profileSwitchOwner = null;
+  }
+  if (outcome.ok) {
+    clearSmokeRole();
+    user.set({ role });
+    if (context.isCurrent()) go('/profile');
+  } else if (outcome.handover && context.isCurrent()) {
+    go((location.hash || '#/welcome').slice(1));
+  }
+  return { ok: outcome.ok, code: outcome.code };
+}
+
+async function runProfileRoleSwitch(role, userId) {
+  let reply;
+  try {
+    reply = await putSessionActiveRole(role);
+  } catch (err) {
+    if (err?.status === 401) {
+      await bootSession.reconcile();
+      return { ok: false, code: 'UNAUTHENTICATED', handover: true };
+    }
+    const code = ['ROLE_NOT_GRANTED', 'PHONE_NOT_VERIFIED', 'NETWORK'].includes(err?.code) ? err.code : 'ROLE_SWITCH_FAILED';
+    return { ok: false, code };
+  }
+  if (reply.userId !== userId) return { ok: false, code: 'ROLE_SWITCH_FAILED' };
+  const snapshot = await bootSession.reconcile();
+  if (snapshot.state !== 'AUTHENTICATED' || snapshot.user?.userId !== userId) {
+    return { ok: false, code: 'ROLE_SWITCH_FAILED', handover: true };
+  }
+  if (snapshot.user.activeRole !== role) return { ok: false, code: 'ROLE_SWITCH_FAILED' };
+  return { ok: true, code: null };
+}
+
 register('/new',         composer);
 register('/respond',     respond);
 register('/chat',        chat);
@@ -310,6 +364,8 @@ bootSession.subscribe((snapshot) => {
   // Keep the current OTP/profile draft mounted while its owner awaits handoff.
   // A later route generation cannot suppress the normal boot/admission UI.
   if (onboardingHandoffOwner?.isCurrent()) return;
+  // The profile's server role switch settles its own outcome (switchProfileRole).
+  if (profileSwitchOwner?.isCurrent()) return;
   if (isCurrentDevDocsRoute()) {
     // Reconciliation continues, without replacing or remounting dev/docs.
     startRouterOnce();
