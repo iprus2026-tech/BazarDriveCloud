@@ -319,10 +319,12 @@ function bindSheetChrome(overlay, options) {
     || overlay.dataset.stage === 'sent';
 
   let releaseTrap = () => {};
-  function close() {
+  // `navigate: false` closes without the sheet's own onClose exit — for a button that navigates
+  // itself (#1048: running both rendered the next screen twice).
+  function close({ navigate = true } = {}) {
     releaseTrap();
     overlay.remove();
-    if (typeof options.onClose === 'function') options.onClose();
+    if (navigate && typeof options.onClose === 'function') options.onClose();
   }
   overlay.__closeSheet = close;
 
@@ -808,17 +810,24 @@ function bindEarningsEvents(overlay, options) {
     });
   }
 
+  // #1048 — every navigation button below closes the sheet WITHOUT its onClose exit and then
+  // navigates exactly once (the screen's callback, else the fallback route). Closing with onClose
+  // first rendered /driver-map twice: the torn-down first instance raised a false server_error.
+  const closeForNavigation = () => { if (overlay.__closeSheet) overlay.__closeSheet({ navigate: false }); };
+
   if (online) {
     online.addEventListener('click', () => {
-      if (overlay.__closeSheet) overlay.__closeSheet();
-      go('/driver-map');
+      closeForNavigation();
+      if (typeof options.onOrders === 'function') options.onOrders();
+      else go('/driver-map');
     });
   }
 
   if (emptyFeed) {
     emptyFeed.addEventListener('click', () => {
-      if (overlay.__closeSheet) overlay.__closeSheet();
-      go('/feed');
+      closeForNavigation();
+      if (typeof options.onFeed === 'function') options.onFeed();
+      else go('/feed');
     });
   }
 
@@ -828,7 +837,7 @@ function bindEarningsEvents(overlay, options) {
   const ordersBtn = overlay.querySelector('#driver-earnings-orders');
   if (ordersBtn) {
     ordersBtn.addEventListener('click', () => {
-      if (overlay.__closeSheet) overlay.__closeSheet();
+      closeForNavigation();
       if (typeof options.onOrders === 'function') options.onOrders();
       else go('/driver-map');
     });
@@ -836,7 +845,7 @@ function bindEarningsEvents(overlay, options) {
   const feedBtn = overlay.querySelector('#driver-earnings-feed');
   if (feedBtn) {
     feedBtn.addEventListener('click', () => {
-      if (overlay.__closeSheet) overlay.__closeSheet();
+      closeForNavigation();
       if (typeof options.onFeed === 'function') options.onFeed();
       else go('/feed');
     });
@@ -848,7 +857,7 @@ function bindEarningsEvents(overlay, options) {
   const historyBtn = overlay.querySelector('#driver-earnings-history');
   if (historyBtn) {
     historyBtn.addEventListener('click', () => {
-      if (overlay.__closeSheet) overlay.__closeSheet();
+      closeForNavigation();
       if (typeof options.onHistory === 'function') options.onHistory();
       else go('/profile?section=history');
     });

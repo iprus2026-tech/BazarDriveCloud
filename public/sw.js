@@ -257,7 +257,8 @@
 // v380 (BD-AUTH-POLICY-01C-1): login role handling + driver enrollment card (new driver_enrollment.js).
 // v381 (BD-AUTH-POLICY-01C-2): profile server role switch + driver application sheet.
 // v382 (BD-AUTH-POLICY-01B-C K3-2): readable role-gate refusals (new role_gate.js).
-const VERSION    = 'v382';
+// v383 (#1085, #1048): order-map-draft in-form clicks; the earnings sheet navigates once.
+const VERSION    = 'v383';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

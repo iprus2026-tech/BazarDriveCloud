@@ -1855,6 +1855,70 @@ async function roleGateCaseBody(name) {
   assert.equal(location.hash, '#/profile', '«Перейти в профиль» opens the profile switch');
 }
 
+// #1048 — the driver earnings sheet: every navigation button closes the sheet WITHOUT the sheet's
+// onClose exit (/driver-map) and navigates exactly once; the dismiss control keeps onClose.
+async function earningsNavCase() {
+  const dom = installDOM({ parseMarkup: true });
+  globalThis.Element = dom.Element;
+  const sheets = await import('../public/src/screens/active_ride_driver_sheets.js');
+  const zero = { onClose: 0, onOrders: 0, onFeed: 0, onHistory: 0 };
+  const open = (payload = { netLabel: '572 ₽', fareLabel: '650 ₽' }) => {
+    const root = new dom.Element('section');
+    dom.elements.app.appendChild(root);
+    const calls = { ...zero };
+    const spy = key => () => { calls[key]++; };
+    const overlay = sheets.openDriverEarningsSheet(root, { state: 'summary', payload,
+      onClose: spy('onClose'), onOrders: spy('onOrders'), onFeed: spy('onFeed'), onHistory: spy('onHistory') });
+    assert.ok(overlay, 'the sheet opens');
+    return { root, overlay, calls };
+  };
+  for (const [id, expected, payload] of [
+    ['driver-earnings-orders', 'onOrders'],
+    ['driver-earnings-feed', 'onFeed'],
+    ['driver-earnings-history', 'onHistory'],
+    ['driver-earnings-online', 'onOrders'],
+    ['driver-earnings-empty-feed', 'onFeed', null],
+  ]) {
+    const s = open(payload === undefined ? undefined : payload);
+    const button = s.overlay.querySelector('#' + id);
+    assert.ok(button, id + ' is rendered');
+    button.click();
+    assert.deepEqual(s.calls, { ...zero, [expected]: 1 }, id + ' navigates exactly once, without the onClose exit');
+    assert.equal(s.root.querySelector('.active-ride-driver-sheet'), null, id + ' closes the sheet');
+  }
+  const dismissed = open();
+  dismissed.overlay.querySelector('[data-driver-sheet-close="true"]').click();
+  assert.deepEqual(dismissed.calls, { ...zero, onClose: 1 }, 'the dismiss control keeps the onClose exit');
+}
+
+// #1085 — only the «Сейчас / Позже» tabs carry a schedule-mode click; the form wrapper also holds
+// data-mode, and every other in-form control must reach its [data-action] dispatch.
+async function omdModeCase() {
+  const dom = installDOM({ parseMarkup: true });
+  const { scheduleModeFromTarget } = await import('../public/src/screens/order_map_draft.js');
+  const el = (tag, className, attrs = {}, parent = null) => {
+    const node = new dom.Element(tag);
+    node.className = className;
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    if (parent) parent.appendChild(node);
+    return node;
+  };
+  const form = el('div', 'omd-form', { 'data-mode': 'now' });
+  const tabs = el('div', 'omd-tabs', {}, form);
+  const later = el('button', 'omd-tab', { 'data-mode': 'later' }, tabs);
+  const laterLabel = el('span', 'omd-tab__label', {}, later);
+  const plus = el('button', 'omd-price__btn', { 'data-action': 'price-up' }, form);
+  const plusIcon = el('span', 'omd-price__icon', {}, plus);
+  const profile = el('button', 'bd-btn ghost sm omd-notice__action', { 'data-action': 'open-profile' }, form);
+  assert.equal(scheduleModeFromTarget(later), 'later');
+  assert.equal(scheduleModeFromTarget(laterLabel), 'later', 'a tap inside the tab');
+  for (const [label, target] of [['±50', plus], ['the ±50 icon', plusIcon], ['the profile CTA', profile], ['the wrapper', form]]) {
+    assert.equal(scheduleModeFromTarget(target), null, label + ' is not a schedule-mode click');
+  }
+  assert.equal(scheduleModeFromTarget(null), null);
+  assert.equal(scheduleModeFromTarget({}), null, 'a target without closest()');
+}
+
 async function devDocsRouteCase(name) {
   const dom = installDOM();
   const router = await import('../public/src/router.js');
@@ -2887,6 +2951,12 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--role-gate-case') {
   await roleGateCase(process.argv[3]);
   console.log('PASS actual app /responses role gate (K3-2) — ' + process.argv[3]);
+} else if (process.argv[2] === '--earnings-nav-case') {
+  await earningsNavCase();
+  console.log('PASS driver earnings sheet navigates once (#1048)');
+} else if (process.argv[2] === '--omd-mode-case') {
+  await omdModeCase();
+  console.log('PASS order-map-draft schedule-mode click scope (#1085)');
 } else if (process.argv[2] === '--guest-public-case') {
   await guestPublicCase(process.argv[3]);
   console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
@@ -3928,6 +3998,13 @@ if (process.argv[2] === '--onboarding-detach-case') {
   for (const scenario of ['responses-refused', 'responses-unavailable']) {
     await check('actual app /responses role gate (BD-AUTH-POLICY-01B-C K3-2): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--role-gate-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const [flag, label] of [['--earnings-nav-case', 'driver earnings sheet navigates once (#1048)'],
+    ['--omd-mode-case', 'order-map-draft: only the schedule tabs are mode clicks (#1085)']]) {
+    await check(label, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), flag],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }

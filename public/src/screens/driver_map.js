@@ -555,8 +555,11 @@ export default function driverMapScreen() {
   let activeRead = null;
   let rootWasConnected = false;
   let mountCheckPassed = false;
+  // #1048 — once the screen is torn down nothing it started is current, even before the mount check
+  // ran: a read canceled by teardown must never report server_error over the next screen.
+  let tornDown = false;
   setTimeout(() => { mountCheckPassed = true; }, 0);
-  const isCurrent = (epoch) => epoch === readEpoch && (!mountCheckPassed || root.isConnected);
+  const isCurrent = (epoch) => !tornDown && epoch === readEpoch && (!mountCheckPassed || root.isConnected);
   function cancelActiveRead() {
     const operation = activeRead;
     if (!operation) return;
@@ -571,6 +574,7 @@ export default function driverMapScreen() {
     if (root.isConnected) {
       rootWasConnected = true;
     } else if (rootWasConnected) {
+      tornDown = true;
       cancelActiveRead();
       teardownObserver.disconnect();
     }
