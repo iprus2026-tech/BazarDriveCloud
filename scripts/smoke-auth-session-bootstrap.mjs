@@ -1941,10 +1941,13 @@ async function profileSyncCaseBody(name) {
   const auth = await import('../public/src/auth_token.js');
   const { SMOKE_ROLE_KEY } = await import('../public/src/smoke_role.js');
   const localRole = name === 'adopt-passenger' ? 'driver' : 'passenger';
-  const serverRole = name === 'adopt-driver' ? 'driver' : name === 'adopt-passenger' ? 'passenger'
-    : name === 'role-preview' ? 'driver' : 'passenger';
+  // 'divergent-override': this tab's override already shows the server role, the persisted role
+  // does not — the persisted role must still be corrected (CodeRabbit #1099).
+  const tabOverride = name === 'divergent-override' ? 'driver' : localRole;
+  const serverRole = name === 'adopt-driver' || name === 'divergent-override' ? 'driver'
+    : name === 'adopt-passenger' ? 'passenger' : name === 'role-preview' ? 'driver' : 'passenger';
   user.set({ welcomeSeen: true, onboarded: true, role: localRole, phoneVerified: true, firstName: 'Sync fixture' });
-  sessionStorage.setItem(SMOKE_ROLE_KEY, localRole);
+  sessionStorage.setItem(SMOKE_ROLE_KEY, tabOverride);
   assert.equal(auth.setAuth({ token: 'sync-A', userId: 'user-A' }), true);
   auth.commitAuthCandidate(auth.getAuthOwnerVersion());
   globalThis.__BD_API_BASE__ = 'https://api.invalid';
@@ -1958,7 +1961,7 @@ async function profileSyncCaseBody(name) {
       sessionReads++;
       if (sessionReads > 1 && name === 'read-failure') return response({ code: 'SESSION_LOOKUP_FAILED', retryable: true }, 503);
       if (sessionReads > 1 && name === 'session-gone') return response({ user: null });
-      return response({ user: { ...userDTO('user-A'), activeRole: sessionReads > 1 ? serverRole : localRole } });
+      return response({ user: { ...userDTO('user-A'), activeRole: sessionReads > 1 ? serverRole : tabOverride } });
     }
     if (url.endsWith('/history') || url.endsWith('/orders')) return response({ items: [] });
     return response({ code: 'NOT_FOUND' }, 404);
@@ -1988,6 +1991,13 @@ async function profileSyncCaseBody(name) {
     }
     assert.equal(bootState(), undefined, 'no boot screen');
     assert.ok(sessionReads >= 2, 'the mount re-read the session');
+    return;
+  }
+  if (name === 'divergent-override') {
+    assert.equal(user.get().role, 'driver', 'the persisted role is corrected although the tab already showed it');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), null);
+    assert.ok(node('pf2-act-role-switch'), 'the driver profile stays');
+    assert.equal(sessionReads, 2, 'no re-render: the visible role did not change');
     return;
   }
   if (name === 'in-sync') {
@@ -4108,7 +4118,7 @@ if (process.argv[2] === '--onboarding-detach-case') {
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
-  for (const scenario of ['adopt-driver', 'adopt-passenger', 'in-sync', 'read-failure', 'session-gone', 'role-preview']) {
+  for (const scenario of ['adopt-driver', 'adopt-passenger', 'divergent-override', 'in-sync', 'read-failure', 'session-gone', 'role-preview']) {
     await check('actual app/profile adopts the server role on mount (#1086, #1088): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--profile-sync-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });

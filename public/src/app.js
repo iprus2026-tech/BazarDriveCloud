@@ -147,10 +147,14 @@ async function syncProfileRole(context) {
   }
   const role = snapshot.user.activeRole;
   if (role !== 'passenger' && role !== 'driver') return { ok: true, changed: false };
-  if (role === (getSmokeRole() || user.get().role)) return { ok: true, changed: false };
+  // The persisted role and the per-tab override are checked separately: a matching override must
+  // not hide a stale persisted role (other tabs and the next visit read user.v1).
+  const override = getSmokeRole();
+  const shown = override || user.get().role;
+  if (user.get().role === role && (!override || override === role)) return { ok: true, changed: false };
   clearSmokeRole();
   user.set({ role });
-  go('/profile');
+  if (shown !== role) go('/profile');
   return { ok: true, changed: true };
 }
 
