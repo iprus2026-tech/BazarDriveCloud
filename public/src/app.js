@@ -10,6 +10,7 @@ import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_sessio
 import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from './auth_token.js';
 import { setLocalLogoutObserver, resetLocalSession, AUTH_CLEAR_FOREIGN } from './mock_auth.js';
 import { createAuthLogout } from './auth_logout.js';
+import { putSessionActiveRole } from './api_client.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
 import welcome    from './screens/welcome.js';
@@ -67,9 +68,12 @@ register('/onboarding', (context) => {
   return onboarding(context, {
   beginLogin(options) {
     onboardingHandoffOwner = context;
-    return bootSession.beginLogin(options);
+    // BD-AUTH-POLICY-01C-1 (K4): the server-side active-role switch transport for a granted but
+    // inactive chosen role, and for adoptRole() below. The bootstrap itself stays transport-free.
+    return bootSession.beginLogin({ ...options, switchRole: role => putSessionActiveRole(role) });
   },
   resumeLogin: () => bootSession.resumeLogin(),
+  adoptRole: role => bootSession.adoptRole(role),
   roleConfirmed: role => bootSession.roleConfirmed(role),
   passengerConfirmed: () => bootSession.passengerConfirmed(),
   finishLogin: () => bootSession.finishLogin(),

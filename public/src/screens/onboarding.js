@@ -5,6 +5,9 @@ import { isBackendEnabled } from '../api_config.js';
 import { apiFetch, revokeUnacceptedSession } from '../api_client.js';
 import { resetLocalSession } from '../mock_auth.js';
 import { clearSmokeRole } from '../smoke_role.js';
+import {
+  submitDriverEnrollment, readDriverEnrollment, enrollmentView, renderEnrollmentCard, enrollmentErrorText,
+} from '../driver_enrollment.js';
 
 // ── Inline SVG constants ─────────────────────────────────────────────────────
 const SVG_BACK = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -537,6 +540,11 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   let accountBoundaryResetDuringLogin = false;
   let rebuildProfileAfterVerify = false;
   let detachSubmitting = false;
+  // BD-AUTH-POLICY-01C-1 (K4): the "Вход выполнен" state after a verified login whose chosen
+  // role is not granted. The identity stays installed; the card offers the driver application,
+  // continuing as passenger (when that grant exists) and logging out. Backend-ON only.
+  // { attempt, roles, model, busy, error }
+  let access = null;
 
   const ownsScreen = () => renderContext.isCurrent();
   const expectedAuthRole = () => (verifyPhoneOnly && !rebuildProfileAfterVerify)
@@ -554,6 +562,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     passengerIdentity = null;
     verifiedResponseReceived = false;
     otpSubmitting = false;
+    access = null;
     clearOtpAdvanceTimer();
   }
 
@@ -665,20 +674,20 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         );
         return;
       }
-      if (!result.ok) throw Object.assign(new Error('handoff failed'), { code: result.code });
-      passengerIdentity = result.user;
-      confirmedAttempt = attempt;
-      clearSmokeRole();
-      if (!verifyPhoneOnly && (!currentUser.onboarded || accountSwitchedDuringLogin)) {
-        user.set({
-          welcomeSeen: true,
-          onboarded: false,
-          role: result.user.activeRole,
-          phoneVerified: result.user.phoneVerified,
-          phone: attempt.phone,
-        });
+      // K4: a verified login whose chosen role is not granted keeps the identity and opens the
+      // "Вход выполнен" state instead of a dead-end error (full onboarding flow only).
+      if (!result.ok && result.handoffInstalled === true && (!verifyPhoneOnly || rebuildProfileAfterVerify)
+          && Array.isArray(result.roles)
+          && (result.code === 'ROLE_NOT_GRANTED'
+            || (result.code === 'ROLE_AUTHORITY_REQUIRED' && !result.roles.includes(expectedAuthRole())))) {
+        const chosen = expectedAuthRole();
+        // ROLE_NOT_GRANTED from the switch (first try or a retry through resumeLogin) means the
+        // grant vanished since verify: drop it.
+        enterAccess(attempt, result.roles.filter(role => result.code !== 'ROLE_NOT_GRANTED' || role !== chosen));
+        return;
       }
-      if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
+      if (!result.ok) throw Object.assign(new Error('handoff failed'), { code: result.code });
+      completeVerifiedLogin(result, attempt);
     } catch (err) {
       if (!ownsAttempt(attempt)) return;
       otpSubmitting = false;
@@ -689,6 +698,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         verifiedResponseReceived ? (
           ['PASSENGER_AUTHORITY_REQUIRED', 'ROLE_AUTHORITY_REQUIRED'].includes(ecode)
             ? 'Сервер не подтвердил выбранную роль.'
+          : ecode === 'ROLE_SWITCH_FAILED' ? 'Не удалось переключить роль. Повторите попытку.'
           : ecode === 'AUTH_STORAGE_FAILED' ? 'Не удалось сохранить вход. Проверьте доступ к хранилищу и запросите новый код.'
           : ecode === 'AUTH_IDENTITY_MISMATCH' ? 'Учётная запись не совпала. Повторите проверку входа.'
           : 'Не удалось подтвердить вход. Повторите проверку сессии.'
@@ -698,6 +708,130 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         : 'Неверный код. Попробуйте ещё раз.',
       );
     }
+  }
+
+  // The shared success tail of a confirmed backend login (verify, or a role adopted from the
+  // "Вход выполнен" state).
+  function completeVerifiedLogin(result, attempt) {
+    passengerIdentity = result.user;
+    confirmedAttempt = attempt;
+    clearSmokeRole();
+    if (!verifyPhoneOnly && (!currentUser.onboarded || accountSwitchedDuringLogin)) {
+      user.set({
+        welcomeSeen: true,
+        onboarded: false,
+        role: result.user.activeRole,
+        phoneVerified: result.user.phoneVerified,
+        phone: attempt.phone,
+      });
+    }
+    if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
+  }
+
+  // ── "Вход выполнен" (K4) ──────────────────────────────────────────────────
+  const accessIsCurrent = current => access === current && ownsAttempt(current.attempt);
+
+  // Programmatic focus on the card heading whenever the state appears or changes.
+  function focusAccessTitle() {
+    root.querySelector('#ob-title')?.focus({ preventScroll: true });
+  }
+
+  function enterAccess(attempt, roles) {
+    access = { attempt, roles: Array.from(roles || []), model: null, busy: false, error: '' };
+    otpSubmitting = false;
+    if (expectedAuthRole() === 'driver') {
+      // Show an application already on file (e.g. PENDING) before offering to apply.
+      void runAccess(() => readDriverEnrollment());
+      return;
+    }
+    render();
+    focusAccessTitle();
+  }
+
+  async function runAccess(operation) {
+    const current = access;
+    if (!current || current.busy) return;
+    current.busy = true;
+    current.error = '';
+    render();
+    try {
+      const model = await operation();
+      if (!accessIsCurrent(current)) return;
+      current.model = model;
+      current.roles = Array.from(model.roles);
+    } catch (err) {
+      if (!accessIsCurrent(current)) return;
+      current.error = enrollmentErrorText(err);
+    }
+    current.busy = false;
+    render();
+    focusAccessTitle();
+  }
+
+  async function adoptAccessRole(role) {
+    const current = access;
+    if (!current || current.busy) return;
+    current.busy = true;
+    current.error = '';
+    render();
+    let result;
+    try { result = await auth.adoptRole(role); } catch { result = { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
+    if (!accessIsCurrent(current)) return;
+    current.busy = false;
+    if (result?.ok === true) {
+      access = null;
+      draft.role = role;
+      completeVerifiedLogin(result, current.attempt);
+      return;
+    }
+    current.error = result?.code === 'ROLE_NOT_GRANTED'
+      ? enrollmentErrorText({ code: 'ROLE_NOT_GRANTED' })
+      : 'Не удалось переключить роль. Повторите попытку.';
+    render();
+    focusAccessTitle();
+  }
+
+  // «Выйти»: the existing server-first onboarding detach (#1027).
+  async function exitAccess() {
+    const current = access;
+    if (!current || current.busy) return;
+    current.busy = true;
+    current.error = '';
+    render();
+    let result;
+    try { result = await auth?.detach?.({ intent: 'abandon', isCurrent: ownsScreen }); }
+    catch { result = { ok: false, code: 'NETWORK' }; }
+    if (!ownsScreen() || access !== current) return;
+    current.busy = false;
+    if (result?.ok !== true) current.error = 'Не удалось безопасно завершить вход. Повторите попытку.';
+    render();
+    focusAccessTitle();
+  }
+
+  function renderAccess() {
+    const chosen = expectedAuthRole();
+    const passengerAvailable = access.roles.includes('passenger') && chosen !== 'passenger';
+    const view = chosen === 'driver'
+      ? enrollmentView(access.model ?? { status: 'NONE', driverGranted: false }, { passengerAvailable })
+      : { status: 'NONE', title: 'Роль пассажира не выдана',
+        body: 'Для этого аккаунта роль пассажира не выдана. Выйдите и войдите с другим номером.',
+        actions: ['exit'] };
+    return renderHeader(false, step, totalSteps())
+      + renderEnrollmentCard(view, { idPrefix: 'ob', busy: access.busy, error: access.error, lead: 'Вход выполнен.' });
+  }
+
+  function attachAccessListeners() {
+    const handlers = {
+      apply: () => runAccess(() => submitDriverEnrollment()),
+      refresh: () => runAccess(() => readDriverEnrollment()),
+      'continue-driver': () => adoptAccessRole('driver'),
+      'continue-passenger': () => adoptAccessRole('passenger'),
+      exit: () => exitAccess(),
+    };
+    root.querySelectorAll('[data-enroll-action]').forEach((button) => {
+      const handler = handlers[button.dataset.enrollAction];
+      if (handler) button.addEventListener('click', () => { void handler(); });
+    });
   }
 
   function advanceFromOtpOnce() {
@@ -884,6 +1018,12 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   }
 
   function render() {
+    if (access) {
+      root.innerHTML = renderAccess();
+      root.dataset.step = 'access';
+      attachAccessListeners();
+      return;
+    }
     const name = currentStep();
     const total = totalSteps();
 

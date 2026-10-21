@@ -96,7 +96,10 @@ export function createAuthSessionBootstrap({
   }
 
   // Router ownership + generation defeat A->B->A and competing login responses.
-  function beginLogin({ isCurrent = () => true, resetAccount = () => {}, expectedRole = 'passenger' } = {}) {
+  // `switchRole(role)` is the host's transport for PUT /auth/session/active-role
+  // (BD-AUTH-POLICY-01C-1). Without it a granted-but-inactive role stays unconfirmed, as before.
+  function beginLogin({ isCurrent = () => true, resetAccount = () => {}, expectedRole = 'passenger',
+    switchRole = null } = {}) {
     logoutStoragePending = false;
     logoutContinuationsBlocked = false;
     const authorityRole = ['passenger', 'driver'].includes(expectedRole) ? expectedRole : null;
@@ -130,6 +133,10 @@ export function createAuthSessionBootstrap({
       const verifiedIdentity = u.phoneVerified === true;
       const verifiedAuthority = verifiedIdentity && u.activeRole === authorityRole
         && u.roles.includes(authorityRole);
+      // BD-AUTH-POLICY-01C-1 (K4): the chosen role is GRANTED but not active — switch it on the
+      // server before any authority (resumeLogin). Only with an injected transport.
+      const switchNeeded = verifiedIdentity && !verifiedAuthority && u.roles.includes(authorityRole)
+        && typeof switchRole === 'function';
       // A roleless legacy OTP row still represents a successfully verified identity.
       // Grant acquisition remains #830 policy; this slice must not invent a role,
       // but it also must not discard the authenticated identity and force another OTP.
@@ -174,17 +181,47 @@ export function createAuthSessionBootstrap({
       const generation = ++loginSequence;
       handoff = { token: payload.token, userId: u.userId, phone: phone || null,
         ownerVersion: readOwnerVersion(),
-        generation, ownsUI: owns, expectedRole: authorityRole, authority: verifiedAuthority };
+        generation, ownsUI: owns, expectedRole: authorityRole, authority: verifiedAuthority,
+        roles: Object.freeze(u.roles.slice()),
+        switchRole: typeof switchRole === 'function' ? switchRole : null,
+        pendingSwitch: switchNeeded ? authorityRole : null };
       handoffRemovalPending = false;
       rejectedDetachPending = false;
       const resumed = await resumeLogin();
-      return { ...resumed, handoffInstalled: true };
+      // The verified grants let the host tell "not granted" from other failures (K4). A switch
+      // failure reports the grants it already narrowed, so those win.
+      return { roles: Object.freeze(u.roles.slice()), ...resumed, handoffInstalled: true };
     };
   }
 
   async function resumeLogin() {
     const expected = handoff;
     if (logoutContinuationsBlocked || !expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
+    if (expected.pendingSwitch) {
+      // A pending server-side role switch runs first, so a retry repeats it safely.
+      const role = expected.pendingSwitch;
+      let switched;
+      try {
+        switched = await expected.switchRole(role);
+      } catch (err) {
+        if (handoff !== expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
+        // The handoff stays installed either way, so a retry needs no new OTP. A 403 means the
+        // grant vanished since verify: drop it from the reported grants.
+        if (err?.code === 'ROLE_NOT_GRANTED') {
+          expected.roles = Object.freeze(expected.roles.filter(held => held !== role));
+          return { ok: false, code: 'ROLE_NOT_GRANTED', handoffInstalled: true, roles: expected.roles };
+        }
+        return { ok: false, code: 'ROLE_SWITCH_FAILED', handoffInstalled: true, roles: expected.roles };
+      }
+      if (handoff !== expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
+      if (switched?.activeRole !== role || switched?.userId !== expected.userId) {
+        return { ok: false, code: 'ROLE_SWITCH_FAILED', handoffInstalled: true, roles: expected.roles };
+      }
+      // Still not trusted on its own: authorityConfirmed() below requires the session read to
+      // show this role (snapshot.user.activeRole) before roleConfirmed()/finishLogin() pass.
+      expected.pendingSwitch = null;
+      expected.authority = true;
+    }
     const result = await reconcile({ uiContinuation: true });
     if (handoff !== expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
     const ok = authorityConfirmed(expected, { requireUI: true });
@@ -203,6 +240,22 @@ export function createAuthSessionBootstrap({
   function roleConfirmed(role) {
     return !!handoff && handoff.expectedRole === role
       && authorityConfirmed(handoff, { requireUI: true });
+  }
+
+  // BD-AUTH-POLICY-01C-1 (K4): an installed but unconfirmed login adopts another role the account
+  // holds — after an approved driver application, or "continue as passenger". The client choice
+  // grants nothing: the server switch (403 when not granted) and then the session read decide.
+  async function adoptRole(role) {
+    const expected = handoff;
+    if (logoutContinuationsBlocked || !expected || !expected.ownsUI()
+        || !['passenger', 'driver'].includes(role) || typeof expected.switchRole !== 'function'
+        || readToken() !== expected.token || readUserId() !== expected.userId) {
+      return { ok: false, code: 'AUTH_STALE' };
+    }
+    expected.expectedRole = role;
+    expected.authority = false;
+    expected.pendingSwitch = role;
+    return resumeLogin();
   }
 
   function passengerConfirmed() {
@@ -540,7 +593,7 @@ export function createAuthSessionBootstrap({
   return Object.freeze({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
+    reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin, adoptRole,
     isLoginDetached, recoveryConfirmed, recoveryProjection, rebindRecoveryOwner,
     retainAuthenticatedCleanupOwner, finishRecovery,
     markLoginStale, abandonLogin, enterGuest, adoptAnonymousAfterExternalLogout,

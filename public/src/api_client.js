@@ -142,3 +142,20 @@ export async function revokeUnacceptedSession(token, { signal } = {}) {
     }),
   );
 }
+
+// BD-AUTH-POLICY-01C-1: switch the CURRENT session to one of the account's grants
+// (PUT /auth/session/active-role, BD-AUTH-POLICY-01B-B). The server re-checks the grant; a
+// malformed or mismatched reply is never read as a confirmed switch. Callers still confirm the
+// switch through a session read before granting any UI authority.
+export async function putSessionActiveRole(role, { signal } = {}) {
+  const payload = await apiFetch('/auth/session/active-role', {
+    method: 'PUT', body: { activeRole: role }, signal, expectedStatus: 200,
+  });
+  const u = payload?.user;
+  if (!u || typeof u !== 'object' || Array.isArray(u) || u.activeRole !== role
+      || typeof u.userId !== 'string' || !u.userId.trim()
+      || !Array.isArray(u.roles) || u.roles.some(r => typeof r !== 'string')) {
+    throw new ApiError({ code: 'SESSION_PROTOCOL', retryable: true });
+  }
+  return Object.freeze({ userId: u.userId, activeRole: u.activeRole, roles: Object.freeze(u.roles.slice()) });
+}
