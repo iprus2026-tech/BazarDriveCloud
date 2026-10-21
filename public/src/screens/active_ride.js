@@ -628,12 +628,15 @@ export default function activeRide({ isCurrent = () => true } = {}) {
 
   // Successful reads repair only existing stored display/waiting projections.
   // Otherwise the next updateActiveRideStatus would resurrect old demo route
-  // fields. Keep stored identity, lifecycle and terminal state untouched.
+  // fields — or, since #1052, a seed's demo passenger (note, rating, luggage):
+  // the passenger is the server's too. Keep stored lifecycle and terminal
+  // state untouched.
   function persistServerConfirmedWaitingProjection() {
     const storedRide = findActiveRide(ride.tripId);
     if (!storedRide) return;
     const repaired = {
       ...storedRide,
+      passenger: { ...(ride.passenger || {}) },
       waiting: { ...(ride.waiting || {}) },
       route: { ...(ride.route || {}) },
       order: { ...(ride.order || {}) },

@@ -39,15 +39,21 @@ function sourceFunction(source, name) {
 }
 
 // ── Driver: mergeServerRide + passengerRowHtml ─────────────────────────────────
-function driverHarness(localRide) {
+function driverHarness(localRide, stored = new Map()) {
   const context = vm.createContext({
     console, escapeHtml, arIcon: () => '', ride: localRide, pendingStatus: null,
+    findActiveRide: (tripId) => (stored.has(tripId) ? structuredClone(stored.get(tripId)) : null),
+    saveActiveRide: (value) => { stored.set(value.tripId, structuredClone(value)); return value; },
   });
   vm.runInContext([
     sourceFunction(driverSource, 'mergeServerWaiting'),
     sourceFunction(driverSource, 'mergeServerRide'),
     sourceFunction(driverSource, 'passengerRowHtml'),
-    'globalThis.api = { merge: mergeServerRide, row: passengerRowHtml };',
+    sourceFunction(driverSource, 'persistServerConfirmedWaitingProjection'),
+    `globalThis.api = {
+      merge: mergeServerRide, row: passengerRowHtml,
+      adopt: (srv) => { ride = mergeServerRide(srv); persistServerConfirmedWaitingProjection(); return ride; },
+    };`,
   ].join('\n'), context, { filename: 'actual_driver_passenger.js' });
   return context.api;
 }
@@ -79,6 +85,18 @@ check('a server ride replaces the seed passenger: the order comment is the note;
   assert.match(html, /E2E-1: основной цикл/);
   assert.doesNotMatch(html, /★/, 'no rating, no star');
   assert.doesNotMatch(html, /чемодан|4,9|Позвоните, когда подъедете/);
+});
+
+check('a stored seed ride gets the server passenger too, so a later status write cannot bring the demo back', () => {
+  const stored = new Map([['trip_order-4c', { ...simSeed(), localProvenance: 'sim_audit' }]]);
+  const api = driverHarness(simSeed(), stored);
+  api.adopt(serverRide('E2E-1: основной цикл'));
+  const saved = stored.get('trip_order-4c');
+  assert.deepEqual(saved.passenger, {
+    name: 'Пётр Пассажиров', initials: 'П', rating: null, phoneMasked: null, note: 'E2E-1: основной цикл',
+  });
+  assert.equal(saved.localProvenance, undefined);
+  assert.doesNotMatch(api.row(saved.passenger), /чемодан|★/);
 });
 
 check('no order comment: no note at all', () => {
@@ -113,11 +131,14 @@ function fareHarness(backendOn) {
   return context.fare;
 }
 
-check('backend ON: an unconfirmed ride with no price shows «—», never the mock 1 540 ₽', () => {
+check('backend ON: an unconfirmed ride shows «—», never a seeded or mock price', () => {
   const fare = fareHarness(true);
   assert.equal(fare({ order: {} }), '—');
   assert.equal(fare({}), '—');
-  assert.equal(fare({ order: { offerPrice: '750 ₽' } }), '750 ₽', 'a real value still wins');
+  // The demo ride's own seeded price and any local value are not server-confirmed (#1104 review).
+  assert.equal(fare({ ride: { price: '1 540 ₽' }, order: { offerPrice: '750 ₽' } }), '—');
+  assert.equal(fare({ payment: { dropoffAmount: '990 ₽' } }), '—');
+  assert.equal(fare({ authoritative: true, order: { offerPrice: '650 ₽' } }), '650 ₽', 'the server price stays');
   assert.equal(fare({ authoritative: true, order: {} }), '—');
 });
 
