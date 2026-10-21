@@ -82,3 +82,17 @@ export async function rejectPeerOffers(db, orderId, acceptedDriverId) {
   );
   return rows;
 }
+
+// #1049 — an order canceled by its passenger before selection rejects every still-open offer with
+// the schema's documented passenger-cancel marks (offers.rejected_by / rejected_reason).
+export async function rejectOpenOffersOnOrderCancel(db, orderId) {
+  const { rows } = await db.query(
+    `UPDATE offers
+        SET status = 'rejected', rejected_by = 'passenger_cancel',
+            rejected_reason = 'order_canceled_by_passenger', rejected_at = now(), updated_at = now()
+      WHERE order_id = $1 AND status = 'sent'
+      RETURNING id`,
+    [orderId],
+  );
+  return rows;
+}

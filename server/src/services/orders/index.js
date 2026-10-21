@@ -4,13 +4,17 @@
 //                                   per-viewer isCurrentUser). The PWA feed seam (R13) calls this.
 //   POST /  -> 201 { order }        REQUIRES a session with a granted, active passenger role and a
 //                                   verified phone (BD-AUTH-POLICY-01B-C; 403 PASSENGER_ROLE_REQUIRED).
+//   POST /:orderId/cancel -> 200 { order }   the owner cancels an order that has no driver yet
+//                                   (CREATED -> CANCELED; open offers rejected). Repeat -> 200.
+//                                   ACCEPTED or later -> 409 ORDER_NOT_CANCELABLE (cancel the ride).
 //
 // Geo "nearby" is #4 (deferred): today the list is newest CREATED. Identity is recomputed per
 // request (never trusts a client-sent authorId / isCurrentUser). The PWA write cutover is R18;
 // until then only this server + tests exercise POST.
 import { newOrderId } from '../../infra/ids.js';
 import { serializeOrder } from '../../serialize.js';
-import { insertOrder, listCreatedOrders } from '../../repositories/orders.js';
+import { insertOrder, listCreatedOrders, lockOrderByLegacyId, cancelCreatedOrder } from '../../repositories/orders.js';
+import { rejectOpenOffersOnOrderCancel } from '../../repositories/offers.js';
 import { resolveActorAuthority, requirePassengerActor, roleAuthorityProblem } from '../auth/authority.js';
 
 // A route point. The SHIPPED client stores { id, label } today (order_map_draft.js / composer.js)
@@ -118,6 +122,49 @@ export default async function ordersService(app) {
       return reply.code(status).send({ error, code, retryable });
     }
     return reply.code(201).send({ order: serializeOrder(result.row, { viewerId: viewer.userId }) });
+  });
+
+  // POST /api/v1/orders/:orderId/cancel — #1049: the owner withdraws an order before any driver is
+  // selected. Passenger authority first (contract §4), then the order lock; the order and its open
+  // offers change in one transaction. An order that already has a driver is canceled through its
+  // ride (PATCH /ride-state/…/status), which moves the order too (#1051).
+  app.post('/:orderId/cancel', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['orderId'],
+        properties: { orderId: { type: 'string', minLength: 1, maxLength: 200 } },
+      },
+    },
+  }, async (req, reply) => {
+    const viewer = await req.resolveUser();
+    if (req.authError) {
+      return reply.code(503).send({ error: 'session lookup failed', code: 'SESSION_LOOKUP_FAILED', retryable: true });
+    }
+    if (!viewer) {
+      return reply.code(401).send({ error: 'authentication required', code: 'UNAUTHENTICATED', retryable: false });
+    }
+    const result = await app.db.tx(async (client) => {
+      const authority = requirePassengerActor(await resolveActorAuthority(client, viewer));
+      if (!authority.ok) return { err: roleAuthorityProblem(authority, 'passenger') };
+      const order = await lockOrderByLegacyId(client, req.params.orderId);
+      if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found', false] };
+      if (String(order.passenger_id) !== String(viewer.userId)) {
+        return { err: [403, 'FORBIDDEN', 'only the order owner can cancel it', false] };
+      }
+      if (order.status === 'CANCELED') return { row: order };
+      if (order.status !== 'CREATED') {
+        return { err: [409, 'ORDER_NOT_CANCELABLE', 'the order already has a driver; cancel the ride instead', false] };
+      }
+      const canceled = await cancelCreatedOrder(client, order.id);
+      await rejectOpenOffersOnOrderCancel(client, order.id);
+      return { row: canceled };
+    });
+    if (result.err) {
+      const [status, code, error, retryable] = result.err;
+      return reply.code(status).send({ error, code, retryable });
+    }
+    return reply.code(200).send({ order: serializeOrder(result.row, { viewerId: viewer.userId }) });
   });
 }
 

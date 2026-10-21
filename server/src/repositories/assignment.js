@@ -17,3 +17,17 @@ export async function insertAssignment(db, { orderId, selectedDriverId }) {
   );
   return rows[0];
 }
+
+// Order-lifecycle contract (#1051): a canceled or no-show ride cancels its assignment in the same
+// transaction. canceledBy is 'passenger' | 'driver' (assignment_cancel_stamp); only an ACCEPTED
+// assignment moves, so a replay is a no-op.
+export async function cancelAssignment(db, orderId, { canceledBy, canceledAt = null }) {
+  const { rows } = await db.query(
+    `UPDATE assignment
+        SET status = 'CANCELED', canceled_by = $2, canceled_at = coalesce($3, now()), updated_at = now()
+      WHERE order_id = $1 AND status = 'ACCEPTED'
+      RETURNING *`,
+    [orderId, canceledBy, canceledAt],
+  );
+  return rows[0] ?? null;
+}

@@ -95,6 +95,25 @@ async function writeLegacyStatus(client, tripId, status) {
   assert.equal(rowCount, 1, `legacy ${status} shape written for ${tripId}`);
 }
 
+// Order-lifecycle contract (#1051): a ride shape written straight into SQL (a pre-sync / legacy row)
+// is aligned the way migration 0011 aligns such rows: the order follows the ride, and a canceled or
+// no-show ride cancels its assignment. `canceledBy` is required when the ride's own actor is not a
+// participant (NULL / 'system'): 0011 refuses to guess, an operator must choose.
+async function alignOrderWithRide(client, tripId, { canceledBy = null } = {}) {
+  const { rows: [ride] } = await client.query('SELECT order_id, status, cancel_by FROM rides WHERE trip_id = $1', [tripId]);
+  const orderStatus = { IN_PROGRESS: 'IN_PROGRESS', COMPLETED: 'COMPLETED', CANCELED: 'CANCELED', NO_SHOW: 'CANCELED' }[ride.status];
+  if (orderStatus) await client.query('UPDATE orders SET status = $2 WHERE id = $1', [ride.order_id, orderStatus]);
+  if (ride.status === 'CANCELED' || ride.status === 'NO_SHOW') {
+    const by = ride.status === 'NO_SHOW' ? 'driver'
+      : (ride.cancel_by === 'passenger' || ride.cancel_by === 'driver') ? ride.cancel_by : canceledBy;
+    assert.ok(by, 'an underivable cancel actor needs an explicit operator choice');
+    await client.query(
+      `UPDATE assignment SET status = 'CANCELED', canceled_by = $2, canceled_at = now() WHERE order_id = $1`,
+      [ride.order_id, by],
+    );
+  }
+}
+
 // ── 1) full accept → both GETs pass, reprojected body verified against order/offer ─────────
 test('recovery gate: full accept passes on both GETs, Ride response reprojected from order/offer', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
@@ -555,6 +574,12 @@ test('recovery gate: DRIVER_EN_ROUTE direct and legacy sparse (IN_PROGRESS/COMPL
       assert.equal(patchRes.statusCode, 409, `PATCH DRIVER_EN_ROUTE -> ${target} is a refused skip`);
       assert.equal(patchRes.json().code, 'RIDE_TRANSITION_NOT_ALLOWED');
       await writeLegacyStatus(cleanup, tripId, target);
+      if (target === 'IN_PROGRESS' || target === 'COMPLETED') {
+        // An unaligned legacy shape (order still ACCEPTED) fails closed until 0011 aligns it.
+        const unaligned = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+        assert.equal(unaligned.statusCode, 409, `an unaligned legacy ${target} shape is refused`);
+        await alignOrderWithRide(cleanup, tripId);
+      }
     }
 
     const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
@@ -684,6 +709,11 @@ test('recovery gate: every schema-valid CANCELED cancel_by actor passes both GET
       `UPDATE rides SET status='CANCELED', canceled_at=now(), cancel_by=$1, cancel_reason=$2 WHERE trip_id=$3`,
       [actor, reason, tripId],
     );
+    // Order-lifecycle contract: unaligned, every legacy CANCELED shape fails closed.
+    const unaligned = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(unaligned.statusCode, 409, `an unaligned legacy CANCELED (cancel_by=${actor}) shape is refused`);
+    // A participant actor is aligned as 0011 does; NULL / 'system' only by an explicit operator choice.
+    await alignOrderWithRide(cleanup, tripId, { canceledBy: actor === 'driver' || actor === 'passenger' ? null : 'passenger' });
 
     const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
     assert.equal(rideRes.statusCode, 200, `CANCELED with cancel_by=${actor} passes ride-state-GET`);

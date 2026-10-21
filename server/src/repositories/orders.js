@@ -80,3 +80,27 @@ export async function listCreatedOrders(db, { limit = 50 } = {}) {
   );
   return rows;
 }
+
+// Order-lifecycle contract (#1051): move an order with its ride, forward only — the UPDATE matches
+// only while the order is in one of `fromStatuses`, so a replay or a terminal order is a no-op.
+export async function advanceOrderStatus(db, id, toStatus, fromStatuses) {
+  const { rows } = await db.query(
+    `UPDATE orders SET status = $2, updated_at = now()
+      WHERE id = $1 AND status = ANY($3::text[])
+      RETURNING *`,
+    [id, toStatus, fromStatuses],
+  );
+  return rows[0] ?? null;
+}
+
+// #1049 — the passenger cancels an order before any driver is selected: CREATED -> CANCELED. The
+// caller holds the order's FOR UPDATE lock (lockOrderByLegacyId) on the same client.
+export async function cancelCreatedOrder(db, id) {
+  const { rows } = await db.query(
+    `UPDATE orders SET status = 'CANCELED', updated_at = now()
+      WHERE id = $1 AND status = 'CREATED'
+      RETURNING *`,
+    [id],
+  );
+  return rows[0] ?? null;
+}

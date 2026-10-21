@@ -19,6 +19,9 @@ import {
 import { insertStatusChangeEvent } from '../../repositories/ride_events.js';
 import { insertRideStatusNotificationOutbox } from '../../repositories/notification_outbox.js';
 import { validateRecoveryLinkage, validateStandaloneCandidate } from '../../domain/select-recovery-linkage.js';
+import { expectedOrderStatus, ORDER_FROM_STATUSES, assignmentCancelActor } from '../../domain/order-lifecycle.js';
+import { advanceOrderStatus } from '../../repositories/orders.js';
+import { cancelAssignment } from '../../repositories/assignment.js';
 
 const problem = (reply, status, code, error, retryable = false) =>
   reply.code(status).send({ error, code, retryable });
@@ -70,6 +73,21 @@ async function appendStatusChangeSource(
     actorUserId,
     actorRole,
   });
+}
+
+// Order-lifecycle contract (#1051): the order — and on a cancel / no-show its assignment — follows
+// the ride in the SAME transaction as the ride transition. `ride` is the UPDATED row. A ride with
+// no order (a standalone demo ride) is left alone; an actor that cannot be derived leaves the
+// assignment as it is (only the PATCH writes rides, and it always records passenger | driver).
+async function syncOrderWithRide(client, ride) {
+  if (!ride?.order_id) return;
+  const toStatus = expectedOrderStatus(ride.status);
+  if (!toStatus || toStatus === 'ACCEPTED') return;
+  await advanceOrderStatus(client, ride.order_id, toStatus, ORDER_FROM_STATUSES[toStatus]);
+  if (toStatus === 'CANCELED') {
+    const canceledBy = assignmentCancelActor(ride);
+    if (canceledBy) await cancelAssignment(client, ride.order_id, { canceledBy, canceledAt: ride.canceled_at ?? null });
+  }
 }
 
 export default async function rideStateService(app) {
@@ -178,6 +196,7 @@ export default async function rideStateService(app) {
           actorRole: role,
           toStatus: RIDE_STATUS.NO_SHOW,
         });
+        await syncOrderWithRide(client, updated);
         return { ok: { ride: updated } };
       }
 
@@ -214,6 +233,7 @@ export default async function rideStateService(app) {
           actorRole: role,
           toStatus: RIDE_STATUS.CANCELED,
         });
+        await syncOrderWithRide(client, updated);
         return { ok: { ride: updated } };
       }
 
@@ -240,6 +260,7 @@ export default async function rideStateService(app) {
         actorRole: role,
         toStatus: status,
       });
+      await syncOrderWithRide(client, updated);
       return { ok: { ride: updated } };
     });
 

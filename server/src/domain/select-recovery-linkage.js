@@ -82,6 +82,7 @@
 //     neutral-projects that case safely.
 
 import { STATUS_TIMESTAMP_FIELD } from './ride-status.js';
+import { expectedOrderStatus, expectedAssignmentStatus, assignmentCancelActor } from './order-lifecycle.js';
 
 // Recovery-eligible Ride statuses — deliberately NARROWER than isValidRideStatus(): the four
 // pre-acceptance statuses (NEW_ORDER, CONFIRMATION_PENDING, CONFIRMED, CHAT_STARTED) cannot
@@ -179,7 +180,9 @@ export function validateStandaloneCandidate(tripId) {
 // Returns { ok: true, reason: null, acceptedOffer } or { ok: false, reason: '<first failing check>' }.
 export function validateRecoveryLinkage({ ride, order, assignment, offers, facts }) {
   if (!order) return fail('order_missing');
-  if (order.status !== 'ACCEPTED') return fail('order_not_accepted');
+  // A ride implies a selected order: a CREATED order never had one. The exact status the ride
+  // implies is checked below, once the ride status itself is known to be recovery-eligible.
+  if (order.status === 'CREATED') return fail('order_not_accepted');
   if (!ride) return fail('ride_missing');
   if (!uuidEq(ride.order_id, order.id)) return fail('ride_order_id_mismatch');
   if (ride.trip_id !== `trip_${order.legacy_id}`) return fail('trip_linkage_mismatch');
@@ -191,7 +194,6 @@ export function validateRecoveryLinkage({ ride, order, assignment, offers, facts
   if (!uuidEq(acceptedOffer.order_id, order.id)) return fail('offer_order_mismatch');
 
   if (!assignment) return fail('assignment_missing');
-  if (assignment.status !== 'ACCEPTED') return fail('assignment_not_accepted');
   if (!uuidEq(assignment.order_id, order.id)) return fail('assignment_order_mismatch');
   if (!uuidEq(assignment.selected_driver_id, acceptedOffer.driver_id)) return fail('assignment_driver_mismatch');
 
@@ -203,6 +205,19 @@ export function validateRecoveryLinkage({ ride, order, assignment, offers, facts
   if (!passengerSnapshotAuthorOk(order)) return fail('passenger_snapshot_author_mismatch');
 
   if (!RECOVERY_ALLOWED_STATUSES.has(ride.status)) return fail('ride_status_not_recovery_eligible');
+
+  // Order-lifecycle contract (#1051): the order and the assignment follow the ride.
+  if (order.status !== expectedOrderStatus(ride.status)) return fail('order_status_mismatch');
+  const assignmentStatus = expectedAssignmentStatus(ride.status);
+  if (assignment.status !== assignmentStatus) {
+    return fail(assignmentStatus === 'ACCEPTED' ? 'assignment_not_accepted' : 'assignment_not_canceled');
+  }
+  if (assignmentStatus === 'CANCELED') {
+    const actor = assignmentCancelActor(ride);
+    if (actor ? assignment.canceled_by !== actor : !['passenger', 'driver'].includes(assignment.canceled_by)) {
+      return fail('assignment_cancel_actor_mismatch');
+    }
+  }
 
   if (facts?.pg_has_core_timestamps !== true) return fail('missing_core_timestamps');
   if (facts?.pg_accepted_at_matches_order !== true) return fail('accepted_at_matches_order');
