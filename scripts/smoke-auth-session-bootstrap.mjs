@@ -1427,10 +1427,12 @@ async function loginAccessCase(name) {
   user.set({ welcomeSeen: true, onboarded: false, role: 'driver' });
   globalThis.__BD_API_BASE__ = 'https://api.invalid';
   location.hash = '#/onboarding?step=phone';
-  const grantedInactive = ['granted-inactive', 'switch-failure-retry'].includes(name);
+  const grantedInactive = ['granted-inactive', 'switch-failure-retry', 'switch-failure-twice',
+    'switch-retry-revoked'].includes(name);
   const server = { roles: grantedInactive ? ['passenger', 'driver'] : ['passenger'], active: 'passenger', enrollment: null };
   const requests = [];
-  let switchFailures = name === 'switch-failure-retry' ? 1 : 0;
+  let switchFailures = name === 'switch-failure-twice' ? 2
+    : ['switch-failure-retry', 'switch-retry-revoked'].includes(name) ? 1 : 0;
   globalThis.fetch = async (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : undefined;
     requests.push({ url, method: options.method || 'GET', body, auth: options.headers?.Authorization });
@@ -1475,8 +1477,41 @@ async function loginAccessCase(name) {
   const puts = () => requests.filter(r => r.url.endsWith('/auth/session/active-role'));
   assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1);
 
+  if (name === 'switch-retry-revoked') {
+    // The switch fails, then the grant is revoked before the retry: the retry's 403 opens
+    // «Вход выполнен» on the same verified login, without a new OTP.
+    assert.equal(puts().length, 1);
+    assert.match(node('ob-err').textContent, /Не удалось переключить роль/);
+    server.roles = ['passenger'];
+    focused.length = 0;
+    node('ob-next').click(); await settle();
+    assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1, 'no new OTP');
+    assert.equal(puts().length, 2, 'the retry repeated the switch and got 403');
+    assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).token, 'new-token', 'the identity stays installed');
+    assert.equal(screen().dataset.step, 'access');
+    assert.ok(screen().innerHTML.includes('Вход выполнен.') && screen().innerHTML.includes('Роль водителя пока не выдана'));
+    assert.equal(screen().querySelector('[data-enroll-status]')?.getAttribute('data-enroll-status'), 'NONE');
+    for (const id of ['ob-apply', 'ob-continue-passenger', 'ob-exit']) assert.ok(node(id), id);
+    assert.equal(node('ob-continue-driver'), null, 'the refused grant is not offered');
+    assert.equal(focused.at(-1), 'ob-title');
+    node('ob-continue-passenger').click(); await settle();
+    assert.deepEqual(puts().at(-1).body, { activeRole: 'passenger' });
+    assert.equal(screen().dataset.step, 'profile', 'the login continues as passenger');
+    return;
+  }
+
   if (grantedInactive) {
-    if (name === 'switch-failure-retry') {
+    if (name === 'switch-failure-twice') {
+      // Every failed switch keeps the verified login: retries repeat the switch, never the OTP.
+      for (const expected of [1, 2]) {
+        assert.equal(puts().length, expected);
+        assert.ok(node('ob-otp-input'), 'a failed switch stays on the verified OTP step');
+        assert.match(node('ob-err').textContent, /Не удалось переключить роль/);
+        node('ob-next').click(); await settle();
+      }
+      assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1, 'the retries need no new OTP');
+      assert.equal(puts().length, 3);
+    } else if (name === 'switch-failure-retry') {
       assert.equal(puts().length, 1);
       assert.ok(node('ob-otp-input'), 'a failed switch stays on the verified OTP step');
       assert.match(node('ob-err').textContent, /Не удалось переключить роль/);
@@ -2915,6 +2950,23 @@ if (process.argv[2] === '--onboarding-detach-case') {
     assert.deepEqual(s.calls, ['driver', 'driver']);
     assert.equal(s.f.c.roleConfirmed('driver'), true);
   });
+  await check('K4: a retried switch keeps the handoff — a 403 reports the remaining grants', async () => {
+    const s = switchFixture({ sessionRole: role => role, switchImpl: async (role, n) => {
+      if (n <= 2) throw Object.assign(new Error('fixture network'), { code: 'NETWORK' });
+      throw Object.assign(new Error('fixture 403'), { code: 'ROLE_NOT_GRANTED' });
+    } });
+    const first = await s.f.begin({ expectedRole: 'driver', switchRole: s.switchRole })(dualRole());
+    assert.deepEqual([first.code, first.handoffInstalled], ['ROLE_SWITCH_FAILED', true]);
+    const again = await s.f.c.resumeLogin();
+    assert.deepEqual([again.ok, again.code, again.handoffInstalled, [...again.roles]],
+      [false, 'ROLE_SWITCH_FAILED', true, ['passenger', 'driver']]);
+    const revoked = await s.f.c.resumeLogin();
+    assert.deepEqual([revoked.ok, revoked.code, revoked.handoffInstalled, [...revoked.roles]],
+      [false, 'ROLE_NOT_GRANTED', true, ['passenger']]);
+    assert.deepEqual(s.calls, ['driver', 'driver', 'driver']);
+    assert.equal(s.f.record().token, 'token-b', 'the verified identity stays installed');
+    assert.equal(s.f.c.roleConfirmed('driver'), false);
+  });
   await check('K4: a switch reply for another role or account is not a switch', async () => {
     for (const reply of [{ userId: 'b', activeRole: 'passenger' }, { userId: 'other', activeRole: 'driver' }, null]) {
       const s = switchFixture({ sessionRole: () => 'driver', switchImpl: async () => reply });
@@ -3576,7 +3628,7 @@ if (process.argv[2] === '--onboarding-detach-case') {
     });
   }
   for (const scenario of ['not-granted', 'not-granted-approved', 'not-granted-exit', 'granted-inactive',
-    'switch-failure-retry']) {
+    'switch-failure-retry', 'switch-failure-twice', 'switch-retry-revoked']) {
     await check('actual app/onboarding chosen-role access (K4, BD-AUTH-POLICY-01C-1): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-access-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });

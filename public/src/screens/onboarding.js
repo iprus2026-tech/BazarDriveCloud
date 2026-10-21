@@ -681,7 +681,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           && (result.code === 'ROLE_NOT_GRANTED'
             || (result.code === 'ROLE_AUTHORITY_REQUIRED' && !result.roles.includes(expectedAuthRole())))) {
         const chosen = expectedAuthRole();
-        // ROLE_NOT_GRANTED from the switch means the grant vanished since verify: drop it.
+        // ROLE_NOT_GRANTED from the switch (first try or a retry through resumeLogin) means the
+        // grant vanished since verify: drop it.
         enterAccess(attempt, result.roles.filter(role => result.code !== 'ROLE_NOT_GRANTED' || role !== chosen));
         return;
       }

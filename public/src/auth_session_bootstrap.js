@@ -182,13 +182,15 @@ export function createAuthSessionBootstrap({
       handoff = { token: payload.token, userId: u.userId, phone: phone || null,
         ownerVersion: readOwnerVersion(),
         generation, ownsUI: owns, expectedRole: authorityRole, authority: verifiedAuthority,
+        roles: Object.freeze(u.roles.slice()),
         switchRole: typeof switchRole === 'function' ? switchRole : null,
         pendingSwitch: switchNeeded ? authorityRole : null };
       handoffRemovalPending = false;
       rejectedDetachPending = false;
       const resumed = await resumeLogin();
-      // The verified grants let the host tell "not granted" from other failures (K4).
-      return { ...resumed, handoffInstalled: true, roles: Object.freeze(u.roles.slice()) };
+      // The verified grants let the host tell "not granted" from other failures (K4). A switch
+      // failure reports the grants it already narrowed, so those win.
+      return { roles: Object.freeze(u.roles.slice()), ...resumed, handoffInstalled: true };
     };
   }
 
@@ -203,11 +205,17 @@ export function createAuthSessionBootstrap({
         switched = await expected.switchRole(role);
       } catch (err) {
         if (handoff !== expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
-        return { ok: false, code: err?.code === 'ROLE_NOT_GRANTED' ? 'ROLE_NOT_GRANTED' : 'ROLE_SWITCH_FAILED' };
+        // The handoff stays installed either way, so a retry needs no new OTP. A 403 means the
+        // grant vanished since verify: drop it from the reported grants.
+        if (err?.code === 'ROLE_NOT_GRANTED') {
+          expected.roles = Object.freeze(expected.roles.filter(held => held !== role));
+          return { ok: false, code: 'ROLE_NOT_GRANTED', handoffInstalled: true, roles: expected.roles };
+        }
+        return { ok: false, code: 'ROLE_SWITCH_FAILED', handoffInstalled: true, roles: expected.roles };
       }
       if (handoff !== expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
       if (switched?.activeRole !== role || switched?.userId !== expected.userId) {
-        return { ok: false, code: 'ROLE_SWITCH_FAILED' };
+        return { ok: false, code: 'ROLE_SWITCH_FAILED', handoffInstalled: true, roles: expected.roles };
       }
       // Still not trusted on its own: authorityConfirmed() below requires the session read to
       // show this role (snapshot.user.activeRole) before roleConfirmed()/finishLogin() pass.
