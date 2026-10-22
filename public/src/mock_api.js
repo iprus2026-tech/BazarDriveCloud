@@ -1431,7 +1431,10 @@ export async function getReceiptResolved(tripId) {
   // truth, so a payouts row -> /receipt must not render "Чек не найден". OFF: local getReceipt only.
   if (isBackendEnabled()) {
     const srv = await getReceiptFromBackend(tripId);
-    return srv || getReceipt(tripId);
+    if (srv) return srv;
+    // #1070 п.3 — the local fallback is a receipt actually saved for this trip, never the
+    // demo seed 48-321 (getReceipt's render-gate fallback is backend-OFF only).
+    return toReceiptTripId(tripId) === DEMO_DRIVER_RECEIPT.tripId ? null : getReceipt(tripId);
   }
   return getReceipt(tripId);
 }

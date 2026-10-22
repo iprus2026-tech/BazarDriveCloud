@@ -3223,6 +3223,9 @@ function renderDriver(root, u, logout, ownsScreen, switchRole) {
     }, () => {
       if (runId !== receiptsFillRunId || !mount.isConnected) return;
       mount.innerHTML = '';
+      // Left the payouts tab meanwhile: no overlay over another tab; showing
+      // payouts again re-runs the fill.
+      if (!root.querySelector('#pf2-pane-payouts')?.classList.contains('pf2-pane--active')) return;
       reportAppShellError('server_error', { onRetry: onReceiptsRetry });
     });
   }

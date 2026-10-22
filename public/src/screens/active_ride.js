@@ -1740,6 +1740,8 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     const view = driverStatsView();
     return {
       balanceLabel: '—',
+      // No balance, so no «+net» change of it either (the trip's net is in the hero).
+      balanceDeltaLabel: '',
       balanceHint: 'Сервис выплат не подключён. Баланс пока неизвестен.',
       stats: [
         { key: 'today', val: view.today, lbl: 'Сегодня' },

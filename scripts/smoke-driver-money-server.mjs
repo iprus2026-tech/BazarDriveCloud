@@ -141,6 +141,20 @@ await check('payouts ON: a failed history read rejects (the pane reports it), it
   backendOff();
 });
 
+await check('receipt read ON: the demo 48-321 is never a fallback; a receipt saved for the trip still is', async () => {
+  storage.clear();
+  storage.set(RECEIPTS_KEY, JSON.stringify([
+    { tripId: 'trip_order-local', completedAt: '2026-10-22T08:00:00.000Z', fare: 650, commission: -78, tip: 0, net: 572, paymentMode: 'cash' },
+  ]));
+  backendOn([]);
+  assert.equal(await mockApi.getReceiptResolved('48-321'), null);
+  assert.equal((await mockApi.getReceiptResolved('trip_order-local'))?.net, 572, 'a pending local receipt stays readable');
+  backendOn();
+  assert.equal((await mockApi.getReceiptResolved('trip_order-a'))?.net, 792, 'the server receipt wins');
+  backendOff();
+  assert.equal((await mockApi.getReceiptResolved('48-321'))?.tripId, '48-321', 'OFF keeps the render-gate demo');
+});
+
 // ── C. driver screen: stats, overrides, merge ────────────────────────────────
 function driverHarness({ backendRead = true, backendRide = false, ride, load } = {}) {
   const root = new FakeElement('section');
@@ -217,6 +231,7 @@ await check('backend ON: the earnings sheet gets no balance, an honest hint and 
   await flush();
   const o = JSON.parse(JSON.stringify(h.api.overrides()).replace(/ | /g, ' '));
   assert.equal(o.balanceLabel, '—');
+  assert.equal(o.balanceDeltaLabel, '', 'no «+net» balance change next to an unknown balance (#1105 review)');
   assert.match(o.balanceHint, /Сервис выплат не подключён/);
   assert.deepEqual(o.stats, [
     { key: 'today', val: '1 500 ₽', lbl: 'Сегодня' },
@@ -259,13 +274,15 @@ await check('earnings sheet: keyed stat cells and the payload\'s balance hint (d
 });
 
 // ── E. profile payouts fill ───────────────────────────────────────────────────
-function payoutsHarness({ backend, resolved }) {
+function payoutsHarness({ backend, resolved, payoutsActive = true }) {
   const mount = new FakeElement('div');
   mount._attached = true;
+  const pane = new FakeElement('div');
+  pane.className = payoutsActive ? 'pf2-pane pf2-pane--active' : 'pf2-pane';
   const calls = { off: 0, list: [], errors: [] };
   const context = vm.createContext({
     console, onReceiptsRetry: () => {},
-    root: { querySelector: (sel) => (sel === '#pf2-po-trips-mount' ? mount : null) },
+    root: { querySelector: (sel) => ({ '#pf2-po-trips-mount': mount, '#pf2-pane-payouts': pane })[sel] || null },
     isBackendEnabled: () => backend,
     driverReceiptPayoutSectionHtml: () => { calls.off += 1; return '<p>off</p>'; },
     listDriverReceiptsResolved: () => resolved(),
@@ -307,6 +324,14 @@ await check('payouts pane ON: a failure reports server_error with the retry; a s
   answers[0]([{ tripId: 'old' }]);
   await flush();
   assert.deepEqual(racing.calls.list.map(([r]) => r[0].tripId), ['new']);
+});
+
+await check('payouts pane ON: a failure after leaving the payouts tab raises no overlay over the other tab', async () => {
+  const left = payoutsHarness({ backend: true, payoutsActive: false, resolved: () => Promise.reject(new Error('down')) });
+  left.fill();
+  await flush();
+  assert.equal(left.calls.errors.length, 0);
+  assert.equal(left.mount.innerHTML, '');
 });
 
 await check('payouts pane copy: ON never claims demo receipts', () => {
