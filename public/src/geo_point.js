@@ -23,6 +23,12 @@ const TRUSTED_PROVENANCE = new Set([
   COORDINATE_PROVENANCE.PROVIDER_ROUTABLE_POINT,
 ]);
 
+// #1057 — whether a point's coordinates come from a real source (device fix, map pin,
+// geocoder, routable point), never the label-hash stand-in or an unknown legacy value.
+export function hasTrustedCoordinateProvenance(point) {
+  return Boolean(point) && TRUSTED_PROVENANCE.has(point.provenance);
+}
+
 export function normalizeCoordinateProvenance(value) {
   return KNOWN_PROVENANCE.has(value) ? value : COORDINATE_PROVENANCE.UNKNOWN;
 }

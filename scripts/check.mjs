@@ -575,6 +575,19 @@ if (exists(routePickerLivePlacesSmoke)) {
   }
 }
 
+// Slice 4d-2 (#1057, #1058): with the backend ON no invented km / min / «от N ₽», a required
+// price typed by the passenger, no label-hash coordinates in the order; the price field is never
+// natively invalid.
+const orderRouteHonestMetricsSmoke = path.join(root, 'scripts', 'smoke-order-route-honest-metrics.mjs');
+if (exists(orderRouteHonestMetricsSmoke)) {
+  try {
+    execFileSync(process.execPath, [orderRouteHonestMetricsSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-route-honest-metrics.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt
