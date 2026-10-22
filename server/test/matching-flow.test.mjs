@@ -82,12 +82,12 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
 
   // anonymous offer -> 401; a passenger-only session is refused before any order lookup
   // (BD-RIDE-AUTHORITY-01B-A) — for a real and for an unknown order alike.
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id })).statusCode, 401);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id })).statusCode, 401);
   // The refusal happens before ANY orders query (no existence oracle, no lock taken): the tx only
   // reads the caller's grants.
   for (const orderId of [order.id, 'order-nope']) {
     const { result: paxOffer, sql } = await captureTxSql(app,
-      () => post(app, '/api/v1/matching/offers', { orderId }, bearer(paxS)));
+      () => post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId }, bearer(paxS)));
     assert.equal(paxOffer.statusCode, 403, `passenger offer on ${orderId} is refused`);
     assert.equal(paxOffer.json().code, 'DRIVER_ROLE_REQUIRED');
     assert.ok(sql.some((text) => /\bFROM\s+users\b/i.test(text)), `the grant lookup ran in the offer tx for ${orderId}`);
@@ -102,14 +102,14 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
     { pickup: { label: 'Гараж' }, dropoff: { label: 'Вокзал' } }, bearer(drvAsPassenger))).json().order;
   orderIds.push(drvOrder.id);
   const drvS = await grantDriverRole(cleanup, drvAsPassenger);
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: 'order-nope' }, bearer(drvS))).statusCode, 404);
-  const selfOffer = await post(app, '/api/v1/matching/offers', { orderId: drvOrder.id }, bearer(drvS));
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: 'order-nope' }, bearer(drvS))).statusCode, 404);
+  const selfOffer = await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: drvOrder.id }, bearer(drvS));
   assert.equal(selfOffer.statusCode, 403, 'self-offer is forbidden');
   assert.equal(selfOffer.json().code, 'CANNOT_OFFER_OWN_ORDER');
 
   // driver offers on the passenger's order.
   const off1res = await post(app, '/api/v1/matching/offers',
-    { orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,9', etaMin: 5, price: 850, message: 'еду' }, bearer(drvS));
+    { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,9', etaMin: 5, price: 850, message: 'еду' }, bearer(drvS));
   assert.equal(off1res.statusCode, 201);
   const off1 = off1res.json().offer;
   assert.match(off1.id, /^offer_/, 'composite-key offer id');
@@ -119,7 +119,7 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
   assert.equal(off1.price, 850);
 
   // idempotent: re-POST returns the SAME offer (one per order+driver), still sent.
-  const off2 = (await post(app, '/api/v1/matching/offers', { orderId: order.id, price: 999 }, bearer(drvS))).json().offer;
+  const off2 = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, price: 999 }, bearer(drvS))).json().offer;
   assert.equal(off2.id, off1.id, 'same (order,driver) => same offer');
   assert.equal(off2.status, 'sent');
 
@@ -162,7 +162,7 @@ test('offer role gate: only a granted, active, verified driver may offer', { ski
     await app.close();
   });
 
-  const offer = (s, orderId) => post(app, '/api/v1/matching/offers', { orderId, price: 700 }, bearer(s));
+  const offer = (s, orderId) => post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId, price: 700 }, bearer(s));
   const offerCount = async (legacyId) => (await cleanup.query(
     'SELECT count(*)::int AS n FROM offers o JOIN orders r ON r.id = o.order_id WHERE r.legacy_id = $1', [legacyId],
   )).rows[0].n;

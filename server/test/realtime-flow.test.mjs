@@ -64,7 +64,7 @@ test('realtime poll: DB-cursor delta over the ride timeline + participant gating
   const otherS = await mintSession(app, other);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Иван' }, bearer(drvS))).json().offer;
+  const off = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван' }, bearer(drvS))).json().offer;
   const tripId = (await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: off.driverId }, bearer(paxS))).json().ride.tripId;
   tripIds.push(tripId);
   // The driver walks the forward-only chain to IN_PROGRESS (BD-RIDE-AUTHORITY-01B-B: no skips).

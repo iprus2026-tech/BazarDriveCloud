@@ -63,7 +63,7 @@ async function fixture(t) {
   const owner = await login(phone());
   const order = (await inject('POST', '/api/v1/orders', { payload: { pickup: { label: 'A' }, dropoff: { label: 'B' } }, headers: bearer(owner.token) })).json().order;
   orderIds.push(order.id);
-  const offer = (token) => inject('POST', '/api/v1/matching/offers', { payload: { orderId: order.id, driverName: 'T' }, headers: bearer(token) });
+  const offer = (token) => inject('POST', '/api/v1/matching/offers', { payload: { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'T' }, headers: bearer(token) });
   const sessionRow = async (token) => (await inject('GET', '/api/v1/auth/session', { headers: bearer(token) })).json().user;
   const db = async (sql, params) => (await cleanup.query(sql, params)).rows;
   return { app, phone, inject, requestCode, verify, login, dualRole, offer, sessionRow, db, orderIds };

@@ -13,13 +13,15 @@
 export async function upsertOffer(db, o) {
   const { rows } = await db.query(
     `INSERT INTO offers
-       (legacy_id, order_id, driver_id, status, driver_name, car, rating, eta_min, price, message, expires_at)
-     VALUES ($1, $2, $3, 'sent', $4, $5, $6, $7, $8, $9, now() + make_interval(mins => $10::int))
+       (legacy_id, order_id, driver_id, status, driver_name, car, rating, eta_min, price, message, expires_at,
+        vehicle_model, vehicle_color, vehicle_plate)
+     VALUES ($1, $2, $3, 'sent', $4, $5, $6, $7, $8, $9, now() + make_interval(mins => $10::int), $11, $12, $13)
      ON CONFLICT (order_id, driver_id) DO UPDATE
        SET status = 'sent', updated_at = now()
        WHERE offers.status = 'withdrawn'
      RETURNING *`,
-    [o.legacyId, o.orderId, o.driverId, o.driverName, o.car, o.rating, o.etaMin, o.price, o.message, o.ttlMin],
+    [o.legacyId, o.orderId, o.driverId, o.driverName, o.car, o.rating, o.etaMin, o.price, o.message, o.ttlMin,
+      o.vehicleModel ?? null, o.vehicleColor ?? null, o.vehiclePlate ?? null],
   );
   return rows[0];
 }

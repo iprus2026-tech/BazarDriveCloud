@@ -64,6 +64,10 @@ const SEED_FIELD_MAP = Object.freeze({
   route_dropoff_label: 'routeDropoffLabel',
   order_offer_price: 'orderOfferPrice',
   ride_price: 'ridePrice',
+  // #1113 — the accepted offer's car, copied at /select.
+  vehicle_model: 'vehicleModel',
+  vehicle_color: 'vehicleColor',
+  vehicle_plate: 'vehiclePlate',
 });
 
 // UUID-typed columns among the linkage/seed set (migrations/0001: order_id, driver_user_id,

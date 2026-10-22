@@ -23,6 +23,7 @@ import { bootstrapRide, lockConflictRideForSelection, findRecoveryBundleByOrderI
 import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
 import { validateRecoveryLinkage } from '../../domain/select-recovery-linkage.js';
 import { rideOrderComment } from '../../domain/ride-order-comment.js';
+import { normalizeVehiclePlate, normalizeVehicleText, VEHICLE_PLATE_MAX_LENGTH } from '../../domain/vehicle-plate.js';
 
 // Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
 // client's `${n.toLocaleString('ru-RU')} ₽`. Returns null for a non-finite value.
@@ -38,6 +39,7 @@ function formatRub(numeric) {
 // order points; the passenger from the order's stored snapshot (neutral 'Пассажир' when absent); the
 // driver name/car/rating from the accepted offer. Status DRIVER_EN_ROUTE = the select handoff status.
 // The passenger note is the order comment the driver reads (#1052; domain/ride-order-comment.js).
+// The car (model / colour / full plate) is the accepted offer's, for the passenger's pickup check (#1113).
 function buildRideSeed(order, offer) {
   const snap = (order.passenger_snapshot && typeof order.passenger_snapshot === 'object') ? order.passenger_snapshot : {};
   const name = typeof snap.name === 'string' && snap.name.trim() ? snap.name.trim() : 'Пассажир';
@@ -59,6 +61,9 @@ function buildRideSeed(order, offer) {
     driverName: offer.driver_name ?? null,
     driverCar: offer.car ?? null,
     driverRating: offer.rating ?? null,
+    vehicleModel: offer.vehicle_model ?? null,
+    vehicleColor: offer.vehicle_color ?? null,
+    vehiclePlate: offer.vehicle_plate ?? null,
     routePickupLabel: label(order.pickup, 'Точка подачи'),
     routeDropoffLabel: label(order.dropoff, 'Точка назначения'),
     // Both order.offerPrice and ride.price carry the agreed bid (mirrors buildPassengerActiveRide),
@@ -94,6 +99,10 @@ export default async function matchingService(app) {
           etaMin: { type: 'integer', minimum: 1, maximum: 1440 },
           price: { type: 'number', minimum: 0, maximum: 9999999999.99 },
           message: { type: 'string', maxLength: 1000 },
+          // #1113 — the car as separate fields; the plate is required (the passenger's pickup check).
+          vehicleModel: { type: 'string', maxLength: 120 },
+          vehicleColor: { type: 'string', maxLength: 60 },
+          vehiclePlate: { type: 'string', maxLength: 40 },
         },
       },
     },
@@ -103,6 +112,7 @@ export default async function matchingService(app) {
     if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
 
     const b = req.body;
+    const vehiclePlate = normalizeVehiclePlate(b.vehiclePlate);
     // Serialize offer creation WITH /select: lock the order row (the same FOR UPDATE the accept
     // takes) and re-check status UNDER the lock, so a concurrent select can't accept the order
     // between an unlocked status read and the insert — which would otherwise leave a live 'sent'
@@ -112,6 +122,9 @@ export default async function matchingService(app) {
       // Driver authority first (contract §2), on the same tx client as the offer write.
       const authority = requireDriverActor(await resolveActorAuthority(client, viewer));
       if (!authority.ok) return { err: roleAuthorityProblem(authority, 'driver') };
+      // #1113 — no offer without the car's plate (after the driver authority, before the order).
+      if (!vehiclePlate) return { err: [422, 'VEHICLE_PLATE_REQUIRED', 'the car plate is required'] };
+      if (vehiclePlate.length > VEHICLE_PLATE_MAX_LENGTH) return { err: [422, 'VEHICLE_PLATE_INVALID', 'the car plate is too long'] };
       const order = await lockOrderByLegacyId(client, b.orderId);
       if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found'] };
       // A driver cannot offer on their OWN order — no self-candidate (Codex #790).
@@ -132,12 +145,16 @@ export default async function matchingService(app) {
         price: b.price ?? null,
         message: b.message ?? null,
         ttlMin: OFFER_TTL_MIN,
+        vehicleModel: normalizeVehicleText(b.vehicleModel),
+        vehicleColor: normalizeVehicleText(b.vehicleColor),
+        vehiclePlate,
       });
       if (!row) row = await findOfferByOrderDriver(client, order.id, viewer.userId);
       return { ok: row, orderLegacyId: order.legacy_id };
     });
     if (result.err) return problem(reply, ...result.err);
-    return reply.code(201).send({ offer: serializeOffer(result.ok, { orderLegacyId: result.orderLegacyId }) });
+    // The driver's own offer: the full plate they sent.
+    return reply.code(201).send({ offer: serializeOffer(result.ok, { orderLegacyId: result.orderLegacyId, plate: 'full' }) });
   });
 
   // GET /api/v1/matching/offers?orderId=… — OWNER-ONLY list (the passenger choosing a
@@ -188,6 +205,7 @@ export default async function matchingService(app) {
       // bundle's own (possibly by-now-stale) snapshot instead is correct: a request whose bundle
       // predates a concurrent /select is entitled to that pre-select view; the NEXT request re-reads
       // a fresh bundle and goes through full invariant validation.
+      // #1113 — the offers list is the pre-selection view: the plate is masked (the default).
       return { items: (bundle.offers ?? []).map((r) => serializeRecoveredOffer(r, { orderLegacyId: order.legacy_id })) };
     }
     if (bundle.candidate_ride_count >= 2) {
@@ -307,7 +325,8 @@ export default async function matchingService(app) {
     if (result.err) return problem(reply, ...result.err);
     return reply.code(200).send({
       order: serializeOrder(result.ok.order, { viewerId: viewer.userId }),
-      offer: serializeOffer(result.ok.accepted, { orderLegacyId: orderId }),
+      // The passenger has just chosen this driver: the full plate, as on the ride (#1113).
+      offer: serializeOffer(result.ok.accepted, { orderLegacyId: orderId, plate: 'full' }),
       assignment: serializeAssignment(result.ok.assignment, { orderLegacyId: orderId }),
       ride: serializeRide(result.ok.ride),
     });

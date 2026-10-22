@@ -61,8 +61,8 @@ test('select: transactional accept (target accepted, peers rejected, assignment,
   orderIds.push(order.id);
   const drvAS = await grantDriverRole(cleanup, await mintSession(app, drvA));
   const drvBS = await grantDriverRole(cleanup, await mintSession(app, drvB));
-  const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A', price: 800 }, bearer(drvAS))).json().offer;
-  const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B', price: 900 }, bearer(drvBS))).json().offer;
+  const offA = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'A', price: 800 }, bearer(drvAS))).json().offer;
+  const offB = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'B', price: 900 }, bearer(drvBS))).json().offer;
 
   // guards: non-owner 403, anon 401, self-select 400, unknown driver 404.
   assert.equal((await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offA.driverId }, bearer(drvBS))).statusCode, 403, 'non-owner cannot select');
@@ -106,7 +106,7 @@ test('select: transactional accept (target accepted, peers rejected, assignment,
   // re-select is refused — the order is no longer CREATED.
   assert.equal((await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offB.driverId }, bearer(paxS))).statusCode, 409, 'cannot re-select an accepted order');
   // and no NEW offer can be created on an accepted order (the locked status recheck, Codex #791).
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id }, bearer(drvBS))).statusCode, 409, 'cannot offer on an accepted order');
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id }, bearer(drvBS))).statusCode, 409, 'cannot offer on an accepted order');
 
   // the accepted order drops out of the public CREATED feed.
   const feed = (await get(app, '/api/v1/orders')).json().items;
@@ -137,8 +137,8 @@ test('select serializes concurrent accepts via FOR UPDATE — exactly one wins (
   const paxS = await mintSession(app, pax);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drvA))))).json().offer;
-  const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drvB))))).json().offer;
+  const offA = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'A' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drvA))))).json().offer;
+  const offB = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'B' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drvB))))).json().offer;
 
   // fire two selects (different drivers) concurrently — the FOR UPDATE lock must let exactly one win.
   const [r1, r2] = await Promise.all([
@@ -176,7 +176,7 @@ test('select refuses an offer past its TTL (expired-but-unswept), even though st
   const paxS = await mintSession(app, pax);
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'D' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drv))))).json().offer;
+  const off = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'D' }, bearer(await grantDriverRole(cleanup, await mintSession(app, drv))))).json().offer;
 
   // force the offer past its TTL while it is still status='sent' (the sweep that flips expired
   // rows is future work) — selecting it must NOT accept a stale offer.
@@ -222,8 +222,8 @@ test('select rejects a mismatched conflict Ride (500, full rollback, conflict Ri
   orderIds.push(order.id);
   const drvAS = await grantDriverRole(cleanup, await mintSession(app, drvA));
   const drvBS = await grantDriverRole(cleanup, await mintSession(app, drvB));
-  const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A', price: 800 }, bearer(drvAS))).json().offer;
-  const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B', price: 900 }, bearer(drvBS))).json().offer;
+  const offA = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'A', price: 800 }, bearer(drvAS))).json().offer;
+  const offB = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'B', price: 900 }, bearer(drvBS))).json().offer;
 
   const tripId = `trip_${order.id}`;
   const orderRow = (await cleanup.query('SELECT id FROM orders WHERE legacy_id = $1', [order.id])).rows[0];

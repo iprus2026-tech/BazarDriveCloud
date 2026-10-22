@@ -113,7 +113,7 @@ test('two-session pilot cycle: auth -> order -> offer -> select -> ride -> COMPL
   assert.ok(feed.items.some((o) => o.id === order.id), 'driver sees the passenger order');
 
   // ---- 4. Offer + idempotent replay (the retry path): same (order, driver) key, same offer id.
-  const offerBody = { orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,9', etaMin: 5, price: 850, message: 'еду' };
+  const offerBody = { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,9', etaMin: 5, price: 850, message: 'еду' };
   const off1 = await post(app, '/api/v1/matching/offers', offerBody, bearer(drvS));
   assert.equal(off1.statusCode, 201);
   const off2 = await post(app, '/api/v1/matching/offers', offerBody, bearer(drvS));
@@ -273,7 +273,7 @@ test('NO_SHOW terminal branch: waiting -> NO_SHOW freezes the ride; no receipt i
   const order = (await post(app, '/api/v1/orders',
     { pickup: { label: 'Рынок' }, dropoff: { label: 'Вокзал' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Пётр', price: 500 }, bearer(drvS));
+  await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Пётр', price: 500 }, bearer(drvS));
   const sel = await post(app, '/api/v1/matching/select',
     { orderId: order.id, driverId: (await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS))).json().items[0].driverId },
     bearer(paxS));
