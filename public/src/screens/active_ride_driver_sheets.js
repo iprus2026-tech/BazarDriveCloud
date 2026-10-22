@@ -697,15 +697,17 @@ function earningsBalanceHtml(p) {
         </div>
         <div class="de-balance__delta">${escapeHtml(p.balanceDeltaLabel || '')}</div>
       </div>
-      <div class="de-balance__hint">Деньги за поездку зачислятся на ваш баланс.</div>
+      <div class="de-balance__hint">${escapeHtml(p.balanceHint || 'Деньги за поездку зачислятся на ваш баланс.')}</div>
     </div>`;
 }
 
+// A keyed stat (s.key) can be refreshed in place by the screen (#1070: the
+// backend-ON shift stats arrive from the server history after the sheet opens).
 function earningsStatgridHtml(p) {
   const stats = Array.isArray(p.stats) ? p.stats : [];
   const cells = stats.map((s) => `
     <div class="de-stat" role="listitem">
-      <div class="de-stat__val">${escapeHtml(s.val)}</div>
+      <div class="de-stat__val"${s.key ? ` data-driver-stat="${escapeHtml(s.key)}"` : ''}>${escapeHtml(s.val)}</div>
       <div class="de-stat__lbl">${escapeHtml(s.lbl)}</div>
     </div>`).join('');
   return `

@@ -1121,6 +1121,8 @@ const BACKEND_AWARE_HELPERS = [
   'requestServerDriverReceipt',
   // #1049 — the owner's order cancel before selection (/responses).
   'cancelOrderOnBackend',
+  // #1070 — the payouts receipts and the driver's «сегодня» from the server history.
+  'listDriverReceiptsResolved', 'loadDriverTodayStats',
 ];
 const BACKEND_SIGNAL = new Set(['isBackendEnabled', 'apiFetch', ...BACKEND_AWARE_HELPERS]);
 // #807 review (R1 follow-up) — SELF-POLICE the deny-list: derive every mock_api export that carries an

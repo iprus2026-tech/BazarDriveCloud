@@ -42,6 +42,7 @@ import {
   findLatestHandedOffOrderTripId,
   updateTripStatus,
   requestServerDriverReceipt,
+  loadDriverTodayStats,
   resolveMockDriverReceipt,
   getRideFromBackend,
   patchRideStatus,
@@ -412,7 +413,9 @@ function renderDriverEmpty() {
 // (server-derived in backend-ON, the mock_api stand-in in backend-OFF) and
 // only formatted here (#1059). No receipt → empty money labels, which the
 // sheet renders as its «Нет данных о доходе» stage. The balance and shift
-// stats are still demo values (#1070).
+// stats here are the backend-OFF demo values; with the backend ON the screen
+// replaces them (driverEarningsOverrides: no balance source, stats from the
+// server history; #1070).
 function buildDriverEarningsPayload(ride, receipt) {
   const money = receipt
     ? { fare: receipt.fare, commission: receipt.commission, tip: receipt.tip, net: receipt.net }
@@ -547,6 +550,9 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   let hasMounted = false;
   // #1059 — the completed trip's server receipt request (see renderServerReceipt).
   let driverReceiptRequest = null;
+  // #1061 / #1070 — today's server summary (mock_api.summarizeDriverToday), backend ON only.
+  let driverToday = null;
+  let driverTodayRunId = 0;
 
   function currentViewIsUsable() {
     if (destroyed || !isCurrent()) return false;
@@ -609,7 +615,9 @@ export default function activeRide({ isCurrent = () => true } = {}) {
         phoneMasked: srv.passenger?.phoneMasked ?? null,
         note: srv.order?.comment ?? null,
       },
-      driver: keep(ride.driver, srv.driver),
+      // #1070 — the server has no shift and no own-rating source yet: a seed's demo
+      // shift time and rating do not survive the merge.
+      driver: { ...keep(ride.driver, srv.driver), rating: srv.driver?.rating ?? null, shiftDuration: null },
       // A successful server read replaces route/order display projections.
       // Omitted fields must not survive from an old seed or direct-entry demo.
       route: { ...(srv.route || {}) },
@@ -1094,15 +1102,19 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   mapWrap.appendChild(mapShell);
   root.appendChild(mapWrap);
 
-  const shiftDuration = ride.driver?.shiftDuration || '';
+  // #1061 / #1070 — with the backend ON the pre-read seed's demo shift time and
+  // stats are never painted: no shift source exists, and the stats arrive from
+  // the server history (driverStatsView / refreshDriverToday below).
+  const shiftDuration = backendRead ? '' : (ride.driver?.shiftDuration || '');
   const shiftPillSuffix = shiftDuration
     ? `<span class="active-ride__status-sep" aria-hidden="true">|</span><span class="active-ride__status-time">${escapeHtml(shiftDuration)}</span>`
     : '';
+  const initialStats = driverStatsView();
   const top = document.createElement('div');
   top.className = 'active-ride__top';
   top.innerHTML = `
     <div class="active-ride__status-row"><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-gear" aria-label="Настройки смены">${arIcon('gear', 18)}</button><div class="active-ride__status-pill" role="status" aria-live="polite"><span class="active-ride__status-dot" aria-hidden="true"></span><span class="active-ride__status-text">${escapeHtml(ride.driver?.onlineLabel || 'На линии')}</span>${shiftPillSuffix}</div><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-shield" aria-label="Безопасность">${arIcon('shield', 18)}</button></div>
-    <div class="active-ride__stats" role="group" aria-label="Статистика смены"><div class="active-ride__stat"><div class="active-ride__stat-value">${escapeHtml(ride.ride?.todayEarnings || '0 ₽')}</div><div class="active-ride__stat-label">сегодня</div></div><div class="active-ride__stat"><div class="active-ride__stat-value">${escapeHtml(String(ride.ride?.tripsToday ?? 0))}</div><div class="active-ride__stat-label">поездок</div></div><div class="active-ride__stat"><div class="active-ride__stat-value">★ ${escapeHtml(ride.ride?.rating || '—')}</div><div class="active-ride__stat-label">рейтинг</div></div></div>
+    <div class="active-ride__stats" role="group" aria-label="Статистика смены"><div class="active-ride__stat"><div class="active-ride__stat-value" data-driver-stat="today">${escapeHtml(initialStats.today)}</div><div class="active-ride__stat-label">сегодня</div></div><div class="active-ride__stat"><div class="active-ride__stat-value" data-driver-stat="trips">${escapeHtml(initialStats.trips)}</div><div class="active-ride__stat-label">поездок</div></div><div class="active-ride__stat"><div class="active-ride__stat-value">★ <span data-driver-stat="rating">${escapeHtml(initialStats.rating)}</span></div><div class="active-ride__stat-label">рейтинг</div></div></div>
     <div class="active-ride__map-banner" id="ar-map-banner" hidden><span class="active-ride__map-banner-dot" aria-hidden="true"></span><span class="active-ride__map-banner-text"></span></div>
   `;
   root.appendChild(top);
@@ -1683,9 +1695,70 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     if (hadFocus) retry.focus({ preventScroll: true });
   }
 
+  // #1061 / #1070 — the shift stats. Backend OFF: the ride's demo stats.
+  // Backend ON: «сегодня» and «поездок» from the server history on the device's
+  // local day («—» until it arrives or when it fails); the server has no own
+  // rating or shift source yet, so the rating is «—» unless the ride carries one.
+  function driverStatsView() {
+    if (!backendRead) {
+      return {
+        today: String(ride.ride?.todayEarnings || '0 ₽'),
+        trips: String(ride.ride?.tripsToday ?? 0),
+        rating: String(ride.ride?.rating || '—'),
+      };
+    }
+    return {
+      today: driverToday ? formatRub(driverToday.earnings) : '—',
+      trips: driverToday ? String(driverToday.trips) : '—',
+      rating: backendRide ? String(ride.driver?.rating || '—') : '—',
+    };
+  }
+
+  function applyDriverTodayStats() {
+    const view = driverStatsView();
+    for (const el of root.querySelectorAll('[data-driver-stat]')) {
+      const value = view[el.dataset.driverStat];
+      if (value != null) el.textContent = value;
+    }
+  }
+
+  // One read at mount and one when the earnings sheet opens (so the trip just
+  // completed is counted). A late answer after the screen changed is dropped.
+  function refreshDriverToday() {
+    if (!backendRead || driverFixtureMode) return;
+    const runId = ++driverTodayRunId;
+    loadDriverTodayStats().then((summary) => {
+      if (runId !== driverTodayRunId || !currentViewIsUsable() || !summary) return;
+      driverToday = summary;
+      applyDriverTodayStats();
+    }, () => {});
+  }
+
+  // Backend ON: no payout service, so no balance (as in the profile payouts);
+  // the shift stats are the server's (keyed so refreshDriverToday updates them).
+  function driverEarningsOverrides() {
+    const view = driverStatsView();
+    return {
+      balanceLabel: '—',
+      // No balance, so no «+net» change of it either (the trip's net is in the hero).
+      balanceDeltaLabel: '',
+      balanceHint: 'Сервис выплат не подключён. Баланс пока неизвестен.',
+      stats: [
+        { key: 'today', val: view.today, lbl: 'Сегодня' },
+        { key: 'trips', val: view.trips, lbl: 'Поездок' },
+        { key: 'rating', val: view.rating, lbl: 'Рейтинг' },
+      ],
+      passengerInitials: ride.passenger?.initials || '',
+    };
+  }
+
   function openDriverEarnings(receipt) {
     sheet.setAttribute('aria-busy', 'false');
     const payload = buildDriverEarningsPayload(ride, receipt);
+    if (backendRead) {
+      Object.assign(payload, driverEarningsOverrides());
+      refreshDriverToday();
+    }
     const entry = buildDriverHistoryEntry(ride, {
       receipt,
       earnings: receipt ? {
@@ -1788,6 +1861,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       ride = mergeServerRide(result.value);
       persistServerConfirmedWaitingProjection();
       setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
+      applyDriverTodayStats();
       if (!isTerminalRideStatus(ride.status)) startRidePoll();
       return;
     }
@@ -1823,6 +1897,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   } else if (backendRead) {
     setDriverReadState(DRIVER_RIDE_READ_STATE.LOADING);
     void runInitialDriverRead();
+    refreshDriverToday();
   } else {
     setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
   }

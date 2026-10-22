@@ -1431,7 +1431,10 @@ export async function getReceiptResolved(tripId) {
   // truth, so a payouts row -> /receipt must not render "Чек не найден". OFF: local getReceipt only.
   if (isBackendEnabled()) {
     const srv = await getReceiptFromBackend(tripId);
-    return srv || getReceipt(tripId);
+    if (srv) return srv;
+    // #1070 п.3 — the local fallback is a receipt actually saved for this trip, never the
+    // demo seed 48-321 (getReceipt's render-gate fallback is backend-OFF only).
+    return toReceiptTripId(tripId) === DEMO_DRIVER_RECEIPT.tripId ? null : getReceipt(tripId);
   }
   return getReceipt(tripId);
 }
@@ -1460,6 +1463,55 @@ export function listDriverReceipts() {
     ? persisted
     : [...persisted, { ...DEMO_DRIVER_RECEIPT }];
   return merged.sort((a, b) => (Date.parse(b.completedAt) || 0) - (Date.parse(a.completedAt) || 0));
+}
+
+// #1070 п.2 — the Driver payouts list with the backend ON: the server's receipts (the viewer's
+// history) plus the locally saved ones whose POST has not landed yet (server wins by tripId);
+// never the demo receipt. Backend OFF keeps listDriverReceipts() with its demo seed.
+export async function listDriverReceiptsResolved() {
+  if (isBackendEnabled()) {
+    const server = (await listHistoryFromBackend())
+      .filter((e) => e && e.role === 'driver' && e.receipt)
+      .map((e) => sanitizeDriverReceipt(e.receipt))
+      .filter(Boolean);
+    const seen = new Set(server.map((r) => r.tripId));
+    const local = loadDriverReceiptsRaw()
+      .map((r) => sanitizeDriverReceipt(r))
+      .filter((r) => r && r.tripId !== DEMO_DRIVER_RECEIPT.tripId && !seen.has(r.tripId));
+    return [...server, ...local]
+      .sort((a, b) => (Date.parse(b.completedAt) || 0) - (Date.parse(a.completedAt) || 0));
+  }
+  return listDriverReceipts();
+}
+
+// #1061 / #1070 п.1 — the driver's «сегодня» while there is no shift service: the trips the
+// server history lists as completed by this driver on the DEVICE's local calendar day (a ride at
+// 23:59 local counts today, one at 00:01 is tomorrow's — whatever the server's UTC date is), and
+// the net of their receipts. A completed trip without a receipt yet counts as a trip, adds no money.
+function localDayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+export function summarizeDriverToday(entries, now = new Date()) {
+  const today = localDayKey(now);
+  const tripIds = [];
+  let earnings = 0;
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || e.role !== 'driver' || typeof e.completedAt !== 'string') continue;
+    const at = new Date(e.completedAt);
+    if (Number.isNaN(at.getTime()) || localDayKey(at) !== today) continue;
+    tripIds.push(e.tripId);
+    const net = Number(e.receipt && e.receipt.net);
+    if (Number.isFinite(net)) earnings += net;
+  }
+  return { trips: tripIds.length, earnings, tripIds };
+}
+
+export async function loadDriverTodayStats({ now } = {}) {
+  if (isBackendEnabled()) {
+    return summarizeDriverToday(await listHistoryFromBackend(), now || new Date());
+  }
+  return null;
 }
 
 export function clearDriverReceiptsStore() {
