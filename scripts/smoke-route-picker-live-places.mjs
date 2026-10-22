@@ -52,8 +52,9 @@ FakeElement.prototype.setSelectionRange = function setSelectionRange() {};
 
 const DEMO = /Малая Бронная|Лесная Плаза|Мега Химки|Парк Победы|Шереметьево|Внуково|Моё место/;
 
-function pickerHarness({ backend = true, favorites = [], history = () => Promise.resolve([]) } = {}) {
+function pickerHarness({ backend = true, favorites = [], history = () => Promise.resolve([]), draft = null } = {}) {
   const storage = new Map();
+  if (draft) storage.set('bazardrive.route_draft.v1', JSON.stringify(draft));
   const navigation = [];
   const context = vm.createContext({
     console, escapeHtml,
@@ -182,6 +183,37 @@ await check('ON: an empty history and a failed read are said plainly', async () 
   const failed = mount(pickerHarness({ history: () => Promise.reject(Object.assign(new Error('down'), { status: 503 })) }));
   await flush();
   assert.match(failed.text(), /Не удалось загрузить недавние адреса/);
+});
+
+await check('ON: a draft saved by the demo picker loses its demo points; a typed point stays (#1110 review)', () => {
+  const draft = {
+    pickup: { id: 'saved-home', label: 'ул. Малая Бронная, 28', hint: 'Дом', source: 'search' },
+    dropoff: { id: 'manual-1', label: 'Мой адрес', hint: 'Введено вручную', source: 'manual' },
+    focus: 'pickup',
+  };
+  const h = pickerHarness({ draft });
+  mount(h);
+  assert.equal(h.api.draft().pickup, null);
+  assert.equal(h.api.draft().dropoff.label, 'Мой адрес');
+  assert.equal(h.api.draft().focus, 'pickup');
+  assert.doesNotMatch(h.storage.get('bazardrive.route_draft.v1'), /Малая Бронная/);
+  const off = pickerHarness({ backend: false, draft });
+  mount(off);
+  assert.equal(off.api.draft().pickup.label, 'ул. Малая Бронная, 28', 'OFF keeps its own demo draft');
+});
+
+await check('ON: history arriving while the manual form is open keeps what is typed (#1110 review)', async () => {
+  let resolve;
+  const h = pickerHarness({ history: () => new Promise((yes) => { resolve = yes; }) });
+  const f = mount(h);
+  await f.$('[data-action="manual-open"]').fire();
+  const street = f.$('[data-manual="street"]');
+  assert.ok(street, 'the manual form is open');
+  street.value = 'Лесная, 7';
+  resolve([ride('2026-10-22T10:00:00Z', 'Дом', 'Работа')]);
+  await flush();
+  assert.equal(f.$('[data-manual="street"]'), street, 'the form was not re-rendered');
+  assert.equal(street.value, 'Лесная, 7');
 });
 
 // ── C. backend OFF keeps the demo picker ─────────────────────────────────────

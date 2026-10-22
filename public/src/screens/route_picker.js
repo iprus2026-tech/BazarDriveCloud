@@ -102,6 +102,14 @@ for (const entry of [...SAVED_PLACES, ...RECENT_PLACES]) {
   STATIC_PLACES.set(entry.id, entry.point);
 }
 
+// #1057 — every demo point the backend-OFF picker can put into a draft. A draft saved before
+// the backend was ON (same device) must not carry them into a live order.
+const DEMO_POINT_IDS = new Set([
+  MOCK_CURRENT_LOCATION.id,
+  ...MOCK_SUGGESTIONS.map((point) => point.id),
+  ...[...STATIC_PLACES.values()].map((point) => point.id),
+]);
+
 // #1057 — with the backend ON the picker offers only the passenger's own places: favorite
 // routes (favorite_routes.v1, saved on this device from the ride history) and up to five recent
 // addresses from their completed rides (GET /history). No demo rows above, no mock suggestions
@@ -158,7 +166,9 @@ function loadLiveRecents(root) {
     if (runId !== live.runId) return;
     live.recents = recents;
     live.recentsState = state;
-    if (!root.isConnected) return;
+    // An open manual form keeps what the passenger is typing (it reads its fields only on
+    // «Сохранить»); the list shows the recents on the next render.
+    if (!root.isConnected || routeDraft.manual) return;
     const typing = document.activeElement?.dataset?.input;
     rerender(root, typing === 'pickup' || typing === 'dropoff' ? typing : null);
   };
@@ -167,6 +177,24 @@ function loadLiveRecents(root) {
     // A guest (no session) simply has no rides yet; anything else is a failed read.
     (err) => settle([], Number(err?.status) === 401 ? 'ready' : 'error'),
   );
+}
+
+// A persisted demo point (see DEMO_POINT_IDS) is dropped from the draft when the backend is ON.
+function dropDemoPoints() {
+  let dropped = false;
+  for (const kind of ['pickup', 'dropoff']) {
+    if (routeDraft[kind] && DEMO_POINT_IDS.has(routeDraft[kind].id)) {
+      routeDraft[kind] = null;
+      dropped = true;
+    }
+  }
+  if (!dropped) return;
+  routeDraft.focus = routeDraft.pickup ? 'dropoff' : 'pickup';
+  routeDraft.source = null;
+  routeDraft.prefillSource = null;
+  routeDraft.prefillLabel = '';
+  syncDraft();
+  persistDraft();
 }
 
 function applyFavoriteRoute(fav) {
@@ -1169,7 +1197,7 @@ function handleClick(root, target) {
   const recentIndex = target.closest('[data-recent]')?.dataset.recent;
   if (recentIndex != null) {
     const recent = live.recents[Number(recentIndex)];
-    if (recent) setPoint(routeDraft.focus, makePoint(`recent-${recentIndex}`, recent.label, 'Из ваших поездок', 'manual'));
+    if (recent) setPoint(routeDraft.focus, makePoint(`live-recent-${recentIndex}`, recent.label, 'Из ваших поездок', 'manual'));
     rerender(root);
     return;
   }
@@ -1356,6 +1384,7 @@ export default function routePickerScreen() {
   resolveActiveRideGuardTripId();
   const livePlaces = isBackendEnabled();
   if (livePlaces) {
+    dropDemoPoints();
     live.favorites = loadFavoriteRoutes().filter((fav) => fav.role === 'passenger');
     live.recents = [];
     live.recentsState = 'loading';
