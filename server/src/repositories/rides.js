@@ -63,15 +63,15 @@ export async function bootstrapRide(db, s) {
        (trip_id, order_id, status, role, driver_user_id, passenger_user_id,
         passenger_name, passenger_initials, passenger_phone_masked, passenger_note,
         driver_name, driver_car, driver_rating, route_pickup_label, route_dropoff_label,
-        order_offer_price, ride_price, accepted_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())
+        order_offer_price, ride_price, vehicle_model, vehicle_color, vehicle_plate, accepted_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, now())
      ON CONFLICT (trip_id) DO NOTHING
      RETURNING *`,
     [
       s.tripId, s.orderId, s.status, s.role, s.driverUserId, s.passengerUserId,
       s.passengerName, s.passengerInitials, s.passengerPhoneMasked, s.passengerNote,
       s.driverName, s.driverCar, s.driverRating, s.routePickupLabel, s.routeDropoffLabel,
-      s.orderOfferPrice, s.ridePrice,
+      s.orderOfferPrice, s.ridePrice, s.vehicleModel ?? null, s.vehicleColor ?? null, s.vehiclePlate ?? null,
     ],
   );
   return rows[0] ?? null;

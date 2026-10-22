@@ -46,7 +46,7 @@ async function acceptedRide(app, db, pax, drv) {
   const paxS = await mintSession(app, pax);
   const orderId = (await post(app, '/api/v1/orders', ORDER, bearer(paxS))).json().order.id;
   const drvS = await grantDriverRole(db, await mintSession(app, drv));
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId, price: 700 }, bearer(drvS))).statusCode, 201);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId, price: 700 }, bearer(drvS))).statusCode, 201);
   assert.equal((await post(app, '/api/v1/matching/select', { orderId, driverId: drvS.user.userId }, bearer(paxS))).statusCode, 200);
   return { paxS, drvS, orderId, tripId: `trip_${orderId}` };
 }
@@ -98,7 +98,7 @@ test('order cancel before selection: CREATED -> CANCELED, open offers rejected, 
   const orderId = (await post(app, '/api/v1/orders', ORDER, bearer(paxS))).json().order.id;
   orderIds.push(orderId);
   const drvS = await grantDriverRole(db, await mintSession(app, drv));
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId, price: 650 }, bearer(drvS))).statusCode, 201);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId, price: 650 }, bearer(drvS))).statusCode, 201);
   const cancelUrl = `/api/v1/orders/${encodeURIComponent(orderId)}/cancel`;
 
   // Gates: unknown order, another passenger, a driver-mode session.
@@ -123,7 +123,7 @@ test('order cancel before selection: CREATED -> CANCELED, open offers rejected, 
   // The canceled order leaves the feed, takes no offers or selection, and still lists its offers.
   const feed = (await get(app, '/api/v1/orders', bearer(drvS))).json().items.map((o) => o.id);
   assert.equal(feed.includes(orderId), false, 'the canceled order leaves the feed');
-  const lateOffer = await post(app, '/api/v1/matching/offers', { orderId, price: 600 }, bearer(drvS));
+  const lateOffer = await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId, price: 600 }, bearer(drvS));
   assert.deepEqual([lateOffer.statusCode, lateOffer.json().code], [409, 'ORDER_NOT_OPEN']);
   const lateSelect = await post(app, '/api/v1/matching/select', { orderId, driverId: drvS.user.userId }, bearer(paxS));
   assert.deepEqual([lateSelect.statusCode, lateSelect.json().code], [409, 'ORDER_NOT_OPEN']);

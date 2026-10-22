@@ -68,7 +68,7 @@ async function acceptedRide(app, db, pax, drv, extra = {}) {
   const order = { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' }, ...extra };
   const orderId = (await post(app, '/api/v1/orders', order, bearer(paxS))).json().order.id;
   const drvS = await grantDriverRole(db, await mintSession(app, drv));
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId, price: 700 }, bearer(drvS))).statusCode, 201);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId, price: 700 }, bearer(drvS))).statusCode, 201);
   const select = await post(app, '/api/v1/matching/select', { orderId, driverId: drvS.user.userId }, bearer(paxS));
   assert.equal(select.statusCode, 200);
   return { paxS, drvS, orderId, tripId: `trip_${orderId}`, select: select.json() };

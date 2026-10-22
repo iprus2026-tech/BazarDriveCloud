@@ -79,7 +79,7 @@ test('receipts: server-derived amounts, ignored client amounts, no-PII warn, wri
     if (estimatedPrice !== undefined) orderBody.estimatedPrice = estimatedPrice;
     const order = (await post(app, '/api/v1/orders', orderBody, bearer(paxS))).json().order;
     orderIds.push(order.id);
-    const offerBody = { orderId: order.id, driverName: 'Иван' };
+    const offerBody = { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван' };
     if (offerPrice !== undefined) offerBody.price = offerPrice;
     const offer = await post(app, '/api/v1/matching/offers', offerBody, bearer(drvS));
     assert.equal(offer.statusCode, 201);

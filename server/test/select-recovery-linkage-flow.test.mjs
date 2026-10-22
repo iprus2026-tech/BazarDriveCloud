@@ -55,7 +55,7 @@ async function acceptedFixture(app, cleanup, ns) {
   const paxS = await mintSession(app, pax);
   const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
-  const offer = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,8', price: 800 }, bearer(drvS))).json().offer;
+  const offer = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,8', price: 800 }, bearer(drvS))).json().offer;
   const sel = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offer.driverId }, bearer(paxS));
   assert.equal(sel.statusCode, 200, 'fixture setup: select must succeed');
   const tripId = sel.json().ride.tripId;
@@ -171,7 +171,7 @@ test('recovery gate: CREATED order with an accepted-offer footprint forces the g
   const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const offer = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'X' }, bearer(drvS))).json().offer;
+  const offer = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'X' }, bearer(drvS))).json().offer;
 
   // Force the offer straight to 'accepted' via raw SQL, WITHOUT going through /select — the
   // order itself stays literally 'CREATED'. No assignment/Ride exists either.
@@ -1032,7 +1032,7 @@ test('recovery gate: offers-GET bypass serves its own bundle snapshot, never a l
   const drvS = await grantDriverRole(cleanup, await mintSession(app, `+1710${ns}`));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const offer = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Racer' }, bearer(drvS))).json().offer;
+  const offer = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Racer' }, bearer(drvS))).json().offer;
 
   // Intercept ONLY the bundle statement (its SQL is uniquely identifiable by its `candidate_rides`
   // CTE name, distinct from findRecoveryBundleByTripId's `candidate_orders`). The REAL query still

@@ -13,6 +13,7 @@
 // always gets false.
 
 import { rideNoteText, rideOrderComment } from './domain/ride-order-comment.js';
+import { maskVehiclePlate } from './domain/vehicle-plate.js';
 
 // The server computes passenger.isCurrentUser per viewer. The client feed mapper
 // (mock_api.rideOrderToFeedPost) consumes it for backend ownership and author labels;
@@ -49,7 +50,18 @@ export function serializeOrder(row, { viewerId = null } = {}) {
 // order's passenger, who is choosing a driver (and needs driverId for the R05 /select). The
 // client-facing order id is the legacy string, supplied by the caller (it knows which order it
 // queried), since the row only carries the order UUID FK.
-export function serializeOffer(row, { orderLegacyId = null } = {}) {
+// #1113 — the offer's car. The plate is masked unless the caller asks for the full one: the
+// passenger's offers list (before selection) gets «А ••• ОР 77»; the driver's own offer and the
+// just-accepted offer in the /select response get the full plate. Masked is the default.
+function offerVehicle(row, plate) {
+  return {
+    model: row.vehicle_model ?? null,
+    color: row.vehicle_color ?? null,
+    plate: plate === 'full' ? (row.vehicle_plate ?? null) : maskVehiclePlate(row.vehicle_plate),
+  };
+}
+
+export function serializeOffer(row, { orderLegacyId = null, plate = 'masked' } = {}) {
   if (!row) return null;
   return {
     id: row.legacy_id,
@@ -62,6 +74,7 @@ export function serializeOffer(row, { orderLegacyId = null } = {}) {
     etaMin: row.eta_min ?? null,
     price: row.price == null ? null : Number(row.price),
     message: row.message ?? null,
+    vehicle: offerVehicle(row, plate),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     expiresAt: toIso(row.expires_at),
@@ -104,6 +117,12 @@ export function serializeRide(row) {
       initials: row.driver_initials ?? null,
       rating: row.driver_rating ?? null,
       car: row.driver_car ?? null,
+    },
+    // #1113 — the accepted offer's car, full plate: the read is participant-gated.
+    vehicle: {
+      model: row.vehicle_model ?? null,
+      color: row.vehicle_color ?? null,
+      plate: row.vehicle_plate ?? null,
     },
     route: {
       pickupLabel: row.route_pickup_label ?? null,
@@ -162,7 +181,7 @@ function toIsoFromBundle(value) {
 // serve its response from the SAME statement that decided to bypass, closing the TOCTOU where a
 // second, later listOffersByOrder() read could straddle a concurrent /select commit and serve a
 // freshly-accepted offer without validateRecoveryLinkage() ever running.
-export function serializeRecoveredOffer(row, { orderLegacyId = null } = {}) {
+export function serializeRecoveredOffer(row, { orderLegacyId = null, plate = 'masked' } = {}) {
   if (!row) return null;
   return {
     id: row.legacy_id,
@@ -175,6 +194,7 @@ export function serializeRecoveredOffer(row, { orderLegacyId = null } = {}) {
     etaMin: row.eta_min ?? null,
     price: row.price == null ? null : Number(row.price),
     message: row.message ?? null,
+    vehicle: offerVehicle(row, plate),
     createdAt: toIsoFromBundle(row.created_at),
     updatedAt: toIsoFromBundle(row.updated_at),
     expiresAt: toIsoFromBundle(row.expires_at),
@@ -227,6 +247,12 @@ export function serializeRecoveredRide(ride, { order, acceptedOffer }) {
       initials: null,
       rating: acceptedOffer.rating ?? null,
       car: acceptedOffer.car ?? null,
+    },
+    // #1113 — reprojected from the immutable accepted offer, like the driver block (full plate).
+    vehicle: {
+      model: acceptedOffer.vehicle_model ?? null,
+      color: acceptedOffer.vehicle_color ?? null,
+      plate: acceptedOffer.vehicle_plate ?? null,
     },
     route: {
       pickupLabel: label(order.pickup, 'Точка подачи'),

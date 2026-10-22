@@ -64,7 +64,7 @@ test('history: complete a ride -> GET /history (both roles) + write-once receipt
   const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
   orderIds.push(order.id);
-  const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Иван', price: 800 }, bearer(drvS))).json().offer;
+  const off = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван', price: 800 }, bearer(drvS))).json().offer;
   const sel = (await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: off.driverId }, bearer(paxS))).json();
   const tripId = sel.ride.tripId;
   tripIds.push(tripId);

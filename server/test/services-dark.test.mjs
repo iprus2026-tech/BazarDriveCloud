@@ -87,7 +87,7 @@ test('matching #3 offers + select are LIVE (validate + auth-gated, not 501)', as
   const noField = await app.inject({ method: 'POST', url: '/api/v1/matching/offers', payload: {} });
   assert.equal(noField.statusCode, 400, 'POST /matching/offers validates (orderId required, not 501)');
   assert.equal(noField.json().code, 'VALIDATION');
-  const noAuth = await app.inject({ method: 'POST', url: '/api/v1/matching/offers', payload: { orderId: 'order-x' } });
+  const noAuth = await app.inject({ method: 'POST', url: '/api/v1/matching/offers', payload: { vehiclePlate: 'А 123 ВС 77', orderId: 'order-x' } });
   assert.equal(noAuth.statusCode, 401, 'offer create requires a session');
   assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
   const listNoAuth = await app.inject({ method: 'GET', url: '/api/v1/matching/offers?orderId=order-x' });

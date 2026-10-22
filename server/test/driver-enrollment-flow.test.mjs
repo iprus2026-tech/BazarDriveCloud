@@ -65,7 +65,7 @@ async function fixture(t, { config = baseConfig } = {}) {
   const owner = await mintSession(app, phone());
   const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(owner))).json().order;
   orderIds.push(order.id);
-  const offer = (s) => post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Т' }, bearer(s));
+  const offer = (s) => post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Т' }, bearer(s));
   const rows = async (userId) => (await cleanup.query(
     'SELECT status, decided_by, decided_at, decision_reason FROM driver_enrollments WHERE user_id = $1 ORDER BY requested_at',
     [userId],

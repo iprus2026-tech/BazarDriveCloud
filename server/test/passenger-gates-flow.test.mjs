@@ -99,7 +99,7 @@ test('passenger gates: a driver-mode session is refused on all three routes and 
   const order = created.json().order;
   orderIds.push(order.id);
   const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id, price: 800 }, bearer(drvS))).statusCode, 201);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, price: 800 }, bearer(drvS))).statusCode, 201);
   const before = await footprint(cleanup, order.id);
   assert.deepEqual(before, { status: 'CREATED', offers: ['sent'], assignment: 0, rides: 0 });
 
@@ -158,7 +158,7 @@ test('select re-checks the driver grant: a driver revoked after offering is not 
   const order = (await post(app, '/api/v1/orders', ORDER, bearer(paxS))).json().order;
   orderIds.push(order.id);
   const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id, price: 900 }, bearer(drvS))).statusCode, 201);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, price: 900 }, bearer(drvS))).statusCode, 201);
 
   // No grant oracle: an account that never offered on this order is 404 OFFER_NOT_FOUND whether
   // it holds the driver grant or not (the live offer is checked before the grant).
@@ -206,7 +206,7 @@ test('passenger gates: an authority lookup failure is a retryable 503 and writes
   const order = (await post(app, '/api/v1/orders', ORDER, bearer(paxS))).json().order;
   orderIds.push(order.id);
   const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
-  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id }, bearer(drvS))).statusCode, 201);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id }, bearer(drvS))).statusCode, 201);
   const before = await footprint(cleanup, order.id);
   const ordersBefore = await orderCount(cleanup, paxS.user.userId);
 
