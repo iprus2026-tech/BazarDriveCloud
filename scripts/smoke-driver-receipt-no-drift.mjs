@@ -310,14 +310,16 @@ const profile = read('../public/src/screens/profile.js');
 expect('profile imports listDriverReceipts',
   /import\s*\{[^}]*listDriverReceipts[^}]*\}\s*from\s*'\.\.\/mock_api\.js'/.test(profile));
 const payoutFn = functionBody(profile, 'driverReceiptPayoutSectionHtml') || '';
+// #1070 — the row markup is shared by the OFF list and the ON server list (driverReceiptRowHtml).
+const payoutRowFn = functionBody(profile, 'driverReceiptRowHtml') || '';
 expect('payouts list is rendered from listDriverReceipts()',
   /listDriverReceipts\(\)/.test(payoutFn));
 expect('payout row shows net from the receipt (r.net)',
-  /r\.net/.test(payoutFn));
+  /r\.net/.test(payoutRowFn) && /driverReceiptListHtml\(/.test(payoutFn));
 expect('payout row carries no inline money arithmetic',
-  !MONEY_ARITH.test(payoutFn));
+  !MONEY_ARITH.test(payoutFn) && !MONEY_ARITH.test(payoutRowFn));
 expect('payout row deep-links to the /receipt route',
-  /data-receipt-trip/.test(payoutFn) && /\/receipt\?tripId=/.test(profile));
+  /data-receipt-trip/.test(payoutRowFn) && /\/receipt\?tripId=/.test(profile));
 
 // ── 4. History row/detail read the receipt (state A) ─────────
 const historyRowFn = functionBody(profile, 'driverHistoryEntryHtml') || '';

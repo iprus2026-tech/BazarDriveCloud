@@ -259,7 +259,7 @@
 // v382 (BD-AUTH-POLICY-01B-C K3-2): readable role-gate refusals (new role_gate.js).
 // v383 (#1085, #1048): order-map-draft in-form clicks; the earnings sheet navigates once.
 // v384 (#1086, #1088): the profile adopts the server session role on mount; no passenger-mode row ON.
-const VERSION    = 'v386';
+const VERSION    = 'v387';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

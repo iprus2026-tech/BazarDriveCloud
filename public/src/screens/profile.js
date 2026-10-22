@@ -17,7 +17,9 @@ import { go } from '../router.js';
 import { readPassengerProfile, loadPassengerHistory, loadPassengerContext, passengerTripRoute } from '../profile_passenger_data.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
-import { listMyPostsSync, listDriverReceipts, countCompletedPassengerTrips, listHistoryFromBackend } from '../mock_api.js';
+import {
+  listMyPostsSync, listDriverReceipts, listDriverReceiptsResolved, countCompletedPassengerTrips, listHistoryFromBackend,
+} from '../mock_api.js';
 import { isBackendEnabled, getSessionToken } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
@@ -2356,13 +2358,28 @@ function driverReceiptPayoutSectionHtml(onRetry) {
     reportAppShellError('server_error', onRetry ? { onRetry } : {});
     receipts = [];
   }
+  return driverReceiptListHtml(receipts, 'Локальные и демонстрационные чеки');
+}
+
+// The receipt rows of the payouts pane — shared by the backend-OFF list above
+// and the backend-ON server list (fillReceipts; #1070). Empty → ''.
+function driverReceiptListHtml(receipts, title) {
   if (!Array.isArray(receipts) || !receipts.length) return '';
-  const rows = receipts.map((r) => {
-    const tripId  = String(r.tripId);
-    const when    = formatHistoryDate(r.completedAt);
-    const net     = formatHistoryFare(r.net);
-    const badge   = receiptPaymentBadgeHtml(r.paymentMode);
-    return `
+  return `
+    <div class="pf2-po-sect-hdr">
+      <span class="pf2-po-sect-title">${escapeHtml(title)}</span>
+    </div>
+    <div class="pf2-po-trips" id="pf2-po-trips-block">
+      ${receipts.map(driverReceiptRowHtml).join('')}
+    </div>`;
+}
+
+function driverReceiptRowHtml(r) {
+  const tripId  = String(r.tripId);
+  const when    = formatHistoryDate(r.completedAt);
+  const net     = formatHistoryFare(r.net);
+  const badge   = receiptPaymentBadgeHtml(r.paymentMode);
+  return `
       <button type="button" class="pf2-po-trip-row" data-receipt-trip="${escapeHtml(tripId)}">
         <span class="pf2-po-trip-icon" aria-hidden="true">${SVG_DOC_LG}</span>
         <span class="pf2-po-trip-info">
@@ -2377,14 +2394,6 @@ function driverReceiptPayoutSectionHtml(onRetry) {
           <span class="pf2-po-trip-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
         </span>
       </button>`;
-  }).join('');
-  return `
-    <div class="pf2-po-sect-hdr">
-      <span class="pf2-po-sect-title">Локальные и демонстрационные чеки</span>
-    </div>
-    <div class="pf2-po-trips" id="pf2-po-trips-block">
-      ${rows}
-    </div>`;
 }
 
 // BD-PROFILE-D-03 — Empty payouts state (state H). Reachable through the
@@ -2418,7 +2427,9 @@ function payoutsPaneHtml(previewEmpty = false) {
         <button type="button" class="pf2-po-balance-btn pf2-po-balance-btn--sec" id="pf2-po-history-btn">История</button>
       </div>
     </div>
-    <p class="pf2-context-note">Здесь локальные чеки и демопримеры. Они не являются балансом или подтверждением выплаты.</p>
+    <p class="pf2-context-note">${isBackendEnabled()
+      ? 'Здесь чеки завершённых поездок. Они не являются балансом или подтверждением выплаты.'
+      : 'Здесь локальные чеки и демопримеры. Они не являются балансом или подтверждением выплаты.'}</p>
     <div id="pf2-po-trips-mount"></div>
     <div class="pf2-po-sect-hdr"><span class="pf2-po-sect-title">Способы вывода</span></div>
     <div class="pf2-po-methods" id="pf2-po-methods-block">
@@ -3192,10 +3203,28 @@ function renderDriver(root, u, logout, ownsScreen, switchRole) {
     dismissAppShellError({ onlyIfState: 'server_error' });
     fillReceipts();
   };
+  // #1070 п.2 — with the backend ON the list is the server's receipts plus the
+  // locally saved ones still on their way (mock_api.listDriverReceiptsResolved),
+  // never the demo receipt. A late answer after a newer fill or a pane change is
+  // dropped; a failure reports server_error with the same guarded retry.
+  let receiptsFillRunId = 0;
   function fillReceipts() {
     const mount = root.querySelector('#pf2-po-trips-mount');
     if (!mount) return;
-    mount.innerHTML = driverReceiptPayoutSectionHtml(onReceiptsRetry);
+    if (!isBackendEnabled()) {
+      mount.innerHTML = driverReceiptPayoutSectionHtml(onReceiptsRetry);
+      return;
+    }
+    const runId = ++receiptsFillRunId;
+    mount.innerHTML = '<p class="pf2-context-note" role="status">Загружаем чеки…</p>';
+    listDriverReceiptsResolved().then((receipts) => {
+      if (runId !== receiptsFillRunId || !mount.isConnected) return;
+      mount.innerHTML = driverReceiptListHtml(receipts, 'Чеки поездок');
+    }, () => {
+      if (runId !== receiptsFillRunId || !mount.isConnected) return;
+      mount.innerHTML = '';
+      reportAppShellError('server_error', { onRetry: onReceiptsRetry });
+    });
   }
 
   root.innerHTML = `

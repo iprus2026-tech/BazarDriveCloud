@@ -539,6 +539,18 @@ if (exists(rideOrderCommentClientSmoke)) {
   }
 }
 
+// Slice 4a (#1070 items 1-3, #1061): backend-ON driver money from the server (shift stats on the
+// device's local day, no balance, payouts without the demo receipt, no demo receipt preview).
+const driverMoneyServerSmoke = path.join(root, 'scripts', 'smoke-driver-money-server.mjs');
+if (exists(driverMoneyServerSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverMoneyServerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-money-server.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt

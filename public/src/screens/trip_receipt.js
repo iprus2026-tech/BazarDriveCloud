@@ -25,6 +25,7 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { getReceipt, getReceiptResolved } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
+import { isBackendEnabled } from '../api_config.js';
 
 const DEMO_RECEIPT_TRIP_ID = '48-321';
 const RECEIPT_SYNC_MS = 280;
@@ -191,7 +192,15 @@ async function renderResolved(content, tripId, forced, onRetry, isRetry) {
     // Render-gate preview: read the canonical demo receipt and only flip the
     // display mode flag. The stored money (fare/commission/tip/net) is
     // untouched, so cash and noncash previews never drift.
-    const base = getReceipt(tripId) || getReceipt(DEMO_RECEIPT_TRIP_ID);
+    // #1070 п.3 — with the backend ON the preview flips the mode of the trip's
+    // own receipt (server or locally saved, as the live read) and never borrows
+    // the demo one: no receipt → the missing state.
+    const base = isBackendEnabled()
+      ? await loadResource(() => getReceiptResolved(tripId), {
+        onRetry, isRetry, fallback: null, isActive: () => content.isConnected,
+      })
+      : (getReceipt(tripId) || getReceipt(DEMO_RECEIPT_TRIP_ID));
+    if (!content.isConnected) return;
     receipt = base ? { ...base, paymentMode: forced } : null;
   } else {
     // isActive gates the overlay INSIDE loadResource — a future-async getReceipt
