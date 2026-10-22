@@ -307,6 +307,13 @@ function estimateRoute(pickup, dropoff) {
   return { distanceKm, durationMin, estimatedPrice };
 }
 
+// #1057 — the one route-estimate rule for the picker, the preview and the order draft: there is
+// no route source yet (route-price is 501), so with the backend ON there is no estimate (no
+// invented distance / time / «от N ₽»); backend OFF keeps the local label-hash estimate.
+export function routeEstimateFor(pickup, dropoff) {
+  return isBackendEnabled() ? null : estimateRoute(pickup, dropoff);
+}
+
 function computeStage() {
   if (routeDraft.pickup && routeDraft.dropoff) return 'ready';
   if (routeDraft.pickup) return 'dropoff';
@@ -525,9 +532,7 @@ function inferStatus() {
 function syncDraft() {
   routeDraft.results = getMockResults(routeDraft.query);
   routeDraft.status = inferStatus();
-  // #1057 — no route source yet (route-price is 501): with the backend ON there is no invented
-  // distance / time / «от N ₽»; backend OFF keeps the label-hash estimate.
-  routeDraft.route = isBackendEnabled() ? null : estimateRoute(routeDraft.pickup, routeDraft.dropoff);
+  routeDraft.route = routeEstimateFor(routeDraft.pickup, routeDraft.dropoff);
   routeDraft.stage = computeStage();
 }
 

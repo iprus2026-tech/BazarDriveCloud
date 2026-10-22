@@ -7,6 +7,7 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
+import { routeEstimateFor } from './route_picker.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const STORAGE_LABEL = 'localStorage';
@@ -62,25 +63,31 @@ function readRawDraft() {
   }
 }
 
-// #1057 — a draft with no route estimate at all (`route: null`, what the picker saves with the
-// backend ON while route-price is 501) is a valid route of two points with no metrics. A route
-// object that is present but incomplete is still malformed.
+// #1057 — the estimate follows the route picker's rule for the current mode (none with the backend
+// ON while route-price is 501), never one an earlier session saved in the draft, so the preview and
+// the order draft always agree.
 function flattenDraft(parsed) {
-  const route = isPlainObject(parsed.route) ? parsed.route : {};
+  const pickup = isValidPoint(parsed.pickup) ? parsed.pickup : null;
+  const dropoff = isValidPoint(parsed.dropoff) ? parsed.dropoff : null;
+  const route = (pickup && dropoff && routeEstimateFor(pickup, dropoff)) || {};
   return {
-    hasEstimate: isPlainObject(parsed.route),
-    pickup: isValidPoint(parsed.pickup) ? parsed.pickup : null,
-    dropoff: isValidPoint(parsed.dropoff) ? parsed.dropoff : null,
+    pickup,
+    dropoff,
     distanceKm: isFiniteNumber(route.distanceKm) ? route.distanceKm : null,
     durationMin: isFiniteNumber(route.durationMin) ? route.durationMin : null,
     estimatePriceFrom: isFiniteNumber(route.estimatedPrice) ? route.estimatedPrice : null,
   };
 }
 
+function hasEstimate(draft) {
+  return draft.estimatePriceFrom != null;
+}
+
 function collectMissingFields(draft) {
   const missing = [];
   for (const key of Object.keys(FIELD_LABELS)) {
-    if (!draft.hasEstimate && METRIC_FIELDS.has(key)) continue;
+    // Two points with no estimate in this mode (backend ON) are a complete route.
+    if (METRIC_FIELDS.has(key) && draft.pickup && draft.dropoff && !hasEstimate(draft)) continue;
     if (draft[key] == null) missing.push({ key, ...FIELD_LABELS[key] });
   }
   return missing;
@@ -192,7 +199,7 @@ function renderValidCard(draft) {
       </button>
     </div>
 
-    ${draft.hasEstimate ? `<dl class="rpv-metrics" aria-label="Параметры маршрута">
+    ${hasEstimate(draft) ? `<dl class="rpv-metrics" aria-label="Параметры маршрута">
       <div class="rpv-metric">
         <dt class="rpv-metric__value">${escapeHtml(String(Math.round(draft.durationMin)))}<span class="rpv-metric__unit"> мин</span></dt>
         <dd class="rpv-metric__label">В ПУТИ</dd>
