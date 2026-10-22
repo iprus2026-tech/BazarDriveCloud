@@ -409,9 +409,12 @@ function renderPassengerRide(root, post) {
   const toLabel   = post.to   || '—';
   const whenLabel = post.when || 'Время не указано';
 
-  const numericPrice = typeof post.price === 'string'
+  const parsedPrice = typeof post.price === 'string'
     ? Number(post.price.replace(/[^\d]/g, ''))
     : (typeof post.price === 'number' ? post.price : NaN);
+  // #1061 — a live offer takes the order's numeric price (priceValue): parsing the label drops a
+  // decimal separator (763.5 ₽ → 7635). Backend OFF keeps the label parse.
+  const numericPrice = liveOffer && Number.isFinite(post.priceValue) ? post.priceValue : parsedPrice;
   const orderPrice = Number.isFinite(numericPrice) && numericPrice > 0 ? numericPrice : null;
   const initialPrice = orderPrice ?? (liveOffer ? '' : DEFAULT_PASSENGER_PRICE);
   const priceChips = liveOffer ? livePriceChips(orderPrice) : PRICE_CHIPS;

@@ -1124,6 +1124,8 @@ export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
     scheduledMode: order.scheduledMode === 'later' ? 'later' : 'now',
     scheduledAt: order.scheduledAt || null,
     price: formatRideOrderPrice(order),
+    // #1061 — the numeric order price (null when unset) for /respond's chips and default.
+    priceValue: Number(order.estimatedPrice) > 0 ? Number(order.estimatedPrice) : null,
     seats: null,
     body: comment || null,
     rideOrderStatus: order.status,

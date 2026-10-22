@@ -124,6 +124,15 @@ await check('live scheduled order: the three timing options, no invented hour', 
   assert.deepEqual(f.timings(), ['К указанному времени', 'Могу раньше', 'Договоримся']);
 });
 
+await check('live order with a decimal price: the numeric price, not the label parse (763.5 ≠ 7635)', async () => {
+  const h = respondHarness();
+  const f = render(h, livePost({ price: '763.5 ₽', priceValue: 763.5 }));
+  assert.deepEqual(f.chips(), ['763.5', '840', '920']);
+  assert.equal(f.$('#respond-price').getAttribute('value'), '763.5');
+  await f.submit();
+  assert.equal(h.offers[0].price, 763.5, 'an unchanged submission sends the order price');
+});
+
 await check('live order without a price: no chips and an empty price field', () => {
   const f = render(respondHarness(), livePost({ price: null }));
   assert.equal(f.$('#price-chips'), null);
@@ -178,6 +187,8 @@ await check('rideOrderToFeedPost carries scheduledMode / scheduledAt', () => {
   const now = mockApi.rideOrderToFeedPost({ id: 'o2', status: 'CREATED' });
   assert.equal(now.scheduledMode, 'now');
   assert.equal(now.scheduledAt, null);
+  assert.equal(now.priceValue, null);
+  assert.equal(mockApi.rideOrderToFeedPost({ id: 'o3', status: 'CREATED', estimatedPrice: 763.5 }).priceValue, 763.5);
 });
 
 console.log(`\n${passed} passed; ${failures.length} failed`);
