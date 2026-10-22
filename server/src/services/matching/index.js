@@ -22,6 +22,7 @@ import { insertAssignment } from '../../repositories/assignment.js';
 import { bootstrapRide, lockConflictRideForSelection, findRecoveryBundleByOrderId } from '../../repositories/rides.js';
 import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
 import { validateRecoveryLinkage } from '../../domain/select-recovery-linkage.js';
+import { rideOrderComment } from '../../domain/ride-order-comment.js';
 
 // Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
 // client's `${n.toLocaleString('ru-RU')} ₽`. Returns null for a non-finite value.
@@ -36,6 +37,7 @@ function formatRub(numeric) {
 // carried no price — `driver.price || request.price`. tripId = trip_<orderId>; route labels off the
 // order points; the passenger from the order's stored snapshot (neutral 'Пассажир' when absent); the
 // driver name/car/rating from the accepted offer. Status DRIVER_EN_ROUTE = the select handoff status.
+// The passenger note is the order comment the driver reads (#1052; domain/ride-order-comment.js).
 function buildRideSeed(order, offer) {
   const snap = (order.passenger_snapshot && typeof order.passenger_snapshot === 'object') ? order.passenger_snapshot : {};
   const name = typeof snap.name === 'string' && snap.name.trim() ? snap.name.trim() : 'Пассажир';
@@ -53,7 +55,7 @@ function buildRideSeed(order, offer) {
     passengerName: name,
     passengerInitials: initials,
     passengerPhoneMasked: typeof snap.phoneMasked === 'string' ? snap.phoneMasked : null,
-    passengerNote: typeof snap.comment === 'string' ? snap.comment : (order.comment ?? null),
+    passengerNote: rideOrderComment(order),
     driverName: offer.driver_name ?? null,
     driverCar: offer.car ?? null,
     driverRating: offer.rating ?? null,
