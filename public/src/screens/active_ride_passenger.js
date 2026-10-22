@@ -510,6 +510,20 @@ function formatTripNumber(tripId) {
   return `№${tripId}`;
 }
 
+// #1113 — the ride's car from the server (`vehicle { model, color, plate }`, the full plate after
+// selection), authoritative-or-null like every server-confirmed field. A ride from before the slice
+// has no vehicle: `driver.car` («Kia Rio · Серый») stays the model line and colour/plate are omitted.
+function serverVehicle(srv) {
+  const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+  const v = (srv && srv.vehicle) || {};
+  const model = text(v.model);
+  return {
+    model: model || text(srv && srv.driver && srv.driver.car),
+    color: model ? text(v.color) : null,
+    plate: text(v.plate),
+  };
+}
+
 function carLine(ride) {
   const v = (ride && ride.vehicle) || {};
   // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — a server-confirmed ride
@@ -2757,7 +2771,7 @@ export default function activeRidePassenger(options = {}) {
       // (carLine/paymentInfo/paymentBlockHtml/chatLabelFor all render a
       // neutral/omitted state for a marked-authoritative ride — see
       // markPassengerRideAuthoritative below).
-      vehicle: { model: (srv.driver && srv.driver.car) || null, color: null, plate: null },
+      vehicle: serverVehicle(srv),
       // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A review-fix #2 — order.offerPrice
       // is the ONE authoritative fare source (arrivingDropoffAmount/
       // paymentInfo both read it for a confirmed ride) and must never be
@@ -2911,11 +2925,7 @@ export default function activeRidePassenger(options = {}) {
         rating: serverDriver.rating ?? null,
         car: serverDriver.car ?? null,
       },
-      vehicle: {
-        model: serverDriver.car || null,
-        color: null,
-        plate: null,
-      },
+      vehicle: serverVehicle({ vehicle: srv && srv.vehicle, driver: serverDriver }),
       route: {
         pickupLabel: serverRoute.pickupLabel ?? null,
         dropoffLabel: serverRoute.dropoffLabel ?? null,

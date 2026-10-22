@@ -679,6 +679,10 @@ function mapServerOfferToDriverCard(offer, request, index) {
   const price = Number.isFinite(value) && value > 0
     ? formatRub(value)
     : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
+  // #1113 — the offer's car as separate fields; the plate is the server's masked form («А ••• ОР 77»)
+  // before selection. An offer from before the slice has no vehicle and keeps its display line.
+  const vehicle = (offer && offer.vehicle) || {};
+  const vehicleModel = pickStr(vehicle.model);
   return {
     id:         responseId,
     responseId,
@@ -688,9 +692,9 @@ function mapServerOfferToDriverCard(offer, request, index) {
     avatarTone: 'mint',
     rating:     '—',
     car:        pickStr(offer && offer.car),
-    carModel:   pickStr(offer && offer.car),
-    carColor:   '',
-    plate:      '',
+    carModel:   vehicleModel || pickStr(offer && offer.car),
+    carColor:   vehicleModel ? pickStr(vehicle.color) : '',
+    plate:      pickStr(vehicle.plate),
     trips:      '',
     price,
     priceDelta: '',
@@ -867,7 +871,7 @@ function renderDriverCard(driver, selectedDriverId, declinedFlag) {
           <div class="responses__driver-car">${escapeHtml(driver.car)}</div>
           <div class="responses__driver-meta">
             <span>${escapeHtml(driver.plate)}</span>
-            <span class="responses__driver-dot" aria-hidden="true">·</span>
+            ${driver.plate && driver.trips ? '<span class="responses__driver-dot" aria-hidden="true">·</span>' : ''}
             <span>${escapeHtml(driver.trips)}</span>
           </div>
         </div>
@@ -1357,7 +1361,7 @@ function renderOffer(driver) {
             <div class="responses__driver-car">${escapeHtml(driver.car)}</div>
             <div class="responses__driver-meta">
               <span>${escapeHtml(driver.plate)}</span>
-              <span class="responses__driver-dot" aria-hidden="true">·</span>
+              ${driver.plate && driver.trips ? '<span class="responses__driver-dot" aria-hidden="true">·</span>' : ''}
               <span>${escapeHtml(driver.trips)}</span>
             </div>
           </div>

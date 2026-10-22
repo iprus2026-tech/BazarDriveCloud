@@ -588,6 +588,18 @@ if (exists(orderRouteHonestMetricsSmoke)) {
   }
 }
 
+// #1113 (client): the offer carries the car (model / colour / full plate); the passenger sees the
+// server's masked plate on the offer card and the full plate on the ride.
+const offerVehiclePlateClientSmoke = path.join(root, 'scripts', 'smoke-offer-vehicle-plate-client.mjs');
+if (exists(offerVehiclePlateClientSmoke)) {
+  try {
+    execFileSync(process.execPath, [offerVehiclePlateClientSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-offer-vehicle-plate-client.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt

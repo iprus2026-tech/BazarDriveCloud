@@ -612,11 +612,22 @@ export async function listNearbyOrders({ signal } = {}) {
 
 // Driver makes an offer on a canonical ride order. Returns the server offer (or
 // null when OFF — the caller already guards, so OFF never invokes this).
-export async function submitOfferToBackend({ orderId, driverName, car, price, message }) {
+// #1113 — the car as separate fields; the server requires the plate (full here: the server masks it
+// for the passenger's offers list and shows it in full on the ride). Empty fields are left out.
+function offerVehicleFields({ vehicleModel, vehicleColor, vehiclePlate }) {
+  const fields = {};
+  if (typeof vehicleModel === 'string' && vehicleModel.trim()) fields.vehicleModel = vehicleModel.trim();
+  if (typeof vehicleColor === 'string' && vehicleColor.trim()) fields.vehicleColor = vehicleColor.trim();
+  if (typeof vehiclePlate === 'string' && vehiclePlate.trim()) fields.vehiclePlate = vehiclePlate.trim();
+  return fields;
+}
+
+export async function submitOfferToBackend({ orderId, driverName, car, price, message, vehicleModel, vehicleColor, vehiclePlate }) {
+  const vehicle = offerVehicleFields({ vehicleModel, vehicleColor, vehiclePlate });
   if (isBackendEnabled()) {
     const r = await apiFetch('/matching/offers', {
       method: 'POST',
-      body: { orderId, driverName, car, price, message },
+      body: { orderId, driverName, car, price, message, ...vehicle },
     });
     return r.offer;
   }

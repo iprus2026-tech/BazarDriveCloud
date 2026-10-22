@@ -143,10 +143,12 @@ for (const [role, file] of [['driver', 'active_ride.js'], ['passenger', 'active_
     noDemoRoute(ride);
   });
   const waiting = Function(`return ${extractFunction(source, 'mergeServerWaiting')}`)();
+  // #1113 — the passenger merge projects the ride's car through serverVehicle (absent on the driver side).
+  const serverVehicle = role === 'passenger' ? Function(`return ${extractFunction(source, 'serverVehicle')}`)() : null;
   const merge = (local, srv, preserve = false, pending = null) => Function(
-    'ride', 'pendingStatus', 'STATUS_RANK', 'initialsFromName', 'mergeServerWaiting',
+    'ride', 'pendingStatus', 'STATUS_RANK', 'initialsFromName', 'mergeServerWaiting', 'serverVehicle',
     `return ${extractFunction(source, 'mergeServerRide')}`,
-  )(local, pending, statusRank, (name) => name ? name.charAt(0) : '', waiting)(srv, preserve);
+  )(local, pending, statusRank, (name) => name ? name.charAt(0) : '', waiting, serverVehicle)(srv, preserve);
   const server = {
     tripId: `trip_server_${role}`,
     status: RIDE_STATUS.DRIVER_EN_ROUTE,
