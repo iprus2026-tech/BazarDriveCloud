@@ -47,8 +47,17 @@ globalThis.localStorage = {
   removeItem: (key) => storage.delete(key),
 };
 const requests = [];
+const SERVER_HISTORY = [
+  { tripId: 'trip_new', role: 'passenger', completedAt: '2026-10-22T16:57:00.000Z', counterparty: { name: 'Иван', rating: null },
+    vehicle: { model: 'Kia Rio', color: 'Серый', plate: 'А 108 ОР 77' }, route: { pickupLabel: 'Новая от', dropoffLabel: 'Новая до' }, fare: '650 ₽' },
+  { tripId: 'trip_old', role: 'passenger', completedAt: '2026-10-22T10:33:00.000Z', counterparty: { name: 'Иван', rating: null },
+    vehicle: { model: null, color: null, plate: null }, route: { pickupLabel: 'Старая от', dropoffLabel: 'Старая до' }, fare: '763 ₽' },
+];
 globalThis.fetch = async (url, init = {}) => {
   requests.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : null });
+  if (/\/history$/.test(String(url))) {
+    return new Response(JSON.stringify({ items: SERVER_HISTORY }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   return new Response(JSON.stringify({ offer: { id: 'offer-1' } }), { status: 201, headers: { 'content-type': 'application/json' } });
 };
 const mockApi = await import('../public/src/mock_api.js');
@@ -151,18 +160,26 @@ await check('OFF form: no plate note and no backend call', async () => {
 });
 
 // ── C. the passenger's offer card ─────────────────────────────────────────────
+// No localStorage / sessionStorage / indexedDB in this context: any storage access while the
+// passenger's board is built would throw. The stored-responses reader is a spy.
 function cardsHarness() {
+  const reads = [];
   const context = vm.createContext({
-    console,
+    console, escapeHtml,
     formatRub: (n) => `${n} ₽`,
     MOCK_REQUEST: { price: '— ₽' },
-    loadResponsesForOrder: () => [],
+    loadResponsesForOrder: (id) => { reads.push(id); return []; },
     mapResponseToDriverCard: () => null,
     buildDrivers: () => [],
+    // Every icon constant of the screen renders as an empty string here.
+    ...Object.fromEntries([...responsesSource.matchAll(/^const ([A-Z][A-Z0-9_]*_SVG) =/gm)].map((m) => [m[1], ''])),
   });
+  const renderers = ['renderEtaBars', 'renderDriverCard', 'renderOffer'].filter((name) => new RegExp(`^function ${name}\\(`, 'm').test(responsesSource));
   vm.runInContext(`${sourceFunction(responsesSource, 'buildDriversForOrder')}
     ${sourceFunction(responsesSource, 'mapServerOfferToDriverCard')}
-    globalThis.api = { buildDriversForOrder };`, context, { filename: 'actual_responses.js' });
+    ${renderers.map((name) => sourceFunction(responsesSource, name)).join('\n')}
+    globalThis.api = { buildDriversForOrder, ${renderers.join(', ')} };`, context, { filename: 'actual_responses.js' });
+  context.api.reads = reads;
   return context.api;
 }
 const serverOffer = (extra = {}) => ({
@@ -175,6 +192,33 @@ await check('passenger card: the server car as fields and the server\'s masked p
     vehicle: { model: 'Kia Rio', color: 'Серый', plate: 'А ••• ОР 77' },
   })], true);
   assert.deepEqual([card.car, card.carModel, card.carColor, card.plate], ['Kia Rio · Серый', 'Kia Rio', 'Серый', 'А ••• ОР 77']);
+  // The visible line follows the server's fields, not a missing or stale display string (#1117 review).
+  for (const car of [undefined, '', 'Lada Granta · Белый']) {
+    const [c] = cardsHarness().buildDriversForOrder({ orderId: 'order-x' }, [serverOffer({
+      car, vehicle: { model: 'Kia Rio', color: 'Серый', plate: 'А ••• ОР 77' },
+    })], true);
+    assert.equal(c.car, 'Kia Rio · Серый', `offer.car ${JSON.stringify(car)}`);
+  }
+  const [noColor] = cardsHarness().buildDriversForOrder({ orderId: 'order-x' }, [serverOffer({
+    vehicle: { model: 'Kia Rio', color: null, plate: 'А ••• ОР 77' },
+  })], true);
+  assert.equal(noColor.car, 'Kia Rio', 'no dangling separator without a colour');
+});
+
+await check('before selection the full plate is nowhere on the passenger side: card object, card markup, storage', () => {
+  const api = cardsHarness();
+  const [card] = api.buildDriversForOrder({ orderId: 'order-x' }, [serverOffer({
+    vehicle: { model: 'Kia Rio', color: 'Серый', plate: 'А ••• ОР 77' },
+  })], true);
+  assert.equal(api.reads.length, 0, 'the server board reads no stored responses');
+  const json = JSON.stringify(card);
+  assert.match(json, /А ••• ОР 77/, 'the mask is what the card carries');
+  const html = api.renderDriverCard(card, null, false) + api.renderOffer(card);
+  assert.match(html, /А ••• ОР 77/, 'the mask is what the card shows');
+  for (const leak of ['108', 'А 108 ОР 77', 'А108ОР77']) {
+    assert.ok(!json.includes(leak), `card object: ${leak}`);
+    assert.ok(!html.includes(leak), `card markup: ${leak}`);
+  }
 });
 
 await check('passenger card: an offer from before the slice keeps its car line and shows no plate', () => {
@@ -216,6 +260,38 @@ await check('active ride: both server projections use serverVehicle; the local d
   assert.doesNotMatch(passengerSource, /model: serverDriver\.car \|\| null,\s*color: null,\s*plate: null/);
   const { carLine } = rideHarness();
   assert.equal(carLine({ vehicle: {} }), 'Toyota Camry · А 124 ВВ 77', 'a local / demo ride keeps the OFF fallback');
+});
+
+// ── E. the passenger's profile history ────────────────────────────────────────
+const profileSource = read('../public/src/screens/profile.js');
+function historyHarness() {
+  const context = vm.createContext({
+    console, escapeHtml,
+    formatHistoryFare: (fare) => (fare ? String(fare) : ''),
+    formatHistoryDate: () => '', formatHistoryDistance: () => '', formatHistoryDuration: () => '',
+    historyEntryTimestamp: () => null, historyRoleBadgeHtml: () => '', SVG_STAR: '',
+  });
+  vm.runInContext(`${['historyVehicleText', 'detailRowHtml', 'passengerHistoryEntryHtml', 'passengerDetailRowsHtml']
+    .map((name) => sourceFunction(profileSource, name)).join('\n')}
+    globalThis.api = { passengerHistoryEntryHtml, passengerDetailRowsHtml };`, context, { filename: 'actual_profile.js' });
+  return context.api;
+}
+
+await check('profile history: the new ride shows the car with its plate; an old ride shows no car row and no placeholder', async () => {
+  globalThis.__BD_API_BASE__ = 'http://127.0.0.1:3000';
+  const entries = await mockApi.listHistoryFromBackend();
+  globalThis.__BD_API_BASE__ = '';
+  const fresh = entries.find((e) => e.tripId === 'trip_new');
+  const old = entries.find((e) => e.tripId === 'trip_old');
+  const { passengerHistoryEntryHtml, passengerDetailRowsHtml } = historyHarness();
+  const text = (html) => { const el = new FakeElement('div'); el.innerHTML = html; return el.textContent.replace(/\s+/g, ' ').trim(); };
+  for (const html of [passengerHistoryEntryHtml(fresh, 0), passengerDetailRowsHtml(fresh)]) {
+    assert.match(text(html), /Автомобиль Kia Rio · Серый · А 108 ОР 77/);
+  }
+  for (const html of [passengerHistoryEntryHtml(old, 1), passengerDetailRowsHtml(old)]) {
+    assert.doesNotMatch(text(html), /Автомобиль/, 'no car row for a ride without a car');
+    assert.doesNotMatch(text(html), /не указан|нет данных/i, 'no placeholder');
+  }
 });
 
 console.log(`\n${passed} passed; ${failures.length} failed`);

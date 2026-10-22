@@ -680,9 +680,14 @@ function mapServerOfferToDriverCard(offer, request, index) {
     ? formatRub(value)
     : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
   // #1113 — the offer's car as separate fields; the plate is the server's masked form («А ••• ОР 77»)
-  // before selection. An offer from before the slice has no vehicle and keeps its display line.
+  // before selection. The visible car line is built from those fields (the server's normalized
+  // values); an offer from before the slice has no vehicle and keeps its own display line.
   const vehicle = (offer && offer.vehicle) || {};
   const vehicleModel = pickStr(vehicle.model);
+  const vehicleColor = vehicleModel ? pickStr(vehicle.color) : '';
+  const carLine = vehicleModel
+    ? [vehicleModel, vehicleColor].filter(Boolean).join(' · ')
+    : pickStr(offer && offer.car);
   return {
     id:         responseId,
     responseId,
@@ -691,9 +696,9 @@ function mapServerOfferToDriverCard(offer, request, index) {
     initials:   name.slice(0, 1).toUpperCase(),
     avatarTone: 'mint',
     rating:     '—',
-    car:        pickStr(offer && offer.car),
+    car:        carLine,
     carModel:   vehicleModel || pickStr(offer && offer.car),
-    carColor:   vehicleModel ? pickStr(vehicle.color) : '',
+    carColor:   vehicleColor,
     plate:      pickStr(vehicle.plate),
     trips:      '',
     price,
