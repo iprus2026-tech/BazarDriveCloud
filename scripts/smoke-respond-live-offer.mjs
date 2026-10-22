@@ -152,6 +152,8 @@ await check('live submit: the timing line leads the message, the car is real, an
   assert.deepEqual({ ...h.offers[0] }, {
     orderId: 'order-x', driverName: 'Иван', car: 'Kia Rio · Серый', price: 840,
     message: 'Могу подать машину раньше указанного времени.\nЕсть кресло',
+    // #1113 — the car as separate fields, the plate in full.
+    vehicleModel: 'Kia Rio', vehicleColor: 'Серый', vehiclePlate: 'А 108 ОР 77',
   });
   const now = respondHarness({ vehicle: { model: 'Kia Rio', color: '', plate: 'А 108 ОР 77' } });
   const g = render(now, livePost());

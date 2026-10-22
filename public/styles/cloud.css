@@ -4662,6 +4662,12 @@ body {
   color: var(--text-2);
   margin-top: 2px;
 }
+/* #1113 — a live offer: the passenger sees the plate in full only after choosing this driver. */
+.respond__vehicle-plate-note {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
 .respond__vehicle-badge { flex-shrink: 0; }
 
 /* ── No-vehicle CTA ─────────────────────────────────────── */

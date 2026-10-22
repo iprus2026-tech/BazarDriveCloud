@@ -252,8 +252,10 @@ expect('non-regression proof: recovery && hasConfirmedServerRide is IDENTICAL to
 // local/demo value untouched forever on a real, server-confirmed ride.
 // ride/waiting/timestamps ARE properly server-sourced already and correctly
 // keep their unchanged keep()-based merge.
-expect('server merge keeps ride/waiting/timestamps via keep(), neutralizes vehicle/payment/chat to authoritative-or-null, and computes order.offerPrice straight from srv (never keep()-preserved)',
-  mergeServer.includes('vehicle: { model: (srv.driver && srv.driver.car) || null, color: null, plate: null }')
+// #1113 — the server now serves `vehicle { model, color, plate }`; serverVehicle(srv) projects it
+// authoritative-or-null (driver.car stays the model line for a ride from before the slice).
+expect('server merge keeps ride/waiting/timestamps via keep(), takes vehicle from the server (serverVehicle, authoritative-or-null), neutralizes payment/chat, and computes order.offerPrice straight from srv (never keep()-preserved)',
+  mergeServer.includes('vehicle: serverVehicle(srv),')
     && mergeServer.includes('offerPrice: (srv.order && srv.order.offerPrice) || null,')
     && mergeServer.includes('payment: null')
     && mergeServer.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)')

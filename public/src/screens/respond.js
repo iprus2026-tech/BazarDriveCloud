@@ -509,6 +509,7 @@ function renderPassengerRide(root, post) {
                   ${escapeHtml(vehicle.name)} · ${escapeHtml(vehicle.plate)}
                 </div>
                 ${vehicleMeta ? `<div class="respond__vehicle-meta">${vehicleMeta}</div>` : ''}
+                ${liveOffer ? '<div class="respond__vehicle-plate-note">Госномер пассажир увидит после выбора</div>' : ''}
               </div>
               <span class="bd-badge accent respond__vehicle-badge">Ваше авто</span>
             </div>
@@ -801,6 +802,10 @@ function renderPassengerRide(root, post) {
           car:        driverSnapshot.car,
           price:      priceNum,
           message,
+          // #1113 — the car for the passenger's pickup check; the full plate (the snapshot's is masked).
+          vehicleModel: carName,
+          vehicleColor: carColor,
+          vehiclePlate: pickStr(vehicle?.plate),
         });
       } catch (err) {
         setLoading(false);
@@ -808,6 +813,12 @@ function renderPassengerRide(root, post) {
         // DRIVER_ROLE_REQUIRED — point at the profile switch / driver application (#1080).
         if (roleGateCode(err) === DRIVER_ROLE_REQUIRED) {
           showError(ROLE_GATE_TEXT.offerCreate);
+          if (errorProfile) errorProfile.hidden = false;
+        } else if (err && (err.code === 'VEHICLE_PLATE_REQUIRED' || err.code === 'VEHICLE_PLATE_INVALID')) {
+          // #1113 — the server needs the car's plate (and at most 20 characters of it).
+          showError(err.code === 'VEHICLE_PLATE_REQUIRED'
+            ? 'Без госномера отклик не отправить. Укажите номер авто в профиле водителя.'
+            : 'Госномер слишком длинный. Проверьте номер авто в профиле водителя.');
           if (errorProfile) errorProfile.hidden = false;
         } else {
           showError('Не удалось отправить предложение. Попробуйте ещё раз.');
