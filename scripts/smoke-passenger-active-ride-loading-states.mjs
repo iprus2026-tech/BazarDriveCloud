@@ -585,6 +585,11 @@ expect('arrivingDropoffAmount: the local/backend-off branch preserves the exact 
     && arrivingDropoffAmountBody.includes('const r = (ride && ride.ride) || {};')
     && arrivingDropoffAmountBody.includes('const order = (ride && ride.order) || {};')
     && arrivingDropoffAmountBody.includes("return pay.dropoffAmount || pay.amount || r.price || order.offerPrice || '1 540 ₽';"));
+// #1070 п.4 — with the backend ON a ride the server has not confirmed never reaches that chain.
+expect('arrivingDropoffAmount: backend ON, a non-authoritative ride returns "—" before the seeded local chain',
+  arrivingDropoffAmountBody.includes("if (isBackendEnabled()) return '—';")
+    && arrivingDropoffAmountBody.indexOf('if (ride && ride.authoritative) {') < arrivingDropoffAmountBody.indexOf("if (isBackendEnabled()) return '—';")
+    && arrivingDropoffAmountBody.indexOf("if (isBackendEnabled()) return '—';") < arrivingDropoffAmountBody.indexOf('const pay = (ride && ride.payment) || {};'));
 expect('arrivingDropoffAmount: the authoritative branch is structurally first, so it can never fall through into the pay/r.price chain',
   arrivingDropoffAmountBody.indexOf('if (ride && ride.authoritative) {') < arrivingDropoffAmountBody.indexOf('const pay = (ride && ride.payment) || {};'));
 expect('arrivingDropoffAmount is exported for direct deterministic testing (its authoritative branch is otherwise unobservable through the live DOM — see smoke-passenger-active-ride-local-sync-runtime.mjs)',

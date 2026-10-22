@@ -733,6 +733,11 @@ export function arrivingDropoffAmount(ride) {
     const order = ride.order || {};
     return order.offerPrice || '—';
   }
+  // #1070 п.4 — with the backend ON only a server-confirmed price is shown. A
+  // ride the server has not confirmed (a local or demo ride after a 404)
+  // carries seeded values — the demo ride's own price is the same mock
+  // «1 540 ₽» — so it gets the neutral «—». Backend OFF keeps the chain below.
+  if (isBackendEnabled()) return '—';
   const pay = (ride && ride.payment) || {};
   const r = (ride && ride.ride) || {};
   const order = (ride && ride.order) || {};
