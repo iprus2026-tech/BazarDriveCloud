@@ -28,6 +28,8 @@ const FIELD_LABELS = {
   estimatePriceFrom: { copy: 'Стоимость не оценена', path: 'routeDraft.estimatePriceFrom' },
 };
 
+const METRIC_FIELDS = new Set(['distanceKm', 'durationMin', 'estimatePriceFrom']);
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -60,9 +62,13 @@ function readRawDraft() {
   }
 }
 
+// #1057 — a draft with no route estimate at all (`route: null`, what the picker saves with the
+// backend ON while route-price is 501) is a valid route of two points with no metrics. A route
+// object that is present but incomplete is still malformed.
 function flattenDraft(parsed) {
   const route = isPlainObject(parsed.route) ? parsed.route : {};
   return {
+    hasEstimate: isPlainObject(parsed.route),
     pickup: isValidPoint(parsed.pickup) ? parsed.pickup : null,
     dropoff: isValidPoint(parsed.dropoff) ? parsed.dropoff : null,
     distanceKm: isFiniteNumber(route.distanceKm) ? route.distanceKm : null,
@@ -74,6 +80,7 @@ function flattenDraft(parsed) {
 function collectMissingFields(draft) {
   const missing = [];
   for (const key of Object.keys(FIELD_LABELS)) {
+    if (!draft.hasEstimate && METRIC_FIELDS.has(key)) continue;
     if (draft[key] == null) missing.push({ key, ...FIELD_LABELS[key] });
   }
   return missing;
@@ -185,7 +192,7 @@ function renderValidCard(draft) {
       </button>
     </div>
 
-    <dl class="rpv-metrics" aria-label="Параметры маршрута">
+    ${draft.hasEstimate ? `<dl class="rpv-metrics" aria-label="Параметры маршрута">
       <div class="rpv-metric">
         <dt class="rpv-metric__value">${escapeHtml(String(Math.round(draft.durationMin)))}<span class="rpv-metric__unit"> мин</span></dt>
         <dd class="rpv-metric__label">В ПУТИ</dd>
@@ -198,7 +205,7 @@ function renderValidCard(draft) {
         <dt class="rpv-metric__value"><span class="rpv-metric__prefix">от </span>${escapeHtml(String(Math.round(draft.estimatePriceFrom)))}<span class="rpv-metric__unit"> ₽</span></dt>
         <dd class="rpv-metric__label">ОЦЕНКА</dd>
       </div>
-    </dl>
+    </dl>` : ''}
 
     <button class="bd-btn primary rpv-cta" type="button" data-action="create-order">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

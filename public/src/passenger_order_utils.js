@@ -1,4 +1,5 @@
-import { COORDINATE_PROVENANCE, readGeoPoint } from './geo_point.js';
+import { COORDINATE_PROVENANCE, readGeoPoint, hasTrustedCoordinateProvenance } from './geo_point.js';
+import { isBackendEnabled } from './api_config.js';
 
 function hashText(text) {
   const input = String(text || '').trim().toLowerCase();
@@ -45,7 +46,10 @@ export function enrichOrderPointWithCoords(point, fallbackLabel = '') {
     ? point.label.trim()
     : String(fallbackLabel || '').trim();
   if (!label) return null;
-  const coords = resolvePointCoords(point, label);
+  const resolved = resolvePointCoords(point, label);
+  // #1057 — with the backend ON an order carries only real coordinates; the label-hash
+  // stand-in (and an unknown legacy value) leaves a text-only point. Backend OFF keeps it.
+  const coords = resolved && (!isBackendEnabled() || hasTrustedCoordinateProvenance(resolved)) ? resolved : null;
   return {
     id: point?.id ?? null,
     label,

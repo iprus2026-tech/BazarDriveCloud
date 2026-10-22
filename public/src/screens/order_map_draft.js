@@ -9,6 +9,7 @@ import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { user } from '../state.js';
 import { createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
+import { isBackendEnabled } from '../api_config.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
 import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
 
@@ -161,10 +162,11 @@ function readRouteDraft() {
       durationMin: isFiniteNumber(route.durationMin) ? route.durationMin : null,
       estimatedPrice: isFiniteNumber(route.estimatedPrice) ? route.estimatedPrice : null,
     };
-    if (!draft.pickup || !draft.dropoff
-        || draft.distanceKm == null
-        || draft.durationMin == null
-        || draft.estimatedPrice == null) {
+    if (!draft.pickup || !draft.dropoff) return null;
+    // #1057 — with the backend ON a route has no metrics yet (route-price is 501); backend OFF
+    // still requires the local estimate.
+    if (!isBackendEnabled()
+        && (draft.distanceKm == null || draft.durationMin == null || draft.estimatedPrice == null)) {
       return null;
     }
     return draft;
@@ -256,8 +258,11 @@ function clampPrice(value) {
   return n;
 }
 
+// #1057 — with the backend ON there is no estimate: the price is what the passenger typed
+// (null until then). Backend OFF defaults to the local estimate.
 function currentPrice(draft) {
-  return form.price == null ? clampPrice(draft.estimatedPrice) : clampPrice(form.price);
+  if (form.price != null) return clampPrice(form.price);
+  return isBackendEnabled() ? null : clampPrice(draft.estimatedPrice);
 }
 
 function formatDistance(km) {
@@ -283,10 +288,11 @@ function validate(draft) {
       });
     }
   }
-  if (currentPrice(draft) <= 0) {
+  const price = currentPrice(draft);
+  if (price == null || price <= 0) {
     errors.push({
       key: 'price',
-      copy: 'Проверьте цену или контакт',
+      copy: isBackendEnabled() ? 'Укажите цену поездки' : 'Проверьте цену или контакт',
       path: 'order.price',
     });
   }
@@ -395,7 +401,7 @@ function renderRouteSummary(draft) {
       </button>
     </div>
 
-    <dl class="omd-metrics" aria-label="Параметры маршрута">
+    ${isBackendEnabled() ? '' : `<dl class="omd-metrics" aria-label="Параметры маршрута">
       <div class="omd-metric">
         <dt class="omd-metric__value">${escapeHtml(String(Math.round(draft.durationMin)))}<span class="omd-metric__unit"> мин</span></dt>
         <dd class="omd-metric__label">В ПУТИ</dd>
@@ -408,7 +414,7 @@ function renderRouteSummary(draft) {
         <dt class="omd-metric__value"><span class="omd-metric__prefix">≈ </span>${escapeHtml(String(Math.round(draft.estimatedPrice)))}<span class="omd-metric__unit"> ₽</span></dt>
         <dd class="omd-metric__label">ОЦЕНКА</dd>
       </div>
-    </dl>
+    </dl>`}
   `;
 }
 
@@ -462,23 +468,32 @@ function renderScheduleFields() {
   `;
 }
 
+// #1058 — the field is never natively invalid: step="any" and no min/max attributes (any typed
+// value is valid; clampPrice keeps the stored price in range and the field shows it after a
+// change). #1057 — with the backend ON there is no estimate: the field starts empty and ±50
+// moves the typed value.
 function renderPriceRow(draft) {
   const price = currentPrice(draft);
-  const estimate = clampPrice(draft.estimatedPrice);
+  const live = isBackendEnabled();
+  const hint = live ? '' : `<span class="omd-price__hint">ОЦЕНКА ОТ ${escapeHtml(String(clampPrice(draft.estimatedPrice)))} ₽</span>`;
+  const note = live
+    ? 'Укажите цену поездки — это финальная цена для водителя. Кнопки ±50 ₽ меняют введённое значение.'
+    : 'Это финальная цена для водителя. При желании измените ориентир шагом 50 ₽.';
   return `
     <div class="omd-price">
       <div class="omd-price__head">
         <span class="omd-price__label">ЦЕНА ПАССАЖИРА</span>
-        <span class="omd-price__hint">ОЦЕНКА ОТ ${escapeHtml(String(estimate))} ₽</span>
+        ${hint}
       </div>
-      <p class="omd-price__note">Это финальная цена для водителя. При желании измените ориентир шагом 50 ₽.</p>
+      <p class="omd-price__note">${escapeHtml(note)}</p>
       <div class="omd-price__stepper">
         <button class="omd-price__btn" type="button" data-action="price-down"
                 aria-label="Уменьшить цену на 50 ₽">−50</button>
         <div class="omd-price__value-wrap">
           <input class="omd-price__input" type="number" inputmode="numeric"
-                 data-input="price" min="${PRICE_MIN}" max="${PRICE_MAX}" step="${PRICE_STEP}"
-                 value="${escapeHtml(String(price))}"
+                 data-input="price" step="any"
+                 value="${escapeHtml(price == null ? '' : String(price))}"
+                 placeholder="${live ? 'Цена, ₽' : ''}"
                  aria-label="Цена в рублях">
           <span class="omd-price__currency" aria-hidden="true">₽</span>
         </div>
@@ -841,8 +856,10 @@ async function publishOrder(draft) {
     type: 'passenger_request',
     pickup: enrichOrderPointWithCoords(draft.pickup),
     dropoff: enrichOrderPointWithCoords(draft.dropoff),
-    distanceKm: draft.distanceKm,
-    durationMin: draft.durationMin,
+    // #1057 / #1109 — with the backend ON there is no route source yet, so the order carries 0
+    // («unknown»; the order schema needs numbers) even from a draft left by an earlier estimate.
+    distanceKm: isBackendEnabled() ? 0 : draft.distanceKm,
+    durationMin: isBackendEnabled() ? 0 : draft.durationMin,
     estimatedPrice: currentPrice(draft),
     scheduledMode: form.mode,
     scheduledAt: form.mode === 'later'
@@ -995,13 +1012,15 @@ function handleAction(root, action, draft, state) {
     return;
   }
   if (action === 'price-down') {
+    // #1057 — with no price typed yet (backend ON) «−» has nothing to lower.
+    if (currentPrice(draft) == null) return;
     form.price = clampPrice(currentPrice(draft) - PRICE_STEP);
     persistForm();
     rerender(root, { state, draft });
     return;
   }
   if (action === 'price-up') {
-    form.price = clampPrice(currentPrice(draft) + PRICE_STEP);
+    form.price = clampPrice((currentPrice(draft) ?? 0) + PRICE_STEP);
     persistForm();
     rerender(root, { state, draft });
     return;
@@ -1016,7 +1035,10 @@ function handleInput(root, target, draft) {
   const field = target.dataset.input;
   if (!field) return;
   if (field === 'price') {
-    form.price = clampPrice(target.value);
+    // #1057 — with the backend ON an emptied (or unparsable) field is «no price yet»; backend
+    // OFF keeps reading it as 0.
+    const raw = String(target.value ?? '').trim();
+    form.price = raw === '' && isBackendEnabled() ? null : clampPrice(raw);
     persistForm();
     return; // do not rerender on every keystroke
   }
@@ -1254,9 +1276,23 @@ export default function orderMapDraftScreen() {
     handleInput(root, event.target, renderedDraft);
   });
 
+  // #1058 — once a price is committed (change) or left (focusout: an unparsable entry such as «1e»
+  // reads as '' and fires no change), the field shows the stored whole, in-range value; resetting
+  // the value also drops the native badInput state.
+  function showStoredPrice(target) {
+    if (target?.dataset?.input !== 'price' || !renderedDraft) return;
+    const price = currentPrice(renderedDraft);
+    target.value = price == null ? '' : String(price);
+  }
+
   root.addEventListener('change', (event) => {
     // For date / time pickers that fire change instead of input.
     handleInput(root, event.target, renderedDraft);
+    showStoredPrice(event.target);
+  });
+
+  root.addEventListener('focusout', (event) => {
+    showStoredPrice(event.target);
   });
 
   return root;

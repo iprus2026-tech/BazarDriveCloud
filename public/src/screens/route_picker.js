@@ -525,7 +525,9 @@ function inferStatus() {
 function syncDraft() {
   routeDraft.results = getMockResults(routeDraft.query);
   routeDraft.status = inferStatus();
-  routeDraft.route = estimateRoute(routeDraft.pickup, routeDraft.dropoff);
+  // #1057 — no route source yet (route-price is 501): with the backend ON there is no invented
+  // distance / time / «от N ₽»; backend OFF keeps the label-hash estimate.
+  routeDraft.route = isBackendEnabled() ? null : estimateRoute(routeDraft.pickup, routeDraft.dropoff);
   routeDraft.stage = computeStage();
 }
 
