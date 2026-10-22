@@ -563,6 +563,18 @@ if (exists(respondLiveOfferSmoke)) {
   }
 }
 
+// Slice 4d-1 (#1057): with the backend ON the route picker offers only the passenger's own places
+// (favorite routes, recent addresses of completed rides); no demo places, suggestions or «Моё место».
+const routePickerLivePlacesSmoke = path.join(root, 'scripts', 'smoke-route-picker-live-places.mjs');
+if (exists(routePickerLivePlacesSmoke)) {
+  try {
+    execFileSync(process.execPath, [routePickerLivePlacesSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-route-picker-live-places.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt
