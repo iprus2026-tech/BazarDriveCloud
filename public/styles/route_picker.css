@@ -830,3 +830,12 @@
     flex-wrap: wrap;
   }
 }
+
+/* #1057 — backend ON: a calm note in place of empty / loading place lists. */
+.rp-places__note {
+  margin: 0;
+  padding: 10px 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+}

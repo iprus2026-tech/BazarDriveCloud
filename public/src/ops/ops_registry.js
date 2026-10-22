@@ -206,6 +206,8 @@ const SCREENS = [
     title: 'Route Picker',
     route: '/route-picker',
     file: 'public/src/screens/route_picker.js',
+    backendState: 'dark-seam',
+    backendContract: { reads: ['GET /api/v1/history'], writes: [], note: '#1057 — backend ON: «Недавние» are up to five addresses of the passenger\'s completed rides; favorite routes stay local (favorite_routes.v1); no demo places, mock suggestions or «Моё место».' },
     role: 'passenger',
     contractStatus: 'exists',
     designStatus: 'current',

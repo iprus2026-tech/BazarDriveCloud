@@ -8,8 +8,9 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { peekRepeatRouteDraft, clearRepeatRouteDraft } from '../repeat_route.js';
-import { peekFavoriteNotice, clearFavoriteNotice } from '../favorite_routes.js';
-import { findLatestHandedOffOrderTripId } from '../mock_api.js';
+import { peekFavoriteNotice, clearFavoriteNotice, loadFavoriteRoutes } from '../favorite_routes.js';
+import { findLatestHandedOffOrderTripId, listHistoryFromBackend } from '../mock_api.js';
+import { isBackendEnabled } from '../api_config.js';
 import { deriveMockCoordsFromLabel, resolvePointCoords } from '../passenger_order_utils.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
@@ -99,6 +100,115 @@ const RECENT_PLACES = [
 const STATIC_PLACES = new Map();
 for (const entry of [...SAVED_PLACES, ...RECENT_PLACES]) {
   STATIC_PLACES.set(entry.id, entry.point);
+}
+
+// #1057 — every demo point the backend-OFF picker can put into a draft. A draft saved before
+// the backend was ON (same device) must not carry them into a live order.
+const DEMO_POINT_IDS = new Set([
+  MOCK_CURRENT_LOCATION.id,
+  ...MOCK_SUGGESTIONS.map((point) => point.id),
+  ...[...STATIC_PLACES.values()].map((point) => point.id),
+]);
+
+// #1057 — with the backend ON the picker offers only the passenger's own places: favorite
+// routes (favorite_routes.v1, saved on this device from the ride history) and up to five recent
+// addresses from their completed rides (GET /history). No demo rows above, no mock suggestions
+// and no «Моё место» (there is no geolocation source yet). Backend OFF keeps the demo picker.
+const LIVE_RECENTS_LIMIT = 5;
+const live = { favorites: [], recents: [], recentsState: 'idle', runId: 0 };
+
+// The newest completed passenger rides first; each ride gives its pickup then its dropoff;
+// an address appears once (case-insensitive); at most `limit` of them.
+export function recentAddressesFromHistory(entries, limit = LIVE_RECENTS_LIMIT) {
+  const rides = (Array.isArray(entries) ? entries : [])
+    .filter((e) => e && e.role === 'passenger')
+    .sort((a, b) => (Date.parse(b.completedAt) || 0) - (Date.parse(a.completedAt) || 0));
+  const seen = new Set();
+  const out = [];
+  for (const ride of rides) {
+    for (const raw of [ride.route?.pickupLabel, ride.route?.dropoffLabel]) {
+      const label = typeof raw === 'string' ? raw.trim() : '';
+      const key = label.toLowerCase();
+      if (!label || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ label, completedAt: ride.completedAt || null });
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+function liveFavoriteName(fav) {
+  return fav.customLabel || fav.label || `${fav.pickup} → ${fav.dropoff}`;
+}
+
+function liveSuggestionPool() {
+  const pool = [];
+  const seen = new Set();
+  const add = (label, hint) => {
+    const key = label.toLowerCase();
+    if (!label || seen.has(key)) return;
+    seen.add(key);
+    pool.push(makePoint(`live-${pool.length}`, label, hint, 'search'));
+  };
+  for (const recent of live.recents) add(recent.label, 'Из ваших поездок');
+  for (const fav of live.favorites) {
+    add(fav.pickup, 'Из избранного');
+    add(fav.dropoff, 'Из избранного');
+  }
+  return pool;
+}
+
+function loadLiveRecents(root) {
+  const runId = ++live.runId;
+  live.recentsState = 'loading';
+  const settle = (recents, state) => {
+    if (runId !== live.runId) return;
+    live.recents = recents;
+    live.recentsState = state;
+    // An open manual form keeps what the passenger is typing (it reads its fields only on
+    // «Сохранить»); the list shows the recents on the next render.
+    if (!root.isConnected || routeDraft.manual) return;
+    const typing = document.activeElement?.dataset?.input;
+    rerender(root, typing === 'pickup' || typing === 'dropoff' ? typing : null);
+  };
+  listHistoryFromBackend().then(
+    (entries) => settle(recentAddressesFromHistory(entries), 'ready'),
+    // A guest (no session) simply has no rides yet; anything else is a failed read.
+    (err) => settle([], Number(err?.status) === 401 ? 'ready' : 'error'),
+  );
+}
+
+// A persisted demo point (see DEMO_POINT_IDS) is dropped from the draft when the backend is ON.
+function dropDemoPoints() {
+  let dropped = false;
+  for (const kind of ['pickup', 'dropoff']) {
+    if (routeDraft[kind] && DEMO_POINT_IDS.has(routeDraft[kind].id)) {
+      routeDraft[kind] = null;
+      dropped = true;
+    }
+  }
+  if (!dropped) return;
+  routeDraft.focus = routeDraft.pickup ? 'dropoff' : 'pickup';
+  routeDraft.source = null;
+  routeDraft.prefillSource = null;
+  routeDraft.prefillLabel = '';
+  syncDraft();
+  persistDraft();
+}
+
+function applyFavoriteRoute(fav) {
+  setPoint('pickup', makePoint(`fav-pickup-${fav.id}`, fav.pickup, 'Из избранного', 'manual'));
+  setPoint('dropoff', makePoint(`fav-dropoff-${fav.id}`, fav.dropoff, 'Из избранного', 'manual'));
+  routeDraft.prefillSource = 'favorite';
+  routeDraft.prefillLabel = liveFavoriteName(fav);
+  persistDraft();
+}
+
+function formatRecentDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 }
 
 const routeDraft = {
@@ -393,7 +503,8 @@ function normalize(value) {
 function getMockResults(query) {
   const q = normalize(query);
   if (!q) return [];
-  return MOCK_SUGGESTIONS.filter((item) => {
+  const pool = isBackendEnabled() ? liveSuggestionPool() : MOCK_SUGGESTIONS;
+  return pool.filter((item) => {
     const haystack = normalize(`${item.label} ${item.hint ?? ''}`);
     return haystack.includes(q);
   }).slice(0, 5);
@@ -529,7 +640,7 @@ function renderRouteCard() {
         <div class="rp-card__divider" aria-hidden="true"></div>
         ${renderPointField('dropoff')}
       </div>
-      <button class="rp-card__action" type="button" data-action="current-location"
+      ${isBackendEnabled() ? '' : `<button class="rp-card__action" type="button" data-action="current-location"
               aria-label="Использовать моё место">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -537,7 +648,7 @@ function renderRouteCard() {
           <circle cx="18" cy="18" r="2.4"/>
           <path d="M8.4 6H15a3 3 0 0 1 3 3v6.6"/>
         </svg>
-      </button>
+      </button>`}
     </div>
   `;
 }
@@ -607,7 +718,57 @@ function savedIcon(kind) {
   return '＋';
 }
 
+// #1057 — backend ON: the passenger's own favorite routes and recent addresses.
+function renderLivePlaces() {
+  const favorites = live.favorites.map((fav) => `
+    <button class="rp-place" type="button" data-favorite="${escapeHtml(fav.id)}"
+            aria-label="${escapeHtml(liveFavoriteName(fav))}: ${escapeHtml(fav.pickup)} → ${escapeHtml(fav.dropoff)}">
+      <span class="rp-place__icon rp-place__icon--saved" aria-hidden="true">★</span>
+      <span class="rp-place__body">
+        <strong>${escapeHtml(liveFavoriteName(fav))}</strong>
+        <small>${escapeHtml(`${fav.pickup} → ${fav.dropoff}`)}</small>
+      </span>
+      <span class="rp-place__chevron" aria-hidden="true">›</span>
+    </button>
+  `).join('');
+
+  const recents = live.recents.map((recent, index) => `
+    <button class="rp-place" type="button" data-recent="${index}" aria-label="${escapeHtml(recent.label)}">
+      <span class="rp-place__icon" aria-hidden="true">🕓</span>
+      <span class="rp-place__body">
+        <strong>${escapeHtml(recent.label)}</strong>
+        <small>Из ваших поездок</small>
+      </span>
+      <span class="rp-place__date" aria-hidden="true">${escapeHtml(formatRecentDate(recent.completedAt))}</span>
+    </button>
+  `).join('');
+
+  let recentsBody = recents;
+  if (live.recentsState === 'loading') {
+    recentsBody = '<p class="rp-places__note" role="status">Загружаем недавние адреса…</p>';
+  } else if (!recents) {
+    recentsBody = live.recentsState === 'error'
+      ? '<p class="rp-places__note" role="status">Не удалось загрузить недавние адреса.</p>'
+      : '<p class="rp-places__note">Здесь появятся адреса ваших завершённых поездок.</p>';
+  }
+
+  return `
+    <section class="rp-places" aria-label="Избранные маршруты">
+      <h2 class="rp-places__title">Избранные маршруты</h2>
+      ${favorites || '<p class="rp-places__note">Избранных маршрутов пока нет. Их можно сохранить из истории поездок в профиле.</p>'}
+    </section>
+    <section class="rp-places" aria-label="Недавние адреса">
+      <h2 class="rp-places__title">Недавние</h2>
+      ${recentsBody}
+    </section>
+    <button class="rp-manual-link" type="button" data-action="manual-open">
+      <span aria-hidden="true">✎</span> Ввести адрес вручную
+    </button>
+  `;
+}
+
 function renderSavedRecent() {
+  if (isBackendEnabled()) return renderLivePlaces();
   const saved = SAVED_PLACES.map((entry) => `
     <button class="rp-place" type="button" data-place="${escapeHtml(entry.id)}"
             aria-label="${escapeHtml(entry.name)} — ${escapeHtml(entry.point.label)}">
@@ -1025,6 +1186,22 @@ function handleClick(root, target) {
   // BD-MAP-03B — saved / recent rows (mock). Resolve through STATIC_PLACES
   // and drop a clone into the focused field via the shared setPoint() path,
   // so route_draft.v1 stays the single source of truth.
+  // #1057 — backend ON: a favorite route fills both points; a recent address the focused one.
+  const favoriteId = target.closest('[data-favorite]')?.dataset.favorite;
+  if (favoriteId) {
+    const fav = live.favorites.find((item) => item.id === favoriteId);
+    if (fav) applyFavoriteRoute(fav);
+    rerender(root);
+    return;
+  }
+  const recentIndex = target.closest('[data-recent]')?.dataset.recent;
+  if (recentIndex != null) {
+    const recent = live.recents[Number(recentIndex)];
+    if (recent) setPoint(routeDraft.focus, makePoint(`live-recent-${recentIndex}`, recent.label, 'Из ваших поездок', 'manual'));
+    rerender(root);
+    return;
+  }
+
   const placeId = target.closest('[data-place]')?.dataset.place;
   if (placeId) {
     const point = STATIC_PLACES.get(placeId);
@@ -1205,10 +1382,18 @@ export default function routePickerScreen() {
   // is re-shown for whatever live trip exists now.
   activeRideGuardDismissedTripId = null;
   resolveActiveRideGuardTripId();
+  const livePlaces = isBackendEnabled();
+  if (livePlaces) {
+    dropDemoPoints();
+    live.favorites = loadFavoriteRoutes().filter((fav) => fav.role === 'passenger');
+    live.recents = [];
+    live.recentsState = 'loading';
+  }
   const root = document.createElement('section');
   root.className = 'screen screen--route-picker';
   root.dataset.status = routeDraft.status;
   root.replaceChildren(buildBody());
+  if (livePlaces) loadLiveRecents(root);
 
   root.addEventListener('input', (event) => {
     handleInput(root, event.target);
