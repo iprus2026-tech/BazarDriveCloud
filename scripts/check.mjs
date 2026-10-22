@@ -551,6 +551,18 @@ if (exists(driverMoneyServerSmoke)) {
   }
 }
 
+// Slice 4b (#1061): the /respond live-offer form shows only real values (price chips from the
+// order price, timing only for a scheduled order, the car's own fields, no prefilled message).
+const respondLiveOfferSmoke = path.join(root, 'scripts', 'smoke-respond-live-offer.mjs');
+if (exists(respondLiveOfferSmoke)) {
+  try {
+    execFileSync(process.execPath, [respondLiveOfferSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-respond-live-offer.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt

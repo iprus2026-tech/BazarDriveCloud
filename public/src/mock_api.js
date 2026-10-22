@@ -1120,6 +1120,9 @@ export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
     from: pointLabel(order.pickup, 'Точка подачи'),
     to: pointLabel(order.dropoff, 'Точка назначения'),
     when: formatRideOrderWhen(order),
+    // #1061 — /respond offers the pickup-timing choice only for a scheduled order.
+    scheduledMode: order.scheduledMode === 'later' ? 'later' : 'now',
+    scheduledAt: order.scheduledAt || null,
     price: formatRideOrderPrice(order),
     seats: null,
     body: comment || null,

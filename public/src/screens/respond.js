@@ -21,6 +21,34 @@ const TIMING_OPTIONS = [
 
 const DEFAULT_PASSENGER_PRICE = 1500;
 
+// #1061 — a live offer (backend ON, a canonical ride order) shows only real values. The timing
+// choice reaches the passenger as the first line of the message: the offer has no timing field
+// yet (#1106). No hour is invented for «Могу раньше».
+const LIVE_TIMING_OPTIONS = [
+  { key: 'at_time',   label: 'К указанному времени', line: 'Подам машину к указанному времени.' },
+  { key: 'earlier',   label: 'Могу раньше',          line: 'Могу подать машину раньше указанного времени.' },
+  { key: 'negotiate', label: 'Договоримся',          line: 'Время подачи обсудим.' },
+];
+
+// The order's exact price, then +10 % and +20 % rounded to 10 ₽; no price → no chips.
+export function livePriceChips(price) {
+  if (!Number.isFinite(price) || price <= 0) return [];
+  const up = (k) => Math.round((price * k) / 10) * 10;
+  return [...new Set([price, up(1.1), up(1.2)])].filter((p, i) => i === 0 || p > price);
+}
+
+// The live offer's message: the scheduled order's timing line first, then the driver's text.
+export function liveOfferMessage(timingKey, text, scheduled) {
+  const timing = scheduled ? LIVE_TIMING_OPTIONS.find((t) => t.key === timingKey) : null;
+  return [timing ? timing.line : '', typeof text === 'string' ? text.trim() : ''].filter(Boolean).join('\n');
+}
+
+// The active garage vehicle's own colour ('' when unset), never a placeholder.
+function realVehicleColor(u) {
+  const active = resolveActiveGarageVehicle(u);
+  return active && typeof active.color === 'string' ? active.color.trim() : '';
+}
+
 function saveResponse(data) {
   try { localStorage.setItem(RESPOND_KEY, JSON.stringify(data)); } catch {}
 }
@@ -365,7 +393,10 @@ function renderPassengerRide(root, post) {
   const u = user.get();
   const vehicle = getUserVehicle(u);
   const hasVehicle = Boolean(vehicle);
-  const defaultMessage = getDefaultMessage(vehicle);
+  const liveOffer = isBackendEnabled() && post.canonical === 'ride_order' && Boolean(post.orderId);
+  const scheduled = post.scheduledMode === 'later';
+  const realColor = liveOffer ? realVehicleColor(u) : '';
+  const defaultMessage = liveOffer ? '' : getDefaultMessage(vehicle);
 
   const passengerName = post.author || 'Пассажир';
   const passengerInitials = initial(passengerName);
@@ -381,9 +412,14 @@ function renderPassengerRide(root, post) {
   const numericPrice = typeof post.price === 'string'
     ? Number(post.price.replace(/[^\d]/g, ''))
     : (typeof post.price === 'number' ? post.price : NaN);
-  const initialPrice = Number.isFinite(numericPrice) && numericPrice > 0
-    ? numericPrice
-    : DEFAULT_PASSENGER_PRICE;
+  const orderPrice = Number.isFinite(numericPrice) && numericPrice > 0 ? numericPrice : null;
+  const initialPrice = orderPrice ?? (liveOffer ? '' : DEFAULT_PASSENGER_PRICE);
+  const priceChips = liveOffer ? livePriceChips(orderPrice) : PRICE_CHIPS;
+  const timingOptions = liveOffer ? LIVE_TIMING_OPTIONS : TIMING_OPTIONS;
+  const showTiming = !liveOffer || scheduled;
+  const vehicleMeta = liveOffer
+    ? escapeHtml(realColor)
+    : (vehicle ? `${escapeHtml(vehicle.color)} · ${vehicle.seats} места · ${escapeHtml(vehicle.features)}` : '');
 
   const priceHint = (typeof post.price === 'string' && post.price.trim())
     ? `Пассажир предлагает ${escapeHtml(post.price)}`
@@ -425,26 +461,28 @@ function renderPassengerRide(root, post) {
                    aria-label="Ваша цена в рублях">
             <span class="respond__price-currency" aria-hidden="true">₽</span>
           </div>
+          ${priceChips.length ? `
           <div class="respond__chips" role="group" aria-label="Быстрый выбор цены" id="price-chips">
-            ${PRICE_CHIPS.map((p) => `
+            ${priceChips.map((p) => `
               <button type="button"
                       class="respond-chip${p === initialPrice ? ' active' : ''}"
                       data-price="${p}">${p}</button>
             `).join('')}
-          </div>
+          </div>` : ''}
           ${priceHint ? `<div class="respond__price-hint">${priceHint}</div>` : ''}
         </div>
 
+        ${showTiming ? `
         <div class="respond__section">
           <div class="bd-label">Когда подать машину</div>
           <div class="respond__chips" role="group" aria-label="Время подачи" id="timing-chips">
-            ${TIMING_OPTIONS.map((t, i) => `
+            ${timingOptions.map((t, i) => `
               <button type="button"
                       class="respond-chip${i === 0 ? ' active' : ''}"
                       data-timing="${escapeHtml(t.key)}">${escapeHtml(t.label)}</button>
             `).join('')}
           </div>
-        </div>
+        </div>` : ''}
 
         <div class="respond__section">
           <div class="bd-label">Сообщение пассажиру</div>
@@ -467,9 +505,7 @@ function renderPassengerRide(root, post) {
                 <div class="respond__vehicle-name">
                   ${escapeHtml(vehicle.name)} · ${escapeHtml(vehicle.plate)}
                 </div>
-                <div class="respond__vehicle-meta">
-                  ${escapeHtml(vehicle.color)} · ${vehicle.seats} места · ${escapeHtml(vehicle.features)}
-                </div>
+                ${vehicleMeta ? `<div class="respond__vehicle-meta">${vehicleMeta}</div>` : ''}
               </div>
               <span class="bd-badge accent respond__vehicle-badge">Ваше авто</span>
             </div>
@@ -554,7 +590,7 @@ function renderPassengerRide(root, post) {
     counter.textContent = `${msgArea.value.length} / ${MAX_MSG}`;
   });
 
-  root.querySelector('#price-chips').addEventListener('click', (e) => {
+  root.querySelector('#price-chips')?.addEventListener('click', (e) => {
     const chip = e.target.closest('[data-price]');
     if (!chip) return;
     priceInput.value = chip.dataset.price;
@@ -564,7 +600,7 @@ function renderPassengerRide(root, post) {
     clearError();
   });
 
-  root.querySelector('#timing-chips').addEventListener('click', (e) => {
+  root.querySelector('#timing-chips')?.addEventListener('click', (e) => {
     const chip = e.target.closest('[data-timing]');
     if (!chip) return;
     selectedTiming = chip.dataset.timing;
@@ -635,7 +671,11 @@ function renderPassengerRide(root, post) {
 
     const priceRaw = priceInput.value.trim();
     const priceNum = Number(priceRaw);
-    const message  = msgArea.value.trim();
+    // #1061 — a live offer's message is optional (the server accepts none); a scheduled
+    // order's timing choice leads it. Backend OFF keeps the required free text.
+    const message  = liveOffer
+      ? liveOfferMessage(selectedTiming, msgArea.value, scheduled)
+      : msgArea.value.trim();
 
     if (!priceRaw) {
       showError('Укажите цену поездки');
@@ -647,7 +687,7 @@ function renderPassengerRide(root, post) {
       priceInput.focus();
       return;
     }
-    if (!message) {
+    if (!message && !liveOffer) {
       showError('Напишите сообщение пассажиру');
       msgArea.focus();
       return;
@@ -702,7 +742,8 @@ function renderPassengerRide(root, post) {
     // Match MOCK_DRIVERS convention ('Model · цвет') so renderDriverCard /
     // renderOffer show the same line shape for real and mock responses.
     const carName  = pickStr(vehicle?.name);
-    const carColor = pickStr(vehicle?.color);
+    // #1061 — a live offer carries the car's own colour, never the «Цвет не указан» placeholder.
+    const carColor = liveOffer ? realColor : pickStr(vehicle?.color);
     const carLine  = (carName && carColor) ? `${carName} · ${carColor}` : (carName || '');
     // Russian plate format is "Л NNN ЛЛ RR" (e.g. "А 123 АА 77"). Mask the
     // middle digit segment (the personal identifier) and keep the letter
