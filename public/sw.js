@@ -259,7 +259,8 @@
 // v382 (BD-AUTH-POLICY-01B-C K3-2): readable role-gate refusals (new role_gate.js).
 // v383 (#1085, #1048): order-map-draft in-form clicks; the earnings sheet navigates once.
 // v384 (#1086, #1088): the profile adopts the server session role on mount; no passenger-mode row ON.
-const VERSION    = 'v392';
+// v393 (BD-TG-MINIAPP-01 M1, #1126): new telegram_launch.js — Telegram launch capture before the router.
+const VERSION    = 'v393';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -276,6 +277,7 @@ const PRECACHE = [
   './styles/order_map_draft.css',
   './styles/daily_communication.css',
   './src/app.js',
+  './src/telegram_launch.js',
   './src/app_error_overlay.js',
   './src/app_connection_status.js',
   './src/app_error_triggers.js',
