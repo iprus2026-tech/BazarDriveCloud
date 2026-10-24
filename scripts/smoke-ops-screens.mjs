@@ -1123,6 +1123,8 @@ const BACKEND_AWARE_HELPERS = [
   'cancelOrderOnBackend',
   // #1070 — the payouts receipts and the driver's «сегодня» from the server history.
   'listDriverReceiptsResolved', 'loadDriverTodayStats',
+  // #1115 — the passenger's «Квитанция о поездке» from their own history (GET /history ON).
+  'getPassengerTripResolved',
 ];
 const BACKEND_SIGNAL = new Set(['isBackendEnabled', 'apiFetch', ...BACKEND_AWARE_HELPERS]);
 // #807 review (R1 follow-up) — SELF-POLICE the deny-list: derive every mock_api export that carries an

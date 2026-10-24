@@ -387,7 +387,7 @@ const SCREENS = [
     route: '/receipt',
     file: 'public/src/screens/trip_receipt.js',
     backendState: 'dark-seam',
-    backendContract: { reads: ['GET /api/v1/history (→ the trip receipt, via getReceiptResolved)'], writes: [], note: 'server-or-local fallback; forced cash/noncash/missing previews stay local.' },
+    backendContract: { reads: ['GET /api/v1/history (→ the trip receipt, via getReceiptResolved)'], writes: [], note: 'server-or-local fallback; forced cash/noncash/missing previews stay local. #1115: ?role=passenger is the passenger\'s «Квитанция о поездке» from their own history entry (GET /api/v1/history), no driver money.' },
     role: 'driver',
     contractStatus: 'exists',
     designStatus: 'current',

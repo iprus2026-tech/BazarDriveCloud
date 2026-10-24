@@ -600,6 +600,18 @@ if (exists(offerVehiclePlateClientSmoke)) {
   }
 }
 
+// #1115: the passenger's «Квитанция о поездке» (/receipt?role=passenger) from their own history —
+// never «чек» as a title, never the driver's commission / net / payouts.
+const passengerTripReceiptSmoke = path.join(root, 'scripts', 'smoke-passenger-trip-receipt.mjs');
+if (exists(passengerTripReceiptSmoke)) {
+  try {
+    execFileSync(process.execPath, [passengerTripReceiptSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-passenger-trip-receipt.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt

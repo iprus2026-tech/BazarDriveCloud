@@ -3,6 +3,7 @@
 // trip. ride_state.js is the foundation layer (no imports back into
 // mock_api.js), so this introduces no circular dependency.
 import { findActiveRide, loadActiveRideStore, saveActiveRideStore } from './ride_state.js';
+import { loadRideHistory } from './ride_history.js';
 
 // BD-API-SEAM-01 (R13 of #784) — the DARK backend seam. isBackendEnabled() is false by
 // default, so apiFetch is never reached today; this proves the one-line guard pattern slots
@@ -1453,6 +1454,17 @@ export async function getReceiptResolved(tripId) {
     return toReceiptTripId(tripId) === DEMO_DRIVER_RECEIPT.tripId ? null : getReceipt(tripId);
   }
   return getReceipt(tripId);
+}
+
+// #1115 — READ-ONLY: the passenger's own completed ride for their «Квитанция о поездке» — the
+// passenger history entry of the trip: GET /history with the backend ON (the server is the record,
+// no local fallback), the local ride history OFF. Null when there is none.
+export async function getPassengerTripResolved(tripId) {
+  const id = typeof tripId === 'string' ? tripId.trim() : '';
+  if (!id) return null;
+  const entries = isBackendEnabled() ? await listHistoryFromBackend() : loadRideHistory();
+  return (Array.isArray(entries) ? entries : [])
+    .find((entry) => entry && entry.role === 'passenger' && entry.tripId === id) || null;
 }
 
 // RECEIPT WRITE — POST the driver's write-once earnings receipt. No amounts: the server derives

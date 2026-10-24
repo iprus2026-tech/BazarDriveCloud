@@ -23,7 +23,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
-import { getReceipt, getReceiptResolved } from '../mock_api.js';
+import { getReceipt, getReceiptResolved, getPassengerTripResolved } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { isBackendEnabled } from '../api_config.js';
 
@@ -143,8 +143,88 @@ function receiptMissingHtml(tripId) {
     </article>`;
 }
 
+// #1115 — the passenger's «Квитанция о поездке» (?role=passenger). Not a cash receipt: there are no
+// fiscal details, and the app takes no payment (the passenger pays the driver directly). It is the
+// passenger's own completed-ride record — fare, route, driver, car — read from the passenger's
+// history entry (GET /history with the backend ON, the local ride history OFF), never from the
+// driver's financial receipt above: no commission, net, balance or payouts here.
+const PASSENGER_TITLE = 'Квитанция о поездке';
+const PASSENGER_LEGAL = 'Не является кассовым чеком. Оплата производится напрямую водителю.';
+
+// The short trip number, as on the order success card: the last six letters / digits of the id.
+function shortTripNumber(tripId) {
+  return String(tripId || '').replace(/[^0-9a-z]/gi, '').slice(-6);
+}
+
+function passengerFareText(fare) {
+  if (typeof fare === 'number' && Number.isFinite(fare)) return formatReceiptRub(fare);
+  const text = typeof fare === 'string' ? fare.trim() : '';
+  if (!text || /₽/.test(text)) return text;
+  const n = Number(text.replace(/\s+/g, '').replace(',', '.'));
+  return Number.isFinite(n) ? formatReceiptRub(n) : text;
+}
+
+function passengerCarText(car) {
+  return [car && car.model, car && car.color, car && car.plate]
+    .map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean).join(' · ');
+}
+
+function passengerMetaRow(label, value) {
+  return value ? `<div class="trip-receipt__meta-row"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>` : '';
+}
+
+function passengerTripDocHtml(trip) {
+  const fare = passengerFareText(trip.fare);
+  const number = shortTripNumber(trip.tripId);
+  return `
+    <article class="trip-receipt__doc trip-receipt__doc--passenger" data-receipt-role="passenger">
+      <div class="trip-receipt__doc-top">
+        <span class="trip-receipt__status-badge">Завершено</span>
+      </div>
+      <div class="trip-receipt__hero">
+        <p class="trip-receipt__hero-label">Стоимость поездки</p>
+        <p class="trip-receipt__hero-value">${escapeHtml(fare || '—')}</p>
+        ${number ? `<p class="trip-receipt__hero-trip">Поездка № ${escapeHtml(number)}</p>` : ''}
+      </div>
+      <dl class="trip-receipt__meta">
+        ${passengerMetaRow('Откуда', trip.route && trip.route.pickupLabel)}
+        ${passengerMetaRow('Куда', trip.route && trip.route.dropoffLabel)}
+        ${passengerMetaRow('Водитель', trip.driver && trip.driver.name)}
+        ${passengerMetaRow('Автомобиль', passengerCarText(trip.vehicle))}
+        ${passengerMetaRow('Завершено', formatCompletedAt(trip.completedAt))}
+      </dl>
+      <div class="trip-receipt__actions">
+        <button type="button" class="bd-btn primary trip-receipt__action" data-receipt-action="history">В историю поездок</button>
+      </div>
+      <p class="trip-receipt__legal">${escapeHtml(PASSENGER_LEGAL)}</p>
+    </article>`;
+}
+
+function passengerTripMissingHtml() {
+  return `
+    <article class="trip-receipt__doc trip-receipt__doc--missing" role="status" data-receipt-role="passenger">
+      <div class="trip-receipt__missing-icon" aria-hidden="true">🧾</div>
+      <p class="trip-receipt__missing-title">Квитанция пока недоступна</p>
+      <p class="trip-receipt__missing-text">Квитанция о поездке появится после её завершения.</p>
+      <div class="trip-receipt__actions">
+        <button type="button" class="bd-btn primary trip-receipt__action" data-receipt-action="history">В историю поездок</button>
+      </div>
+      <p class="trip-receipt__legal">${escapeHtml(PASSENGER_LEGAL)}</p>
+    </article>`;
+}
+
+// Same loading contract as renderResolved below (loadResource, guarded retry, no stale paint).
+async function renderPassengerResolved(content, tripId, forced, onRetry, isRetry) {
+  if (!content.isConnected) return;
+  const trip = forced === 'missing' ? null : await loadResource(() => getPassengerTripResolved(tripId), {
+    onRetry, isRetry, fallback: null, isActive: () => content.isConnected,
+  });
+  if (!content.isConnected) return;
+  content.innerHTML = trip ? passengerTripDocHtml(trip) : passengerTripMissingHtml();
+}
+
 // F — loading / syncing skeleton.
-function receiptSkeletonHtml() {
+function receiptSkeletonHtml(text = 'Синхронизируем чек…') {
   return `
     <div class="trip-receipt__doc trip-receipt__doc--loading" role="status" aria-live="polite" aria-busy="true">
       <div class="trip-receipt__sk trip-receipt__sk--badges"></div>
@@ -153,16 +233,18 @@ function receiptSkeletonHtml() {
       <div class="trip-receipt__sk trip-receipt__sk--row"></div>
       <div class="trip-receipt__sk trip-receipt__sk--row"></div>
       <div class="trip-receipt__sk trip-receipt__sk--total"></div>
-      <p class="trip-receipt__sk-text">Синхронизируем чек…</p>
+      <p class="trip-receipt__sk-text">${escapeHtml(text)}</p>
     </div>`;
 }
 
-function bindReceiptActions(root) {
+function bindReceiptActions(root, { passenger = false } = {}) {
   root.addEventListener('click', (e) => {
     const trigger = e.target instanceof Element ? e.target.closest('[data-receipt-action]') : null;
     if (!trigger) return;
     const action = trigger.dataset.receiptAction;
-    if (action === 'profile' || action === 'back') go('/profile');
+    // #1115 — the passenger's way back is their ride history (the canonical «В историю поездок»).
+    if (action === 'history' || (passenger && action === 'back')) go('/profile?section=history');
+    else if (action === 'profile' || action === 'back') go('/profile');
     else if (action === 'payouts') go('/profile?role=driver&pane=payouts');
   });
 }
@@ -223,20 +305,27 @@ export default function tripReceipt() {
   const query = getHashQuery();
   const tripId = (query.get('tripId') || '').trim();
   const forced = (query.get('state') || '').trim();
+  const passenger = query.get('role') === 'passenger';
 
   const root = document.createElement('section');
   root.className = 'screen screen--trip-receipt trip-receipt';
-  root.innerHTML = receiptHeadHtml('Чек поездки');
+  root.innerHTML = receiptHeadHtml(passenger ? PASSENGER_TITLE : 'Чек поездки');
 
   const content = document.createElement('div');
   content.className = 'trip-receipt__content';
-  content.innerHTML = receiptSkeletonHtml();
+  content.innerHTML = passenger ? receiptSkeletonHtml('Загружаем квитанцию…') : receiptSkeletonHtml();
   root.appendChild(content);
 
-  bindReceiptActions(root);
+  bindReceiptActions(root, { passenger });
 
   // ?state=loading holds the syncing skeleton for the render gate.
   if (forced === 'loading') return root;
+
+  if (passenger) {
+    const onPassengerRetry = () => { renderPassengerResolved(content, tripId, forced, onPassengerRetry, true); };
+    setTimeout(() => renderPassengerResolved(content, tripId, forced, onPassengerRetry, false), RECEIPT_SYNC_MS);
+    return root;
+  }
 
   // «Повторить» re-runs the resolve as a retry (isRetry → 'retrying' progress,
   // dismiss on success). onReceiptRetry references itself only when tapped, by

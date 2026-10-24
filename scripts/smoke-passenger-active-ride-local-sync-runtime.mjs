@@ -965,9 +965,31 @@ await tick(12);
   expect('S13: the COMPLETE renderer shows the server-confirmed driver name, never the built-in demo default',
     (app.querySelector('.active-ride-passenger__driver-name')?.textContent || '').includes('Мария В.'),
     app.querySelector('.active-ride-passenger__driver-name')?.textContent);
-  expect('S13: with no server vehicle/payment source, the payment line is a truthful neutral line, never a fabricated card',
-    app.querySelector('.passenger-complete__pay-method-title')?.textContent === 'Способ оплаты не указан',
-    app.querySelector('.passenger-complete__pay-method-title')?.textContent);
+  // #1115 — a server-confirmed ride has no in-app payment: no card row at all, only the direct-payment line.
+  expect('S13: with no server payment source, no card row and the truthful direct-payment line, never a fabricated card',
+    app.querySelector('.passenger-complete__pay-method-title') == null
+      && (app.querySelector('.passenger-complete__pay-disclosure')?.textContent || '').includes('Оплата напрямую водителю. Приложение не списывает деньги.'),
+    app.querySelector('.passenger-complete__pay')?.textContent);
+  // #1115 — the fare, no payment simulation, no «чек»; the rating never claims a charge; «Детали
+  // поездки» opens the passenger's «Квитанция о поездке».
+  const completeText13 = (app.querySelector('.active-ride-passenger--complete')?.textContent || '').replace(/\s+/g, ' ');
+  expect('S13 #1115: «Стоимость поездки» with the agreed fare',
+    /Стоимость поездки\s*999 ₽/.test(completeText13), completeText13.slice(0, 240));
+  expect('S13 #1115: no payment simulation and no «чек» on a server-confirmed ride',
+    !/Авто-оплата|Списание|Списано|Оплачено|Оплата спишется|чек/i.test(completeText13),
+    (completeText13.match(/Авто-оплата|Списание|Списано|Оплачено|Оплата спишется|чек/i) || [])[0]);
+  app.querySelector('[data-star="5"]')?.click();
+  app.querySelector('#arp-submit-rating')?.click();
+  await tick();
+  expect('S13 #1115: the rating does not flip the screen to «paid»',
+    app.querySelector('.passenger-complete__scroll')?.dataset.payment !== 'paid',
+    app.querySelector('.passenger-complete__scroll')?.dataset.payment);
+  const details13 = app.querySelector('#arp-trip-details');
+  expect('S13 #1115: the «Детали поездки» button is there', details13?.textContent.trim() === 'Детали поездки', details13?.textContent);
+  details13?.click();
+  await tick();
+  expect('S13 #1115: «Детали поездки» opens /receipt?tripId=…&role=passenger',
+    location.hash === '#/receipt?tripId=trip_ordL&role=passenger', location.hash);
 }
 delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
