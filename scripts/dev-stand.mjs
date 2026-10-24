@@ -85,20 +85,53 @@ function requestOrigin(req, fallbackPort) {
   return `${safeProto}://${safeHost}`;
 }
 
+// Hop-by-hop headers (RFC 9110 §7.6.1) are per-connection and must not cross the proxy; every
+// header named by `Connection` is hop-by-hop too. `content-length` is kept; without
+// `transfer-encoding` Node picks valid framing for the downstream leg itself.
+const HOP_BY_HOP = new Set([
+  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
+  'transfer-encoding', 'upgrade', 'proxy-connection',
+]);
+
+function stripHopByHop(headers) {
+  const named = String(headers.connection || '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  const out = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const key = name.toLowerCase();
+    if (HOP_BY_HOP.has(key) || named.includes(key)) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
 function proxyToApi(req, res, apiPort) {
-  const headers = { ...req.headers, host: `${BIND}:${apiPort}` };
+  const headers = { ...stripHopByHop(req.headers), host: `${BIND}:${apiPort}` };
   const upstream = http.request(
     { hostname: BIND, port: apiPort, method: req.method, path: req.url, headers },
     (upRes) => {
-      res.writeHead(upRes.statusCode || 502, upRes.headers);
+      res.writeHead(upRes.statusCode || 502, stripHopByHop(upRes.headers));
       upRes.pipe(res);
+      // Upstream died mid-stream: never append a JSON error to a partial body — cut the
+      // downstream response so the client sees a truncated transfer, not a corrupt one.
+      const cut = () => { if (!res.writableEnded) res.destroy(); };
+      upRes.on('error', cut);
+      upRes.on('close', () => { if (!upRes.complete) cut(); });
     },
   );
   upstream.on('error', (err) => {
-    if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
+    if (res.headersSent) {
+      if (!res.writableEnded) res.destroy();
+      return;
+    }
+    res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: { code: 'DEV_STAND_API_DOWN', message: err.message } }));
   });
+  // Client went away (during the request body or while the response streams): drop upstream.
   req.on('aborted', () => upstream.destroy());
+  res.on('close', () => { if (!res.writableEnded) upstream.destroy(); });
   req.pipe(upstream);
 }
 
@@ -180,10 +213,13 @@ function getJson(port, urlPath) {
   });
 }
 
-async function waitForHealth(apiPort, child, timeoutMs = 30000) {
+// A child killed by a signal has exitCode === null and signalCode !== null — treat both as gone.
+const childGone = (child) => Boolean(child) && (child.exitCode !== null || child.signalCode !== null);
+
+async function waitForHealth(apiPort, child, isStopping, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (child && child.exitCode !== null) return false;
+    if (isStopping() || childGone(child)) return false;
     const { status } = await getJson(apiPort, '/api/v1/health');
     if (status === 200) return true;
     await new Promise((r) => setTimeout(r, 300));
@@ -227,17 +263,29 @@ async function main() {
     });
   }
 
-  if (!(await waitForHealth(opts.apiPort, child))) {
+  if (!(await waitForHealth(opts.apiPort, child, () => stopping))) {
+    if (stopping) return; // Ctrl+C during startup is a clean stop, not a failure
     stop(1);
     fail(`no healthy /api/v1/health on ${BIND}:${opts.apiPort}`
       + (opts.server ? ' (see the server output above)' : ' - start /server or drop --no-server'));
   }
   const ready = await getJson(opts.apiPort, '/api/v1/readyz');
+  if (stopping) return;
 
+  // Track each listener as soon as it is up; if a stop signal landed while listen() was in
+  // flight, stop() could not see it in `clients` yet — close it here instead of leaking it.
+  const track = (srv) => {
+    clients.push(srv);
+    if (stopping) srv.close();
+    return srv;
+  };
   try {
-    clients.push(await startClient('passenger', opts.passengerPort, opts.apiPort));
-    clients.push(await startClient('driver', opts.driverPort, opts.apiPort));
+    track(await startClient('passenger', opts.passengerPort, opts.apiPort));
+    if (stopping) return;
+    track(await startClient('driver', opts.driverPort, opts.apiPort));
+    if (stopping) return;
   } catch (err) {
+    if (stopping) return;
     stop(1);
     fail(err.message);
   }
