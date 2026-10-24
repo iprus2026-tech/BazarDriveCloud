@@ -480,12 +480,14 @@ expect('paid variant shows the Оплачено badge',
 // Receipt CTA — "Посмотреть чек" is UI-only (no passenger receipt
 // screen exists; /receipt is the DRIVER financial document). Paid gets
 // the live stub button, auto/pending get a disabled mock + note.
-expect('paid variant exposes the "Посмотреть чек" CTA (#arp-receipt-view)',
-  /id="arp-receipt-view"\s+data-action="view-receipt"/.test(completeBody)
-  && completeBody.includes('Посмотреть чек'));
-expect('auto/pending variants show a disabled "Посмотреть чек" mock',
-  /data-action="view-receipt"\s+disabled/.test(completeBody)
-  && completeBody.includes('Чек будет доступен после оплаты'));
+// #1115 — the passenger side never says «чек» (no cash receipt): «Детали поездки» opens the
+// passenger's «Квитанция о поездке».
+expect('paid variant exposes the «Детали поездки» CTA (#arp-receipt-view)',
+  /id="arp-receipt-view"\s+data-action="trip-details"/.test(completeBody)
+  && completeBody.includes('Квитанция о поездке готова'));
+expect('auto/pending variants show a disabled «Детали поездки» until the demo payment',
+  /data-action="trip-details"\s+disabled/.test(completeBody)
+  && completeBody.includes('Квитанция будет доступна после оплаты'));
 expect('receipt CTA stays a toast stub (no navigation, no fetch)',
   !/receiptViewBtn[\s\S]{0,300}navigate\(/.test(completeBody)
   && !/receiptViewBtn[\s\S]{0,300}fetch\(/.test(completeBody));

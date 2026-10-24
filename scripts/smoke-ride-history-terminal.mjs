@@ -603,7 +603,9 @@ expect('E — trip_receipt.js named import list resolved from mock_api',
 // #784 CUT-6 — the receipt screen may import the two READ-ONLY receipt readers
 // (getReceipt = local/sync, getReceiptResolved = backend-aware live read); both are non-mutating.
 // The forbidden-mutator defense below still asserts no write helper (saveDriverReceipt, …) lands here.
-const RECEIPT_SCREEN_ALLOWED_IMPORTS = new Set(['getReceipt', 'getReceiptResolved']);
+// #1115 — plus the READ-ONLY passenger trip reader (getPassengerTripResolved) behind the passenger's
+// «Квитанция о поездке» (?role=passenger); it reads the history, never writes it.
+const RECEIPT_SCREEN_ALLOWED_IMPORTS = new Set(['getReceipt', 'getReceiptResolved', 'getPassengerTripResolved']);
 expect('E — trip_receipt.js imports ONLY the read-only receipt readers from mock_api',
   Array.isArray(mockApiImports)
   && mockApiImports.length >= 1

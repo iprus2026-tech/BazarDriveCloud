@@ -1915,7 +1915,9 @@ function historyDetailHtml(entry) {
   const isDriver = entry?.role === 'driver';
   const pickup   = escapeHtml(entry?.route?.pickupLabel  || '—');
   const dropoff  = escapeHtml(entry?.route?.dropoffLabel || '—');
-  const title    = isDriver ? 'Чек водителя' : 'Чек пассажира';
+  // #1115 — the passenger side never calls it «чек» (no cash receipt); the driver side is #1070.
+  const title    = isDriver ? 'Чек водителя' : 'Детали поездки';
+  const canReceipt = !isDriver && typeof entry?.tripId === 'string' && entry.tripId.trim() !== '';
   const rows     = isDriver ? driverDetailRowsHtml(entry) : passengerDetailRowsHtml(entry);
   // BD-RIDE-HISTORY-05 — only offer "Повторить маршрут" when the entry yields
   // a usable pickup+dropoff pair. buildRepeatRouteDraft() is the single source
@@ -1943,6 +1945,7 @@ function historyDetailHtml(entry) {
         </div>
         <div class="profile-history-detail__actions">
           ${canRepeat ? `<button type="button" class="bd-btn primary profile-history-detail__action" data-detail-action="repeat">Повторить маршрут</button>` : ''}
+          ${canReceipt ? `<button type="button" class="bd-btn profile-history-detail__action" data-detail-action="receipt">Квитанция о поездке</button>` : ''}
           <button type="button" class="bd-btn profile-history-detail__action" data-detail-action="feed">В ленту</button>
           <button type="button" class="bd-btn profile-history-detail__action" data-detail-action="close">Назад к истории</button>
         </div>
@@ -1992,7 +1995,8 @@ function openHistoryDetail(root, entry) {
       // and /new simply opens empty.
       writeRepeatRouteDraft(entry);
       go('/new');
-    } else if (action === 'feed') go('/feed');
+    } else if (action === 'receipt') go(`/receipt?tripId=${encodeURIComponent(entry.tripId)}&role=passenger`);
+    else if (action === 'feed') go('/feed');
   });
 
   activeHistoryDetailEsc = (e) => {

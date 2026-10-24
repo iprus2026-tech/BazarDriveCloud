@@ -233,6 +233,7 @@ function draftHarness({ backend, route, form = null }) {
     roleGateCode: () => null, ROLE_GATE_TEXT: {}, PROFILE_CTA_LABEL: '', PASSENGER_ROLE_REQUIRED: 'PASSENGER_ROLE_REQUIRED',
     enrichOrderPointWithCoords: utils.enrichOrderPointWithCoords,
     maskPassengerPhone: utils.maskPassengerPhone,
+    shortRideNumber: utils.shortRideNumber, // #1118 — the success card's short number
     routeEstimateFor,
   } });
   vm.runInContext(`${stripModule(sources.draft)}

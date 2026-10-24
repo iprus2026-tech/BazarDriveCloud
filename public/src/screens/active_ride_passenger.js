@@ -1443,6 +1443,8 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
       <div class="passenger-complete__hero-title" data-default-only>Поездка завершена</div>
       <div class="passenger-complete__hero-title" data-submitted-only>Спасибо за отзыв</div>
+      ${authoritative ? `
+      <div class="passenger-complete__hero-sub" data-default-only>Спасибо за поездку.</div>` : `
       <div class="passenger-complete__hero-sub" data-default-only data-pay-show="auto">
         Спасибо за поездку. Оплата спишется автоматически.
       </div>
@@ -1451,12 +1453,24 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
       <div class="passenger-complete__hero-sub" data-default-only data-pay-show="paid">
         Спасибо за поездку. Оплата успешно прошла.
-      </div>
+      </div>`}
       <div class="passenger-complete__hero-sub" data-submitted-only>
         Ваша оценка отправлена водителю. Хорошей дороги!
       </div>
     </div>
 
+    ${authoritative ? `
+    <div class="passenger-complete__card passenger-complete__pay passenger-complete__pay--direct">
+      <div class="passenger-complete__pay-head">
+        <div class="passenger-complete__pay-label">Стоимость поездки</div>
+      </div>
+      <div class="passenger-complete__pay-total">${escapeHtml(pay.total)}</div>
+      <div class="passenger-complete__pay-disclosure">Оплата напрямую водителю. Приложение не списывает деньги.</div>
+      <div class="passenger-complete__receipt-ready">
+        <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
+        <button type="button" class="passenger-complete__receipt-action" id="arp-trip-details" data-action="trip-details">Детали поездки</button>
+      </div>
+    </div>` : `
     <div class="passenger-complete__card passenger-complete__pay">
       <div class="passenger-complete__pay-head">
         <div class="passenger-complete__pay-label">Итого к оплате</div>
@@ -1488,15 +1502,15 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
       <div class="passenger-complete__receipt-note" data-pay-show="auto pending">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
-        <span class="passenger-complete__receipt-note-text">Чек будет доступен после оплаты</span>
-        <button type="button" class="passenger-complete__receipt-action" data-action="view-receipt" disabled>Посмотреть чек</button>
+        <span class="passenger-complete__receipt-note-text">Квитанция будет доступна после оплаты</span>
+        <button type="button" class="passenger-complete__receipt-action" data-action="trip-details" disabled>Детали поездки</button>
       </div>
       <div class="passenger-complete__receipt-ready" data-pay-show="paid">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
-        <span class="passenger-complete__receipt-ready-text">Чек готов</span>
-        <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-view" data-action="view-receipt" aria-label="Посмотреть чек">Посмотреть чек</button>
+        <span class="passenger-complete__receipt-ready-text">Квитанция о поездке готова</span>
+        <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-view" data-action="trip-details">Детали поездки</button>
       </div>
-    </div>
+    </div>`}
 
     <div class="passenger-complete__stats" role="group" aria-label="Статистика поездки">
       ${stats.time ? `<div class="passenger-complete__stat">
@@ -1782,8 +1796,9 @@ function renderPassengerRideComplete(ride, deps) {
     syncSubmittedStars(currentRating);
     content.dataset.submitted = 'true';
     // Submitting the rating implies the auto-charge has completed
-    // by the time we render the thank-you screen.
-    content.dataset.payment = 'paid';
+    // by the time we render the thank-you screen — the backend-OFF demo only.
+    // #1115: a server-confirmed ride has no in-app payment, so nothing claims a charge.
+    if (!authoritative) content.dataset.payment = 'paid';
     submitBtn.disabled = true;
     // Disable underlying editable controls so a hidden tab/keyboard
     // user can't keep editing fields that the UI no longer shows.
@@ -1806,12 +1821,12 @@ function renderPassengerRideComplete(ride, deps) {
     });
   }
 
-  const receiptViewBtn = content.querySelector('#arp-receipt-view');
-  if (receiptViewBtn) {
-    receiptViewBtn.addEventListener('click', () => {
-      // No passenger receipt screen exists yet — the /receipt route is the
-      // driver financial document (net/commission), so keep this UI-only.
-      localToast('Просмотр чека будет доступен позже');
+  // #1115 — «Детали поездки» opens the passenger's «Квитанция о поездке» (/receipt?role=passenger),
+  // never the driver's financial document.
+  for (const detailsBtn of content.querySelectorAll('[data-action="trip-details"]')) {
+    detailsBtn.addEventListener('click', () => {
+      if (detailsBtn.disabled) return;
+      navigate(`/receipt?tripId=${encodeURIComponent(ride.tripId)}&role=passenger`);
     });
   }
 

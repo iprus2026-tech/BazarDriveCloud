@@ -11,7 +11,7 @@ import { user } from '../state.js';
 import { createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { routeEstimateFor } from './route_picker.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
-import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
+import { enrichOrderPointWithCoords, maskPassengerPhone, shortRideNumber } from '../passenger_order_utils.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const FORM_DRAFT_KEY = 'bazardrive.order_form.v1';
@@ -732,7 +732,7 @@ function renderSuccessBody(order) {
   const timeCopy = order.scheduledMode === 'now'
     ? 'Сейчас · подача 4–8 мин'
     : `${formatDate(order.scheduledAt.slice(0, 10))} · ${order.scheduledAt.slice(11, 16)}`;
-  const shortId = String(order.id).split('-').slice(-1)[0].slice(-6);
+  const shortId = shortRideNumber(order.id);
 
   card.innerHTML = `
     <div class="omd-success">
