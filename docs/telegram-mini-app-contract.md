@@ -229,7 +229,10 @@ Version comparison is numeric per dot segment of `tgWebAppVersion`. An event bel
 
 ### Closing confirmation
 
-`web_app_setup_closing_behavior` is `{ need_confirmation: true }` while the path is `/active-ride`, and `false` elsewhere. Requires 6.2+.
+Requires 6.2+. Telegram keeps the last closing-behaviour setting, so it is not part of the one-time startup sequence. After every mount, `web_app_setup_closing_behavior` is sent from the rendered route, the same one the back button uses:
+
+- `{ need_confirmation: true }` only for `/active-ride`;
+- `{ need_confirmation: false }` for every other rendered route, including the `/feed` fallback and `/order/<id>` rendered as `/order`.
 
 ### Colours and theme
 
@@ -290,7 +293,7 @@ Run on Android, iOS, Telegram Desktop and Telegram Web (`/k` and `/a`):
 - the startup sequence order;
 - BackButton visibility per rendered route, including an unknown hash that renders the `/feed` fallback (hidden);
 - back-press resolution (labelled control, then launch history, then the role root);
-- closing confirmation on `/active-ride`;
+- closing behaviour re-sent after every mount by rendered route (true only on `/active-ride`, false after leaving it and on the `/feed` fallback);
 - CSS variables and `bd-telegram` set only inside Telegram.
 
 **Negative controls.** Each new smoke must fail against the baseline runtime and pass with the slice.
