@@ -198,6 +198,8 @@ function startClient(label, port, apiPort) {
 
 function getJson(port, urlPath) {
   return new Promise((resolve) => {
+    let done = false;
+    const settle = (value) => { if (!done) { done = true; resolve(value); } };
     const req = http.get({ hostname: BIND, port, path: urlPath, timeout: 2000 }, (res) => {
       let body = '';
       res.setEncoding('utf8');
@@ -205,11 +207,15 @@ function getJson(port, urlPath) {
       res.on('end', () => {
         let json = null;
         try { json = JSON.parse(body); } catch { /* not JSON */ }
-        resolve({ status: res.statusCode, json });
+        settle({ status: res.statusCode, json });
       });
+      // Backend closed after the headers (or the 2 s timeout destroyed the request mid-body):
+      // the response emits 'error' / closes incomplete — treat it like a failed probe, not a crash.
+      res.on('error', () => settle({ status: 0, json: null }));
+      res.on('close', () => { if (!res.complete) settle({ status: 0, json: null }); });
     });
     req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve({ status: 0, json: null }));
+    req.on('error', () => settle({ status: 0, json: null }));
   });
 }
 
