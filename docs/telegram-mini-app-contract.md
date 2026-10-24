@@ -192,7 +192,9 @@ Steps 4–6 are version-gated per the event table:
 1. `web_app_request_theme`
 2. `web_app_request_viewport`
 3. `web_app_request_safe_area` and `web_app_request_content_safe_area` (8.0+)
-4. `web_app_set_header_color` and `web_app_set_background_color` with `--bg-0` (`#0a0a0c`)
+4. Colours:
+   - `web_app_set_background_color` with `--bg-0` (`#0a0a0c`), 6.1+;
+   - `web_app_set_header_color` with `{ color: '#0a0a0c' }`, 6.9+ only. Below 6.9 the header event is not sent, so Telegram keeps its own header colour. A `color_key` is not used: it follows Telegram's theme, which may be light while the app is dark.
 5. `web_app_setup_swipe_behavior` with `{ allow_vertical_swipe: false }` (7.7+), so map pans and list scrolls do not collapse or close the app
 6. `web_app_expand`
 7. `web_app_ready`
@@ -212,7 +214,13 @@ Version comparison is numeric per dot segment of `tgWebAppVersion`. An event bel
 
 ### Back navigation
 
-- **Visibility.** `web_app_setup_back_button` is `{ is_visible: false }` on the roots `/welcome`, `/feed`, `/map`, `/driver-map`, `/rules`, `/profile`, and `{ is_visible: true }` on every other path. It is re-evaluated on every `hashchange`.
+- **Visibility.** It follows the route the router actually rendered, not the raw hash:
+  - an unknown path renders the `/feed` fallback and keeps its hash (`public/src/router.js:227-231`), so it counts as `/feed`;
+  - `/order/<id>` counts as `/order`.
+  
+  `web_app_setup_back_button` is `{ is_visible: false }` when the rendered route is one of the roots `/welcome`, `/feed`, `/map`, `/driver-map`, `/rules`, `/profile`, and `{ is_visible: true }` otherwise. It is re-evaluated after every mount.
+  
+  For this, M2 adds one read-only router seam: the rendered route plus a notification after each mount. Routing behaviour does not change.
 - **`back_button_pressed`** acts like the screen's own back control:
   1. If a visible `[aria-label="Назад"]` control exists in the current screen, the bridge activates the topmost one (the last visible one in document order). This keeps every screen's existing semantics, including onboarding step Back versus root abandonment.
   2. Otherwise, if the app has navigated within this launch, it calls `history.back()`. Launch depth is tracked in memory, so it never steps out of the launch.
@@ -226,7 +234,7 @@ Version comparison is numeric per dot segment of `tgWebAppVersion`. An event bel
 ### Colours and theme
 
 - The app keeps its own dark palette. `themeParams` and `theme_changed` are not adopted.
-- Header and background are set to `#0a0a0c` so the Telegram chrome matches the app.
+- The background (6.1+) and the header (6.9+ only, see the startup sequence) are set to `#0a0a0c`, so the Telegram chrome matches the app.
 
 ### Non-goals in M2
 
@@ -280,7 +288,7 @@ Run on Android, iOS, Telegram Desktop and Telegram Web (`/k` and `/a`):
 - incoming source and origin checks;
 - version gating;
 - the startup sequence order;
-- BackButton visibility per path;
+- BackButton visibility per rendered route, including an unknown hash that renders the `/feed` fallback (hidden);
 - back-press resolution (labelled control, then launch history, then the role root);
 - closing confirmation on `/active-ride`;
 - CSS variables and `bd-telegram` set only inside Telegram.
@@ -295,7 +303,7 @@ Run on Android, iOS, Telegram Desktop and Telegram Web (`/k` and `/a`):
 |---|---|---|
 | M0 | this document | everything else |
 | M1 | `public/src/telegram_launch.js` (new), `public/src/app.js` (first import), `public/src/storage_boundary.js`, `scripts/smoke-static-data-inventory.mjs` (manifest), `scripts/smoke-telegram-launch.mjs` (new), `scripts/check.mjs` (register), `public/sw.js` (PRECACHE + VERSION) | `index.html`, CSP, `router.js`, guards, backend |
-| M2 | `public/src/telegram_bridge.js` (new), `public/src/app.js` (init after `start()`), `public/styles/cloud.css` (rules under `.bd-telegram` only), `scripts/smoke-telegram-bridge.mjs` (new), `scripts/check.mjs`, `public/sw.js` | `index.html`, CSP, `router.js`, screens, backend |
+| M2 | `public/src/telegram_bridge.js` (new), `public/src/app.js` (init after `start()`), `public/src/router.js` (read-only seam only: rendered route + after-mount notification), `public/styles/cloud.css` (rules under `.bd-telegram` only), `scripts/smoke-telegram-bridge.mjs` (new), `scripts/check.mjs`, `public/sw.js` | `index.html`, CSP, routing behaviour and guards, screens, backend |
 
 M0 release impact: none at runtime. Docs/reference only. No cache, service worker or CSP impact.
 
