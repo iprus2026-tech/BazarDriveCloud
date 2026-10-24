@@ -395,7 +395,7 @@ const SCREENS = [
     route: '/receipt',
     file: 'public/src/screens/trip_receipt.js',
     backendState: 'dark-seam',
-    backendContract: { reads: ['GET /api/v1/history (→ the trip receipt, via getReceiptResolved; → the passenger\'s own ride, via getPassengerTripResolved)'], writes: [], note: 'server-or-local fallback; forced cash/noncash/missing previews stay local. #1115: ?role=passenger is the passenger\'s «Квитанция о поездке» from their own history entry, no driver money.' },
+    backendContract: { reads: ['GET /api/v1/history (→ the trip receipt, via getReceiptResolved; → the passenger\'s own ride, via getPassengerTripResolved)'], writes: [], note: 'driver (default): getReceiptResolved — ON the server receipt, else the receipt saved locally for this trip (never the demo seed); OFF the local receipt; forced cash/noncash flip the mode of that same receipt (OFF: the local/demo one), forced missing reads nothing. #1115 passenger (?role=passenger): getPassengerTripResolved — ON only their own GET /history entry, no local fallback (none → the missing state); OFF the local ride history; forced missing reads nothing; no driver money.' },
     role: 'passenger / driver',
     variants: RECEIPT_ROLE_VARIANTS,
     contractStatus: 'exists',
