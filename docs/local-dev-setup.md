@@ -169,6 +169,78 @@ cd server && nvm use && npm ci && npm run migrate && npm run dev
 
 ---
 
+## Local backend-ON stand (PC): passenger + driver clients
+
+`scripts/dev-stand.mjs` runs the real PWA against the local `/server` with one
+command. It is a dev-only tool: it does not change `public/`, the CSP, the
+service worker or `/server`, and it is not part of `node scripts/check.mjs`.
+
+Prerequisites: `server/.env` with a working `DATABASE_URL` (migrations applied
+via `npm run migrate`), `REDIS_URL` **unset** (Phase 1 refuses to boot with
+it), and `npm ci` done in `server/`.
+
+```bash
+# In repo root (Node 22)
+node scripts/dev-stand.mjs
+# options: --api-port 3000 --passenger-port 8080 --driver-port 8081
+#          --no-server   (reuse a /server you already started on --api-port)
+```
+
+It starts `/server` and two client origins, all on `127.0.0.1` only (the
+server child is forced to `HOST=127.0.0.1`, whatever `server/.env` says).
+Ctrl+C stops everything; if the server exits, the stand stops too.
+
+| Client | URL |
+|---|---|
+| Passenger | `http://127.0.0.1:8080/` |
+| Driver | `http://127.0.0.1:8081/#/welcome?smokeRole=driver` |
+
+How it works: each client serves `public/` and injects
+`<meta name="bd-api-base" content="<request origin>">` into `index.html` (the
+switch read by `public/src/api_config.js`), and proxies `/api/*` to the server.
+The API is same-origin, so CSP `connect-src 'self'` and an empty
+`ALLOWED_ORIGIN` need no change. The two roles use **separate origins** because
+the auth token lives in `localStorage` (one per origin): on a single origin
+the passenger and the driver would share one session.
+
+Notes:
+
+- `smokeRole` is read from the query **inside the hash**
+  (`#/welcome?smokeRole=driver`), not from `?smokeRole=` before the `#`. It is
+  a per-tab view override; the role is still chosen in onboarding.
+- With the backend ON, gated routes (`/map`, `/driver-map`, …) send you to
+  `/onboarding` until a real OTP login. With `OTP_DEV_MODE=true` the code is
+  not sent anywhere: it comes back as `devCode` in the
+  `POST /api/v1/auth/otp/request` response (DevTools → Network).
+- The committed Mapbox token is URL-restricted to `iprus2026-tech.github.io`,
+  so expect the map to fail on `127.0.0.1` and on tunnel hosts; flows do not
+  depend on it.
+
+### Phone test via cloudflared
+
+1. Install cloudflared, e.g. `winget install --id Cloudflare.cloudflared`.
+2. Start the stand, then one quick tunnel per role (separate origins again):
+
+   ```bash
+   cloudflared tunnel --url http://127.0.0.1:8080   # passenger
+   cloudflared tunnel --url http://127.0.0.1:8081   # driver
+   ```
+
+3. On the phone open the printed `https://<random>.trycloudflare.com/` URL
+   (passenger) and `https://<other>.trycloudflare.com/#/welcome?smokeRole=driver`
+   (driver). The stand derives the API base from `X-Forwarded-Proto` /
+   `Cf-Visitor` and the forwarded host, so it stays `https` and same-origin.
+4. A quick-tunnel URL changes on every restart: that is a new origin, so the
+   session, `localStorage` and service worker start from scratch.
+
+> **Warning — `OTP_DEV_MODE`.** With `OTP_DEV_MODE=true` the server echoes
+> every OTP code in the API response, so **anyone who has the tunnel URL can
+> log in as any phone number**. Keep tunnels short-lived, use synthetic test
+> numbers only, and stop `cloudflared` as soon as the test is over. Never run
+> dev mode on a reachable server outside such a test.
+
+---
+
 ## Follow-up / known gaps
 
 - Switch to a local Postgres instance (e.g. on a PC) if shared memory is
