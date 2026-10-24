@@ -445,6 +445,12 @@ expect('BD-ORDER-DETAIL-01 declares role variants passenger / driver',
 expect('BD-CONFIRM-01 declares role variants passenger / driver / expired',
   !!confirmScreen && Array.isArray(confirmScreen.variants)
   && ['passenger', 'driver', 'expired'].every((k) => confirmScreen.variants.some((v) => v && v.key === k)));
+// #1115 — /receipt: the passenger's «Квитанция о поездке» (?role=passenger) vs the driver's document.
+const receiptScreen = getScreens().find((s) => s.id === 'BD-RIDE-HISTORY-D-01');
+expect('BD-RIDE-HISTORY-D-01 declares role variants passenger / driver (#1115)',
+  !!receiptScreen && Array.isArray(receiptScreen.variants)
+  && ['passenger', 'driver'].every((k) => receiptScreen.variants.some((v) => v && v.key === k))
+  && /renderPassengerResolved/.test(receiptScreen.variants.find((v) => v.key === 'passenger')?.anchor || ''));
 expect('every variant-bearing screen has well-formed variants (key + label + entry + anchor)',
   getScreens().filter((s) => Array.isArray(s.variants) && s.variants.length)
     .every((s) => s.variants.every((v) => v && v.key && v.label && v.entry && v.anchor)));

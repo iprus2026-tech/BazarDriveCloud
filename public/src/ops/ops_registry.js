@@ -106,6 +106,14 @@ const CONFIRM_ROLE_VARIANTS = [
   { key: 'expired',   label: 'Истекло',  entry: 'role-agnostic: handoff expired or ?state=EXPIRED',  anchor: 'renderExpired (no party card)' },
 ];
 
+// #1115 — /receipt dispatches by ?role into two renderers: the passenger's «Квитанция о поездке»
+// (their own history entry, no driver money) vs the driver's earnings document (the default).
+// Labels are the on-screen titles.
+const RECEIPT_ROLE_VARIANTS = [
+  { key: 'passenger', label: 'Квитанция о поездке', entry: "?role=passenger",     anchor: 'renderPassengerResolved → passengerTripDocHtml / passengerTripMissingHtml (getPassengerTripResolved)' },
+  { key: 'driver',    label: 'Чек поездки',         entry: 'no ?role (default)',  anchor: 'renderResolved → receiptDocHtml / receiptMissingHtml (getReceiptResolved)' },
+];
+
 // BD-OPS R1+R5 (post-#784) — per-screen BACKEND-CUTOVER map. `backendState` is declared per screen:
 // 'dark-seam' = a backend seam is present behind isBackendEnabled() (DARK in prod, live only when an
 // API base is configured); absent ⇒ 'mock', defaulted by getScreen/getScreens. `backendContract`
@@ -387,8 +395,9 @@ const SCREENS = [
     route: '/receipt',
     file: 'public/src/screens/trip_receipt.js',
     backendState: 'dark-seam',
-    backendContract: { reads: ['GET /api/v1/history (→ the trip receipt, via getReceiptResolved)'], writes: [], note: 'server-or-local fallback; forced cash/noncash/missing previews stay local. #1115: ?role=passenger is the passenger\'s «Квитанция о поездке» from their own history entry (GET /api/v1/history), no driver money.' },
-    role: 'driver',
+    backendContract: { reads: ['GET /api/v1/history (→ the trip receipt, via getReceiptResolved; → the passenger\'s own ride, via getPassengerTripResolved)'], writes: [], note: 'server-or-local fallback; forced cash/noncash/missing previews stay local. #1115: ?role=passenger is the passenger\'s «Квитанция о поездке» from their own history entry, no driver money.' },
+    role: 'passenger / driver',
+    variants: RECEIPT_ROLE_VARIANTS,
     contractStatus: 'exists',
     designStatus: 'current',
     melStatus: 'OK',
