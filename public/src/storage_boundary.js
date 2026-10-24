@@ -77,6 +77,12 @@
 //                              localStorage; never carries user data.
 //   bazardrive.smoke_role.v1 — per-tab role test override in sessionStorage
 //                              (smoke_role.js); ephemeral, not localStorage.
+//
+// Reset by the auth flow, not by this function (per-tab sessionStorage):
+//   bazardrive.tg_init_data.v1 — the raw Telegram Mini App initData of this tab
+//                                (telegram_launch.js, BD-TG-MINIAPP-01 #1126); removed
+//                                by resetLocalSession() → clearTelegramInitData() on
+//                                every logout / local reset; never in localStorage.
 
 import { clearRideHistory } from './ride_history.js';
 import { clearFavoriteRoutes } from './favorite_routes.js';

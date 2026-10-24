@@ -21,6 +21,7 @@ import { clearUserScopedStorage, clearUserScopedCachesPreservingAuth,
   AUTH_CLEAR_FOREIGN } from './storage_boundary.js';
 export { AUTH_CLEAR_FOREIGN };
 import { clearSmokeRole } from './smoke_role.js';
+import { clearTelegramInitData } from './telegram_launch.js';
 import { go } from './router.js';
 
 let localLogoutObserver = null;
@@ -34,11 +35,14 @@ export function setLocalLogoutObserver(observer) {
 // still need the same cleanup guarantees.
 // BD-ROLE-05 — also clear the per-tab role override so a stale getSmokeRole()
 // value cannot outlive the user that set it.
+// BD-TG-MINIAPP-01 M1 — likewise the tab's raw Telegram initData, so a logout never
+// leads to a silent re-sign-in in the same tab (the launch environment stays).
 export function resetLocalSession({ allowForeignDetach = false,
   clearAccountStateOnForeignDetach = false, expectedAuth } = {}) {
   const cleared = clearUserScopedStorage({ expectedAuth });
   if (cleared === false) return false;
   clearSmokeRole();
+  clearTelegramInitData();
   if (cleared === AUTH_CLEAR_FOREIGN) {
     if (!allowForeignDetach) return false;
     if (clearAccountStateOnForeignDetach) {

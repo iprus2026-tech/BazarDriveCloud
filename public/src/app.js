@@ -1,3 +1,6 @@
+// BD-TG-MINIAPP-01 M1 (#1126) — MUST stay the first import: it captures the Telegram launch
+// params from the hash before router.js is evaluated and before start() reads location.hash.
+import './telegram_launch.js';
 import { register, start, go, setPendingAction, consumePendingAction, setAdmissionGuard, isCurrentDevDocsRoute, setScreenChromeMount } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
