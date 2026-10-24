@@ -57,6 +57,9 @@ globalThis.fetch = async (url) => {
   return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } });
 };
 const mockApi = await import('../public/src/mock_api.js');
+// #1118 — the one short-number rule (absent on older code, so only its own check fails there).
+const { shortRideNumber } = await import('../public/src/passenger_order_utils.js');
+const orderMapDraftSource = read('../public/src/screens/order_map_draft.js');
 
 const TRIP = 'trip_order-dbe0bf07-9bf9-43e3-b0e6-feb8f77e9d8e';
 const serverRow = (role, extra = {}) => ({
@@ -115,6 +118,7 @@ function receiptHarness({ hash, trip = null, backend = true }) {
     getPassengerTripResolved: async (id) => { calls.passenger.push(id); return trip; },
     loadResource: async (fn, opts = {}) => { try { return await fn(); } catch { return opts.fallback ?? null; } },
     isBackendEnabled: () => backend,
+    shortRideNumber: shortRideNumber || (() => ''),
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
   });
   const source = receiptSource.replace(/^import[\s\S]*?from\s*['"][^'"]+['"];?\s*$/gm, '')
@@ -188,6 +192,34 @@ await check('driver screen (no role) is unchanged: «Чек поездки» fro
   assert.equal(textOf(root.querySelector('.trip-receipt__doc-kicker')), 'Чек поездки');
   assert.deepEqual(h.calls.passenger, [], 'the passenger reader is not used for the driver');
   assert.ok(h.calls.driver.some(([name]) => name === 'getReceiptResolved'));
+});
+
+await check('one short number for the order success card and the quittance of the same ride (#1118)', async () => {
+  assert.equal(typeof shortRideNumber, 'function', 'passenger_order_utils.shortRideNumber');
+  // The order id (success card) and the ride's tripId `trip_<orderId>` (quittance) give the same number,
+  // also for an id that is not a UUID (the old quittance formula gave «erab12» for `order-ab12`).
+  for (const [orderId, number] of [
+    ['order-927ae4b4-ba8c-460e-b463-79a0c52a9008', '2a9008'],
+    ['order-dbe0bf07-9bf9-43e3-b0e6-feb8f77e9d8e', '7e9d8e'],
+    ['order-1729591234567', '234567'],
+    ['order-ab12', 'ab12'],
+    ['order-x', 'x'],
+  ]) {
+    assert.equal(shortRideNumber(orderId), number, orderId);
+    assert.equal(shortRideNumber(`trip_${orderId}`), number, `trip_${orderId}`);
+  }
+  assert.equal(shortRideNumber(''), '');
+  assert.equal(shortRideNumber(null), '');
+  // Both screens use it, with no formula of their own.
+  assert.match(orderMapDraftSource, /const shortId = shortRideNumber\(order\.id\);/);
+  assert.match(receiptSource, /const number = shortRideNumber\(trip\.tripId\);/);
+  for (const [name, src] of [['order_map_draft.js', orderMapDraftSource], ['trip_receipt.js', receiptSource]]) {
+    assert.doesNotMatch(src, /\.slice\(-6\)/, `${name}: no local short-number formula`);
+  }
+  // The rendered quittance of a non-UUID trip shows the card's number.
+  const h = receiptHarness({ hash: '#/receipt?tripId=trip_order-ab12&role=passenger', trip: { ...passengerTrip(), tripId: 'trip_order-ab12' } });
+  const root = await h.mount();
+  assert.equal(textOf(root.querySelector('.trip-receipt__hero-trip')), 'Поездка № ab12');
 });
 
 // ── C. the profile's ride details ─────────────────────────────────────────────

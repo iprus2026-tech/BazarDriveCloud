@@ -26,6 +26,7 @@ import { go } from '../router.js';
 import { getReceipt, getReceiptResolved, getPassengerTripResolved } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { isBackendEnabled } from '../api_config.js';
+import { shortRideNumber } from '../passenger_order_utils.js';
 
 const DEMO_RECEIPT_TRIP_ID = '48-321';
 const RECEIPT_SYNC_MS = 280;
@@ -151,11 +152,6 @@ function receiptMissingHtml(tripId) {
 const PASSENGER_TITLE = 'Квитанция о поездке';
 const PASSENGER_LEGAL = 'Не является кассовым чеком. Оплата производится напрямую водителю.';
 
-// The short trip number, as on the order success card: the last six letters / digits of the id.
-function shortTripNumber(tripId) {
-  return String(tripId || '').replace(/[^0-9a-z]/gi, '').slice(-6);
-}
-
 function passengerFareText(fare) {
   if (typeof fare === 'number' && Number.isFinite(fare)) return formatReceiptRub(fare);
   const text = typeof fare === 'string' ? fare.trim() : '';
@@ -175,7 +171,8 @@ function passengerMetaRow(label, value) {
 
 function passengerTripDocHtml(trip) {
   const fare = passengerFareText(trip.fare);
-  const number = shortTripNumber(trip.tripId);
+  // The same number as the order success card of this ride (shortRideNumber, #1118).
+  const number = shortRideNumber(trip.tripId);
   return `
     <article class="trip-receipt__doc trip-receipt__doc--passenger" data-receipt-role="passenger">
       <div class="trip-receipt__doc-top">

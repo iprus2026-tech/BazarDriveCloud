@@ -59,6 +59,15 @@ export function enrichOrderPointWithCoords(point, fallbackLabel = '') {
   };
 }
 
+// #1118 — the ride's short number, ONE rule for the order success card («ЗАКАЗ № 2a9008») and the
+// passenger's «Квитанция о поездке» («Поездка № 2a9008»): the order id (a ride's tripId is
+// `trip_<orderId>`, so the prefix is dropped), its last «-» segment, the last six characters of it.
+export function shortRideNumber(id) {
+  const text = String(id ?? '').trim().replace(/^trip_/, '');
+  if (!text) return '';
+  return text.split('-').slice(-1)[0].slice(-6);
+}
+
 export function maskPassengerPhone(phone, fallback = '') {
   const digits = String(phone || '').replace(/\D+/g, '');
   if (digits.length < 11) return fallback;
