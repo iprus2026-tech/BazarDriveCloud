@@ -67,18 +67,31 @@ function emptyDraft() {
   };
 }
 
+// BD-UX-ROLES-03 (#1140) — the draft belongs to the role it was written in: saveDraft tags it with
+// `role`, and loadDraft ignores a draft of another role (or an untagged one from before this
+// change), so it never chooses the type or prefills there. A driver therefore opens on «Поездка»
+// unless an explicit ?type= intent says otherwise. The other role's draft stays stored until this
+// role saves its own (one key, one draft).
+function draftRoleFor(u) {
+  if (isDriverMode(u)) return 'driver';
+  if (isPassengerMode(u)) return 'passenger';
+  return 'guest';
+}
+
 function loadDraft() {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
     if (!raw) return emptyDraft();
-    return { ...emptyDraft(), ...JSON.parse(raw) };
+    const { role, ...fields } = JSON.parse(raw) || {};
+    if (role !== draftRoleFor(user.get())) return emptyDraft();
+    return { ...emptyDraft(), ...fields };
   } catch {
     return emptyDraft();
   }
 }
 
 function saveDraft(d) {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {}
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, role: draftRoleFor(user.get()) })); } catch {}
 }
 
 function clearDraft() {

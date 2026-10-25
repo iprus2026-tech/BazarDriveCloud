@@ -192,7 +192,8 @@ await check('app.js injects the switch transport and exposes adoptRole; the boot
 
 const profileSrc = read('../public/src/screens/profile.js');
 await check('01C-2: profile backend-ON switches through the injected server capability; OFF keeps smokeRole', async () => {
-  assert.match(app, /switchRole: role => switchProfileRole\(context, role\)/);
+  // #1140: the switch also forwards { landing } (the driver's «Перейти в режим пассажира» → /feed).
+  assert.match(app, /switchRole: \(role, options\) => switchProfileRole\(context, role, options\)/);
   assert.match(app, /if \(profileSwitchOwner\?\.isCurrent\(\)\) return;/, 'the listener leaves the switching profile mounted');
   assert.match(app, /clearSmokeRole\(\);\s*user\.set\(\{ role \}\);/, 'the local role changes only after the confirmed read');
   assert.match(profileSrc, /export default function profile\(renderContext, \{ logout = performLocalLogout, switchRole = null(?:, syncRole = null)? \} = \{\}\)/);

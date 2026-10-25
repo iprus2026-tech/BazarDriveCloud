@@ -55,7 +55,7 @@ register('/order-map-draft', orderMapDraft);
 register('/rules',       rules);
 register('/profile', context => profile(context, {
   logout: options => authLogout.logout(options),
-  switchRole: role => switchProfileRole(context, role),
+  switchRole: (role, options) => switchProfileRole(context, role, options),
   syncRole: () => syncProfileRole(context),
 }));
 let onboardingHandoffOwner = null;
@@ -104,7 +104,9 @@ register('/onboarding', (context) => {
 // profile itself. While it runs, the snapshot listener leaves the profile mounted, so a refusal
 // stays on the screen that asked. 403 ROLE_NOT_GRANTED reaches the profile, which opens the
 // driver application. A session that no longer confirms this account hands over to admission.
-async function switchProfileRole(context, role) {
+// #1140: `landing` picks where a confirmed switch goes — '/profile' (default) or '/feed' (the
+// driver's «Перейти в режим пассажира»). Anything else falls back to '/profile'.
+async function switchProfileRole(context, role, { landing = '/profile' } = {}) {
   const before = bootSession.getSnapshot();
   if (!isBackendEnabled() || profileSwitchOwner || !context.isCurrent() || bootSession.hasUncommittedLogin()
       || before.state !== 'AUTHENTICATED' || !before.user) return { ok: false, code: 'AUTH_STALE' };
@@ -119,7 +121,7 @@ async function switchProfileRole(context, role) {
   if (outcome.ok) {
     clearSmokeRole();
     user.set({ role });
-    if (context.isCurrent()) go('/profile');
+    if (context.isCurrent()) go(landing === '/feed' ? '/feed' : '/profile');
   } else if (outcome.handover && context.isCurrent()) {
     go((location.hash || '#/welcome').slice(1));
   }

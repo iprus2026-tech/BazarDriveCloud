@@ -23,7 +23,7 @@ import {
 import { isBackendEnabled, getSessionToken } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
-import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
+import { getSmokeRole, setSmokeRole, applySmokeRole, clearSmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
@@ -309,14 +309,19 @@ const SVG_PHONE_LG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none
 // otherwise — it never dead-ends the navigation.
 const COMPOSER_DRAFT_KEY = 'bazardrive.draft.v2';
 
+// #1140: the composer opens a draft only in the role that wrote it (its `role` tag, the same mapping
+// as composer.js draftRoleFor), so only such a draft counts here; `role` and `type` are not data.
 function hasComposerDraft() {
   try {
     if (typeof localStorage === 'undefined') return false;
     const raw = localStorage.getItem(COMPOSER_DRAFT_KEY);
     if (!raw) return false;
     const draft = JSON.parse(raw);
-    return !!draft && typeof draft === 'object'
-      && Object.values(draft).some((v) => typeof v === 'string' && v.trim() !== '');
+    if (!draft || typeof draft !== 'object') return false;
+    const current = user.get()?.role;
+    const role = current === 'driver' || current === 'passenger' ? current : 'guest';
+    const { role: owner, type: _type, ...fields } = draft;
+    return owner === role && Object.values(fields).some((v) => typeof v === 'string' && v.trim() !== '');
   } catch {
     return false;
   }
@@ -477,13 +482,14 @@ function roleSwitchErrorText(code, role) {
   return 'Не удалось переключить роль. Повторите попытку.';
 }
 
-async function requestRoleSwitch(switchRole, role) {
+// `options.landing` (#1140): where a confirmed switch lands — '/profile' (default) or '/feed'.
+async function requestRoleSwitch(switchRole, role, options) {
   if (typeof switchRole !== 'function') return { ok: false, code: 'ROLE_SWITCH_FAILED' };
-  try { return (await switchRole(role)) || { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
+  try { return (await switchRole(role, options)) || { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
   catch { return { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
 }
 
-function wireServerRoleSwitch(root, button, errorEl, role, switchRole, ownsScreen) {
+function wireServerRoleSwitch(root, button, errorEl, role, switchRole, ownsScreen, options = undefined) {
   if (!button) return;
   const showError = (text) => {
     if (!errorEl) return;
@@ -495,7 +501,7 @@ function wireServerRoleSwitch(root, button, errorEl, role, switchRole, ownsScree
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
     showError('');
-    const result = await requestRoleSwitch(switchRole, role);
+    const result = await requestRoleSwitch(switchRole, role, options);
     // A confirmed switch (or a session hand-over) re-rendered the route: this screen is gone.
     if (!ownsScreen() || !button.isConnected) return;
     button.disabled = false;
@@ -991,10 +997,11 @@ function driverCreateActionsHtml() {
         <button type="button" class="pf2-action-row" id="pf2-act-offer">
           <span class="pf2-action-row__label">Предложить поездку</span>${SVG_CHEVRON}
         </button>
-        ${isBackendEnabled() ? '' : `<button type="button" class="pf2-action-row" id="pf2-act-passenger-mode">
+        <button type="button" class="pf2-action-row" id="pf2-act-passenger-mode">
           <span class="pf2-action-row__label">Перейти в режим пассажира</span>${SVG_CHEVRON}
-        </button>`}
+        </button>
       </div>
+      ${isBackendEnabled() ? roleSwitchErrorHtml('pf2-passenger-mode-err') : ''}
     </div>`;
 }
 
@@ -3377,11 +3384,25 @@ function renderDriver(root, u, logout, ownsScreen, switchRole) {
 
   // BD-ROLE-01 — Driver create/order CTAs. Nearby orders + going online live
   // on DriverMap; "Предложить поездку" opens the composer pre-set to a driver
-  // offer; "Перейти в режим пассажира" is the explicit, opt-in passenger
-  // request entry (composer surfaces a role-mismatch notice there).
+  // offer.
   root.querySelector('#pf2-act-nearby')?.addEventListener('click', () => go('/driver-map'));
   root.querySelector('#pf2-act-offer')?.addEventListener('click', () => go('/new?type=driver_offer'));
-  root.querySelector('#pf2-act-passenger-mode')?.addEventListener('click', () => go('/new?type=passenger_request'));
+  // BD-UX-ROLES-03 (#1140, owner's option A) — «Перейти в режим пассажира» is a real role switch,
+  // the mirror of the passenger's «Продолжить как водитель», and lands on the FEED as a passenger
+  // (not on /profile, not in the composer). Shown in both modes. Backend-ON: the server switch
+  // (PUT active-role, then the session read; a refusal stays here with its text). Backend-OFF: the
+  // local role — the same local effect a confirmed server switch has (clear the per-tab override,
+  // set user.role). A per-tab override alone would not do: the feed and the tab bar read user.role.
+  if (isBackendEnabled()) {
+    wireServerRoleSwitch(root, root.querySelector('#pf2-act-passenger-mode'), root.querySelector('#pf2-passenger-mode-err'),
+      'passenger', switchRole, ownsScreen, { landing: '/feed' });
+  } else {
+    root.querySelector('#pf2-act-passenger-mode')?.addEventListener('click', () => {
+      clearSmokeRole();
+      user.set({ role: 'passenger' });
+      go('/feed');
+    });
+  }
 
   // ── Taxi permit: open inline panel ──────────────────────────────────────────
   const permitPanel  = root.querySelector('#pf2-permit-panel');
