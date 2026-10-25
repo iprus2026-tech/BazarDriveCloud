@@ -77,8 +77,8 @@ export async function buildApp(overrides = {}) {
     await app.register(svc.plugin, { prefix: `/api/v1/${svc.name}` });
   }
 
-  // Chat (#784 R07) — its own route group, NOT one of the 9 Mini-Yonder services. Intentionally
-  // not 401-gated (the minimal cross-device proof; see services/chat/index.js).
+  // Chat (#784 R07) — its own route group, NOT one of the 9 Mini-Yonder services. Authorized by
+  // ride participation since BD-CHAT-AUTH-01 (#825; see services/chat/index.js).
   await app.register(chatService, { prefix: '/api/v1/chat' });
 
   // WhatsApp Business Account webhook (BD-DOCS-051) — GET verification live; POST dark 501.

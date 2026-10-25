@@ -14,10 +14,10 @@
 // lifecycle, #830 role policy) cannot silently break the end-to-end cycle. When those land,
 // UPDATE the marked assertions here — never delete the cycle.
 //
-// TODO(#825): the chat section deliberately asserts TODAY's contract — /api/v1/chat/messages is
-// NOT 401-gated and trusts senderRole from the body (services/chat/index.js declares this as the
-// pre-R17 minimal cross-device proof). When BD-CHAT-AUTH-01 lands, flip those assertions to the
-// authenticated-participant contract in the same PR.
+// The chat section asserts the authenticated-participant contract of BD-CHAT-AUTH-01 (#825):
+// 401 without a session, 404 for an outsider, the ride's thread readable by both participants, and
+// writing closed (409) once the ride is terminal — as it is at that point of the cycle. The send,
+// role and idempotency details are DB-gated in chat-flow.test.mjs.
 //
 // SKIPPED without DATABASE_URL; runs in server-ci's app job. Unique per-process phones; cleans up
 // in t.after() (receipts -> ride_events -> rides with triggers relaxed, then orders — cascades
@@ -196,18 +196,19 @@ test('two-session pilot cycle: auth -> order -> offer -> select -> ride -> COMPL
   assert.equal(incr.cursor, poll.cursor, 'cursor is stable when nothing new');
   assert.equal((await get(app, `${pollUrl}&since=2026-02-30T00:00:00Z`, bearer(paxS))).statusCode, 400, 'malformed cursor is a clean 400');
 
-  // ---- 12. Chat thread over the shared messages table, with clientMsgId dedup.
-  // TODO(#825): asserted per TODAY's contract — no 401 gate, senderRole from the body (see header).
+  // ---- 12. Chat (BD-CHAT-AUTH-01 #825): participant-gated; the completed ride's thread is read-only.
   const chatId = `trip-${tripId}`;
   chatIds.push(chatId);
-  const m1 = await post(app, '/api/v1/chat/messages', { chatId, body: 'Я на месте', senderRole: 'driver', clientMsgId: 1 });
-  assert.equal(m1.statusCode, 201);
-  const m1re = await post(app, '/api/v1/chat/messages', { chatId, body: 'Я на месте', senderRole: 'driver', clientMsgId: 1 });
-  assert.equal(m1re.json().message.id, m1.json().message.id, 'clientMsgId re-send dedups to the original row');
-  const m2 = await post(app, '/api/v1/chat/messages', { chatId, body: 'Выхожу', senderRole: 'passenger', clientMsgId: 1 });
-  assert.notEqual(m2.json().message.id, m1.json().message.id, 'dedup is per (chat, senderRole, clientMsgId)');
-  const thread = (await get(app, `/api/v1/chat/messages?chatId=${encodeURIComponent(chatId)}`)).json();
-  assert.deepEqual(thread.items.map((m) => m.body), ['Я на месте', 'Выхожу'], 'one shared chronological thread');
+  const chatUrl = `/api/v1/chat/messages?chatId=${encodeURIComponent(chatId)}`;
+  assert.equal((await get(app, chatUrl)).statusCode, 401, 'no session');
+  assert.equal((await get(app, chatUrl, bearer(outS))).statusCode, 404, 'an outsider sees no thread');
+  assert.equal((await post(app, '/api/v1/chat/messages', { chatId, body: 'x' }, bearer(outS))).statusCode, 404);
+  for (const s of [paxS, drvS]) {
+    assert.deepEqual((await get(app, chatUrl, bearer(s))).json(), { items: [] }, 'both participants read it');
+    const closed = await post(app, '/api/v1/chat/messages', { chatId, body: 'Спасибо' }, bearer(s));
+    assert.equal(closed.statusCode, 409, 'the ride is COMPLETED: the chat is closed for writing');
+    assert.equal(closed.json().code, 'CHAT_CLOSED');
+  }
 
   // ---- 13. Write-once receipt (driver-only), then history for BOTH roles.
   assert.equal((await post(app, '/api/v1/history/receipts',

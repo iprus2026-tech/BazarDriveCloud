@@ -57,7 +57,7 @@ delivery, operations or activation gap still prevents pilot use.
 | `/api/v1/realtime/poll` | LIVE | Participant-only cursor polling; WebSocket/SSE push remains dark. |
 | `/api/v1/history` | LIVE | Authenticated reads; completed-ride receipt write is driver-only and write-once, with server-derived amounts (interim fare basis = the price fixed at `/select`, commission from `RECEIPT_COMMISSION_PERCENT`, tip 0; client amounts ignored — `docs/ride-state-receipt-authority-contract.md` §3). |
 | `/api/v1/drivers/enrollment` | LIVE / PILOT-BLOCKED | Driver application: a live session with a verified phone applies (`POST`) and reads its status (`GET`). Approval, rejection and revocation are operator decisions (`npm run ops:driver`), which add or remove the `driver` grant in the same transaction. The approved grant is not line readiness (documents, shift and vehicle remain #830). See `docs/driver-role-grant-contract.md` §1. |
-| `/api/v1/chat` | LIVE persistence / PILOT-BLOCKED | Participant authorization is absent and sender role is still request-supplied. |
+| `/api/v1/chat` | LIVE | Authorized by ride participation (BD-CHAT-AUTH-01 #825). Only the `trip-<tripId>` thread of a real ride is served, to its passenger and driver. The sender role comes from the session, not the request. No session gets 401; another person's or an unknown thread gets the same 404 `CHAT_NOT_FOUND`. Writing is closed with 409 `CHAT_CLOSED` once the ride is terminal. Senders are limited to 30 messages a minute per thread (429 `CHAT_RATE_LIMITED` with `Retry-After`). |
 | Availability, route price, notifications, safety | DARK | No pilot contract or activation. |
 | Metrics | DARK | Observability policy is not frozen. |
 
@@ -102,7 +102,7 @@ and development is unchanged.
 - A client cutover stays guarded until its module-specific exit conditions are met.
 - PostgreSQL/server domain rules own order, offer, assignment and ride state after activation.
 - Matching selection is transactional; terminal rides are frozen; `ride_events` is append-only.
-- Chat must not be activated until sender identity and order/ride participation are session-derived.
+- Chat sender identity and ride participation are session-derived (BD-CHAT-AUTH-01 #825); only a real ride's thread is served.
 - OTP delivery, driver role/readiness, deploy/rollback and observability are pilot gates (OTP rate limits are on since BD-AUTH-HARDEN-01, #824).
 - API responses remain outside the service-worker cache.
 
