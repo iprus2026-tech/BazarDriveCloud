@@ -205,16 +205,23 @@ test('chat: two concurrent copies of a message at the limit both get the origina
   await holder.query('BEGIN');
   await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`messages:passenger:${r.chatId}`]);
   const copies = [0, 1].map(() => send(app, r.paxS, { chatId: r.chatId, body: 'тридцатое', clientMsgId: 500 }));
-  for (let i = 0; i < 100; i += 1) {
-    const { rows } = await db.query(
-      `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
-         AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`, [`messages:passenger:${r.chatId}`],
-    );
-    if (rows[0].n >= 2) break;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+  // Both copies must be seen waiting for the lock (an awaited advisory lock is granted = false),
+  // or the test would not exercise the race (CodeRabbit #1151). The lock is released either way.
+  let bothWaiting = false;
+  try {
+    for (let i = 0; i < 100; i += 1) {
+      const { rows } = await db.query(
+        `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+           AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`, [`messages:passenger:${r.chatId}`],
+      );
+      if (rows[0].n >= 2) { bothWaiting = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  } finally {
+    await holder.query('COMMIT');
   }
-  await holder.query('COMMIT');
   const results = await Promise.all(copies);
+  assert.ok(bothWaiting, 'both copies waited for the sender lock');
   assert.deepEqual(results.map((res) => res.statusCode), [201, 201], results.map((res) => res.body).join(' | '));
   assert.equal(results[0].json().message.id, results[1].json().message.id, 'one message, returned twice');
   const count = await db.query('SELECT count(*)::int AS n FROM messages WHERE chat_id = $1', [r.chatId]);
