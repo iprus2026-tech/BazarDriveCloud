@@ -53,6 +53,8 @@ jobs:
       PGDATABASE: bazardrive
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Apply migrations in order (ON_ERROR_STOP)
         run: |
@@ -292,6 +294,8 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version-file: server/.nvmrc
@@ -450,6 +454,8 @@ jobs:
       IMAGE_TAG: bazardrive-server:${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Build, inspect and smoke container
         shell: bash
