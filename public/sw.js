@@ -261,7 +261,8 @@
 // v384 (#1086, #1088): the profile adopts the server session role on mount; no passenger-mode row ON.
 // v393 (BD-TG-MINIAPP-01 M1, #1126): new telegram_launch.js — Telegram launch capture before the router.
 // v394 (BD-TG-MINIAPP-01 M2, #1126): new telegram_bridge.js + router rendered-route seam + .bd-telegram shell height.
-const VERSION    = 'v394';
+// v395 (#1136): refresh precached screens/map.js — the map follows its container (ResizeObserver → map.resize()).
+const VERSION    = 'v395';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

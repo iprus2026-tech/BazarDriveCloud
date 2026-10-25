@@ -130,7 +130,77 @@ if (copySource && liveBadgeSource && hydrateSource) {
   detached.detach();
   detached.fireLoad();
   expect('load after container detachment cannot apply live copy', detached.badge.textContent === defaultBadge);
+
+  // #1136 — the map follows its CONTAINER (Telegram changes the shell height through a CSS variable,
+  // with no window resize): a ResizeObserver on the container calls map.resize() once per frame, never
+  // after disposal, and is disconnected when the container leaves the DOM.
+  async function resizeProbe() {
+    const lifecycle = { disposed: false, mapInstance: null, teardownId: null, resizeObserver: null };
+    const container = { replaceChildren() {}, removeAttribute() {} };
+    const raf = [], observers = [];
+    let attached = true, resizes = 0, removed = 0, poll = null;
+    class FakeMap { once() {} remove() { removed += 1; } resize() { resizes += 1; } }
+    class FakeResizeObserver {
+      constructor(callback) { this.callback = callback; this.targets = []; this.disconnected = false; observers.push(this); }
+      observe(node) { this.targets.push(node); }
+      disconnect() { this.disconnected = true; }
+      fire() { if (!this.disconnected) this.callback([{ target: this.targets[0] }]); }
+    }
+    const hydrate = runInNewContext(`${liveBadgeSource}\n${hydrateSource}\nhydrateRealMap;`, {
+      loadMapboxSdk: () => Promise.resolve({ Map: FakeMap }),
+      requestAnimationFrame: (callback) => { raf.push(callback); return raf.length; },
+      ResizeObserver: FakeResizeObserver,
+      document: { body: { contains: (node) => attached && node === container } },
+      getDefaultCenter: () => ({ lng: 0, lat: 0, zoom: 1 }),
+      MAPBOX_STYLE: 'test-style',
+      restoreMapPlaceholder: () => {},
+      setInterval: (callback) => { poll = callback; return 7; },
+      clearInterval() {},
+    });
+    hydrate(container, lifecycle, null);
+    await Promise.resolve();
+    await Promise.resolve();
+    for (const callback of raf.splice(0)) callback();
+    return {
+      lifecycle, observers, container,
+      get resizes() { return resizes; }, get removed() { return removed; },
+      flushFrames() { for (const callback of raf.splice(0)) callback(); },
+      pendingFrames: () => raf.length,
+      detach() { attached = false; }, runPoll() { poll(); },
+    };
+  }
+  const r = await resizeProbe();
+  const [observer] = r.observers;
+  expect('#1136: one ResizeObserver observes the map container after hydration',
+    r.observers.length === 1 && observer.targets.length === 1 && observer.targets[0] === r.container
+    && r.lifecycle.resizeObserver === observer);
+  observer.fire();
+  observer.fire();
+  expect('#1136: container changes within one frame schedule a single resize', r.pendingFrames() === 1 && r.resizes === 0);
+  r.flushFrames();
+  expect('#1136: the frame calls map.resize() exactly once', r.resizes === 1);
+  observer.fire();
+  r.flushFrames();
+  expect('#1136: a later container change resizes again', r.resizes === 2);
+  r.lifecycle.disposed = true;
+  observer.fire();
+  r.flushFrames();
+  expect('#1136: after disposal a pending observer callback never resizes', r.resizes === 2);
+
+  const t = await resizeProbe();
+  t.detach();
+  t.runPoll();
+  expect('#1136: the teardown poll disconnects the observer and removes the map once the container leaves the DOM',
+    t.observers[0].disconnected === true && t.lifecycle.resizeObserver === null && t.removed === 1);
+
+  const noRO = await hydrateProbe();
+  expect('#1136: without ResizeObserver hydration still constructs the map (window resize alone)',
+    noRO.constructed === 1 && noRO.lifecycle.resizeObserver === undefined);
 }
+
+expect('#1136: dispose() disconnects the container ResizeObserver before removing the map',
+  /if \(mapLifecycle\.resizeObserver\) \{ mapLifecycle\.resizeObserver\.disconnect\(\); mapLifecycle\.resizeObserver = null; \}\s*\n\s*if \(mapLifecycle\.mapInstance\) \{/.test(src)
+  && /const mapLifecycle = \{ disposed: false, mapInstance: null, teardownId: null, resizeObserver: null \};/.test(src));
 
 // ── The foundation seam is imported ──
 expect('map.js imports isMapboxEnabled + getDefaultCenter + MAPBOX_STYLE from mapbox_config',
