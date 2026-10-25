@@ -269,3 +269,25 @@ test('outside the public profile the same values still start (no behaviour chang
   assert.doesNotThrow(() => loadConfig({ ...dev, OTP_DEV_MODE: 'true', DRIVER_ENROLLMENT_AUTO_APPROVE: 'true', SESSION_TTL_SECONDS: '0', HOST: '0.0.0.0' }));
   assert.doesNotThrow(() => loadConfig({ ...dev, PUBLIC_EXPOSURE: 'false', OTP_DEV_MODE: 'true', HOST: '0.0.0.0' }));
 });
+
+test('.env.example: only flipping PUBLIC_EXPOSURE is refused; the documented overrides start (#1134 review)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const text = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  const env = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line.trim());
+    if (m) env[m[1]] = m[2];
+  }
+  assert.equal(env.PUBLIC_EXPOSURE, 'false', 'the example ships the profile off');
+  assert.throws(() => loadConfig({ ...env, PUBLIC_EXPOSURE: 'true' }), /Invalid (HOST|OTP_DEV_MODE|SESSION_TTL_SECONDS)/);
+  // The overrides the example documents beside PUBLIC_EXPOSURE (the block right above it):
+  const block = text.slice(text.indexOf('To enable the'), text.indexOf('\nPUBLIC_EXPOSURE=false'));
+  const documented = [...block.matchAll(/^#\s{2,}([A-Z_]+)=(\S+)/gm)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(documented.map(([k]) => k).sort(),
+    ['DRIVER_ENROLLMENT_AUTO_APPROVE', 'HOST', 'OTP_DEV_MODE', 'PUBLIC_EXPOSURE', 'SESSION_TTL_SECONDS']);
+  const c = loadConfig({ ...env, ...Object.fromEntries(documented) });
+  assert.equal(c.publicExposure, true);
+  assert.equal(c.host, '127.0.0.1');
+  assert.equal(c.otp.devMode, false);
+  assert.ok(c.session.ttlSeconds > 0);
+});
