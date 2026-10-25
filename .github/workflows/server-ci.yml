@@ -10,6 +10,12 @@ name: server-ci
 # public/src/ride_state.js is in the filter on purpose: the parity gate
 # (server/test/ride-status-parity.test.mjs) imports that client module, so a
 # client-only edit to it must still run this CI and fail on enum/transition drift.
+#
+# Because the push/pull_request triggers are path-filtered, main can look green while
+# `npm audit` would already fail (new advisories land without any commit under server/ —
+# see #1123, fast-uri). The weekly schedule re-runs the whole pipeline against main so such
+# drift surfaces within a week instead of on the next unrelated server PR; workflow_dispatch
+# lets you run it by hand from the Actions tab at any time.
 on:
   push:
     paths:
@@ -21,6 +27,9 @@ on:
       - 'server/**'
       - 'public/src/ride_state.js'
       - '.github/workflows/server-ci.yml'
+  schedule:
+    - cron: '17 4 * * 1'   # Mondays 04:17 UTC (07:17 Minsk); off the :00 rush
+  workflow_dispatch:
 
 # Least privilege: every job only reads the checkout. The container job builds a local image
 # and never pushes it (no registry login), so no packages/contents write is needed.
