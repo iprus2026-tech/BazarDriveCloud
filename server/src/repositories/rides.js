@@ -85,6 +85,15 @@ export async function lockRideByTripId(db, tripId) {
   return rows[0] ?? null;
 }
 
+// BD-CHAT-AUTH-01 (#825, CodeRabbit #1151) — a chat send reads the ride's status under FOR SHARE
+// inside its transaction: a status transition (FOR UPDATE above) waits for the send to commit, and
+// a send that waited behind a committed transition reads the new status. Sends share the lock.
+// Returns the status, or null if no such ride.
+export async function lockRideStatusForShare(db, rideId) {
+  const { rows } = await db.query(`SELECT status FROM rides WHERE id = $1 FOR SHARE`, [rideId]);
+  return rows[0]?.status ?? null;
+}
+
 // BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B — selection-specific locked conflict-Ride
 // reread. Deliberately SEPARATE from lockRideByTripId above (which stays the Ride State PATCH
 // chokepoint's own primitive, unmodified): the /select conflict path additionally needs the

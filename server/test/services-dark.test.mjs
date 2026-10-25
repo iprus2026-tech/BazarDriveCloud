@@ -147,16 +147,24 @@ test('realtime poll is LIVE (validates + auth-gated; #9 read seam)', async () =>
   assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
 });
 
-test('chat #784 R07 is LIVE (validates; intentionally NOT 401-gated)', async () => {
-  // R07 chat is its own route group (not a registry service) and is intentionally auth-free. Hermetic
-  // (no reachable DB): the validation paths prove the routes are live (not 501). The actual
-  // post/get/dedup + the auth-free behaviour are DB-gated (chat-flow).
+test('chat #784 R07 is LIVE (validates; 401 without a session since BD-CHAT-AUTH-01 #825)', async () => {
+  // R07 chat is its own route group (not a registry service). Hermetic (no reachable DB): the
+  // validation paths prove the routes are live (not 501), and a request without a bearer is 401
+  // before any lookup. Participation, roles, 404/409/429 and dedup are DB-gated (chat-flow).
   const noBody = await app.inject({ method: 'POST', url: '/api/v1/chat/messages', payload: {} });
   assert.equal(noBody.statusCode, 400, 'POST /chat/messages validates (chatId+body required, not 501)');
   assert.equal(noBody.json().code, 'VALIDATION');
   const noChatId = await app.inject({ method: 'GET', url: '/api/v1/chat/messages' });
   assert.equal(noChatId.statusCode, 400, 'GET /chat/messages requires chatId (not 501)');
   assert.equal(noChatId.json().code, 'VALIDATION');
+  for (const req of [
+    { method: 'GET', url: '/api/v1/chat/messages?chatId=trip-trip_x' },
+    { method: 'POST', url: '/api/v1/chat/messages', payload: { chatId: 'trip-trip_x', body: 'x', senderRole: 'driver' } },
+  ]) {
+    const res = await app.inject(req);
+    assert.equal(res.statusCode, 401, `${req.method} without a session`);
+    assert.equal(res.json().code, 'UNAUTHENTICATED');
+  }
 });
 
 test('/metrics is a dark skeleton (501)', async () => {
