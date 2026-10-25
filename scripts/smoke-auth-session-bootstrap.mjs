@@ -1413,6 +1413,81 @@ async function appAuthenticatedIncompleteCase(entry) {
   go('/boot-cleanup'); await flush();
 }
 
+// BD-AUTH-OTP-CLIENT-01 (#1143) — the real app + onboarding against the OTP limits of
+// BD-AUTH-HARDEN-01 (#824): the code field length comes from `codeLength` (then the devCode echo,
+// then 6), and a 429 shows the server's wait instead of the generic retry text. Stubbed transport.
+async function otpLimitsCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const { user } = await import('../public/src/state.js');
+  user.set({ welcomeSeen: true, onboarded: false, role: 'passenger' });
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  location.hash = '#/onboarding?step=phone';
+  const problem = (status, body) => response({ retryable: false, error: 'refused', ...body }, status);
+  const requestReply = {
+    'length-code': () => response({ ok: true, expiresInSeconds: 300, codeLength: 6 }),
+    'length-code-over-dev': () => response({ ok: true, expiresInSeconds: 300, codeLength: 6, devCode: '1234' }),
+    'length-dev': () => response({ ok: true, expiresInSeconds: 300, devCode: '12345' }),
+    'length-none': () => response({ ok: true, expiresInSeconds: 300 }),
+    'length-bogus': () => response({ ok: true, expiresInSeconds: 300, codeLength: 99 }),
+    'rate-limited-minutes': () => problem(429, { code: 'OTP_RATE_LIMITED', retryAfterSeconds: 125 }),
+    'rate-limited-seconds': () => problem(429, { code: 'OTP_RATE_LIMITED', retryAfterSeconds: 45 }),
+    'rate-limited-no-wait': () => problem(429, { code: 'OTP_RATE_LIMITED' }),
+    'invalid-phone': () => problem(400, { code: 'INVALID_PHONE' }),
+    'send-failure': () => problem(503, { code: 'SERVER_ERROR', retryable: true }),
+  }[name] ?? (() => response({ ok: true, expiresInSeconds: 300, codeLength: 6 }));
+  const verifyReply = {
+    'locked-wait': () => problem(429, { code: 'OTP_LOCKED', retryAfterSeconds: 3412 }),
+    'locked-code': () => problem(429, { code: 'OTP_LOCKED' }),
+  }[name];
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/otp/request')) return requestReply();
+    if (url.endsWith('/otp/verify') && verifyReply) return verifyReply();
+    if (url.endsWith('/auth/session')) return response({ user: null });
+    throw new Error('unexpected endpoint ' + url);
+  };
+  await import('../public/src/app.js'); await flush();
+  const node = id => document.getElementById(id);
+  const settle = async () => { for (let i = 0; i < 4; i++) await flush(); };
+  function input(id, value) {
+    const element = node(id); assert.ok(element, id);
+    element.value = value;
+    for (const fn of element.handlers.input ?? []) fn({ target: element });
+  }
+  input('ob-phone-input', '9990000002');
+  node('ob-next').click(); await settle();
+
+  const expectedLength = { 'length-dev': 5 }[name] ?? 6;
+  if (name.startsWith('length-') || name.startsWith('locked-')) {
+    const otp = node('ob-otp-input');
+    assert.ok(otp, 'the code step opened');
+    assert.equal(otp.getAttribute('maxlength'), String(expectedLength), 'maxlength follows the server');
+    assert.ok(node(`ob-otp-box-${expectedLength - 1}`), 'the last box exists');
+    assert.equal(node(`ob-otp-box-${expectedLength}`), null, 'no extra box');
+  }
+  if (name.startsWith('locked-')) {
+    input('ob-otp-input', '123456'); await settle();
+    node('ob-next').click(); await settle();
+    const text = node('ob-err')?.textContent;
+    assert.equal(text, name === 'locked-wait'
+      ? 'Слишком много неверных попыток. Повторите через 57 мин.'
+      : 'Слишком много попыток. Запросите код заново.');
+    return;
+  }
+  if (!name.startsWith('length-')) {
+    const expected = {
+      'rate-limited-minutes': 'Слишком много запросов кода. Повторите через 3 мин.',
+      'rate-limited-seconds': 'Слишком много запросов кода. Повторите через 45 с.',
+      'rate-limited-no-wait': 'Слишком много запросов кода. Повторите позже.',
+      'invalid-phone': 'Неверный номер телефона.',
+      'send-failure': 'Не удалось отправить код. Попробуйте ещё раз.',
+    }[name];
+    assert.equal(node('ob-err')?.textContent, expected);
+    assert.ok(node('ob-phone-input'), 'stays on the phone step');
+    assert.equal(node('ob-phone-input').disabled, false, 'the phone input stays usable');
+    assert.equal(node('ob-otp-input'), null, 'no code step');
+  }
+}
+
 // BD-AUTH-POLICY-01C-1 (K4) — the real app + onboarding choosing «Водитель» when the account
 // does NOT hold the chosen role, or holds it inactive. Stubbed transport mirrors the server:
 // /auth/session reports the server's current active role, PUT /auth/session/active-role switches
@@ -3049,6 +3124,9 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--login-handoff-case') {
   await loginHandoffCase(process.argv[3]);
   console.log('PASS actual app/onboarding handoff — ' + process.argv[3]);
+} else if (process.argv[2] === '--otp-limits-case') {
+  await otpLimitsCase(process.argv[3]);
+  console.log('PASS actual app/onboarding OTP limits (#1143) — ' + process.argv[3]);
 } else if (process.argv[2] === '--login-access-case') {
   await loginAccessCase(process.argv[3]);
   console.log('PASS actual app/onboarding chosen-role access (K4) — ' + process.argv[3]);
@@ -4088,6 +4166,14 @@ if (process.argv[2] === '--onboarding-detach-case') {
     'off-demo']) {
     await check('actual app/onboarding handoff: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['length-code', 'length-code-over-dev', 'length-dev', 'length-none', 'length-bogus',
+    'rate-limited-minutes', 'rate-limited-seconds', 'rate-limited-no-wait', 'invalid-phone', 'send-failure',
+    'locked-wait', 'locked-code']) {
+    await check('actual app/onboarding OTP limits (#1143, BD-AUTH-OTP-CLIENT-01): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--otp-limits-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
