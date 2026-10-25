@@ -6,14 +6,20 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: the job only reads the checkout (checkout, setup-node, node scripts).
+# No writes to the repo, issues, PRs or packages anywhere in this workflow.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0           # full history so the precache-drift guard can diff vs the PR base
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
       - name: Static checks (CSP guards, JSON, JS syntax)

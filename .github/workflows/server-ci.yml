@@ -2,8 +2,11 @@ name: server-ci
 
 # Path-filtered CI for the in-repo backend (/server), per ADR BD-DOCS-041.
 # Kept fully separate from ci.yml (node scripts/check.mjs over public/+scripts/)
-# and docs-site-ci.yml. Phase 1 only applies the SQL migrations against a real
-# PostgreSQL 16 — the Node app + `npm test` job lands with the Fastify scaffold.
+# and docs-site-ci.yml. Three jobs, all against a real PostgreSQL 16 service:
+#   migrations      — apply server/migrations/*.sql in order, then re-apply (idempotent);
+#   app             — npm ci + `npm audit` (supply-chain gate) + `npm test` (Fastify app);
+#   container-smoke — build the server image, inspect its labels/user/healthcheck and
+#                     hit /api/v1/health + /api/v1/readyz in a running container.
 # public/src/ride_state.js is in the filter on purpose: the parity gate
 # (server/test/ride-status-parity.test.mjs) imports that client module, so a
 # client-only edit to it must still run this CI and fail on enum/transition drift.
@@ -18,6 +21,11 @@ on:
       - 'server/**'
       - 'public/src/ride_state.js'
       - '.github/workflows/server-ci.yml'
+
+# Least privilege: every job only reads the checkout. The container job builds a local image
+# and never pushes it (no registry login), so no packages/contents write is needed.
+permissions:
+  contents: read
 
 jobs:
   migrations:
@@ -45,6 +53,8 @@ jobs:
       PGDATABASE: bazardrive
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Apply migrations in order (ON_ERROR_STOP)
         run: |
@@ -284,7 +294,9 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version-file: server/.nvmrc
           cache: npm
@@ -442,6 +454,8 @@ jobs:
       IMAGE_TAG: bazardrive-server:${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Build, inspect and smoke container
         shell: bash
