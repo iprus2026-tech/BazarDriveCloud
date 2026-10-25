@@ -21,7 +21,7 @@ import { serializeMessage } from '../../serialize.js';
 import {
   listMessagesByChat, insertMessage, findMessageByDedup, lockChatSender, chatSendRetryAfter,
 } from '../../repositories/messages.js';
-import { findRideByTripId } from '../../repositories/rides.js';
+import { findRideByTripId, lockRideStatusForShare } from '../../repositories/rides.js';
 import { TERMINAL_RIDE_STATUSES } from '../../domain/ride-status.js';
 
 const TRIP_CHAT_PREFIX = 'trip-';
@@ -109,6 +109,10 @@ export default async function chatService(app) {
       if (existing) return reply.code(201).send({ message: serializeMessage(existing) });
     }
     const outcome = await app.db.tx(async (client) => {
+      // Re-check under a share lock on the ride (CodeRabbit #1151): a cancel or completion that
+      // committed after the check above, but before this insert, must still close the chat.
+      const status = await lockRideStatusForShare(client, seed.rideId);
+      if (!status || TERMINAL_RIDE_STATUSES.has(status)) return { closed: true };
       await lockChatSender(client, seed.chatId, seed.senderRole);
       const wait = await chatSendRetryAfter(client, {
         chatId: seed.chatId, senderRole: seed.senderRole, windowSeconds: SEND_WINDOW_SECONDS, max: SEND_LIMIT,
@@ -116,6 +120,7 @@ export default async function chatService(app) {
       if (wait) return { wait };
       return { message: await insertMessage(client, seed) };
     });
+    if (outcome.closed) return problem(reply, 409, 'CHAT_CLOSED', 'the ride is over — the chat is read-only');
     if (outcome.wait) {
       return reply.code(429).header('retry-after', String(outcome.wait)).send({
         error: 'too many messages — try again later', code: 'CHAT_RATE_LIMITED', retryable: false,

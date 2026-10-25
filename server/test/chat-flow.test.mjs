@@ -160,6 +160,38 @@ test('chat: once the ride is terminal, writing is 409 CHAT_CLOSED and reading st
   }
 });
 
+test('chat: a cancel that commits while a send is in flight closes the chat (CodeRabbit #1151)', { skip: SKIP }, async (t) => {
+  const { app, db, ride } = await fixture(t, [phone(4, 0), phone(4, 1)]);
+  const r = await ride(phone(4, 0), phone(4, 1));
+  assert.equal((await send(app, r.drvS, { chatId: r.chatId, body: 'прогрев' })).statusCode, 201); // warm the pool
+  const holder = new pg.Client({ connectionString: DATABASE_URL });
+  await holder.connect();
+  t.after(() => holder.end());
+  // A status transition that has not committed yet holds the ride row.
+  await holder.query('BEGIN');
+  await holder.query("UPDATE rides SET status = 'CANCELED', canceled_at = now() WHERE trip_id = $1", [r.tripId]);
+  let settled = false;
+  const pending = send(app, r.paxS, { chatId: r.chatId, body: 'в полёте' }).finally(() => { settled = true; });
+  // Wait until the send is blocked on that row inside its transaction — or has already finished
+  // (code without the ride lock never waits); either way the cancel then commits, so nothing hangs.
+  let blocked = false;
+  for (let i = 0; i < 100 && !settled; i += 1) {
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE NOT l.granted AND l.locktype IN ('transactionid', 'tuple') AND a.pid <> $1`, [holder.processID],
+    );
+    if (rows[0].n > 0) { blocked = true; break; }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  await holder.query('COMMIT');
+  const res = await pending;
+  assert.ok(blocked, 'the send waited for the uncommitted cancel');
+  assert.equal(res.statusCode, 409, res.body);
+  assert.equal(res.json().code, 'CHAT_CLOSED');
+  const items = (await get(app, thread(r.chatId), bearer(r.paxS))).json().items;
+  assert.deepEqual(items.map((m) => m.body), ['прогрев'], 'nothing was written to the closed chat');
+});
+
 test('chat: 30 messages a minute per sender in a thread; the other side and re-sends are not limited', { skip: SKIP }, async (t) => {
   const { app, db, ride } = await fixture(t, [phone(3, 0), phone(3, 1), phone(3, 2), phone(3, 3)]);
   const r = await ride(phone(3, 0), phone(3, 1));
