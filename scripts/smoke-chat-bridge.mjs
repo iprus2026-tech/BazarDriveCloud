@@ -534,12 +534,17 @@ expect("chat.js appendMessage returns true on write, false on failure (no silent
 expect("chat.js doSend surfaces a failed message write to the user via showNotice (#6)",
   /else if \(!appendMessage\(chatId, msg\)\) \{[\s\S]{0,160}showNotice\(/.test(chat));
 
-// ── I4. #784 chat cutover — a real thread on a live backend reads/sends the shared server
-// thread via apiFetch (behind isBackendEnabled), while the local-storage path stays the fallback. ──
+// ── I4. #784 chat cutover — a ride's thread on a live backend reads/sends the shared server
+// thread via apiFetch (behind isBackendEnabled), while the local-storage path stays the fallback.
+// #825 R7: only a ride's thread (tripId) is a server thread; a response thread is locked on a live
+// backend instead. ──
 expect('chat.js routes the chat thread through apiFetch when the backend is enabled (#784 cutover)',
-  /const backendRead = !fixture && isBackendEnabled\(\) && isRealThread/.test(chat)
+  /const backendRead = !fixture && isBackendEnabled\(\) && Boolean\(tripId\)/.test(chat)
+  && /const preSelectLocked = !fixture && isBackendEnabled\(\) && !tripId && isRealThread/.test(chat)
   && /apiFetch\(`\/chat\/messages\?chatId=/.test(chat)
   && /postServerMessage\(chatId, msg\)/.test(chat));
+expect('#825 R7: respond.js hides the success «Открыть чат» for every post on a live backend (OFF keeps it)',
+  /if \(isBackendEnabled\(\)\) \{\s*if \(chatBtn\) chatBtn\.hidden = true;\s*\} else if \(chatBtn\) \{/.test(respond));
 expect('chat.js poll appends incrementally (no wholesale repaint) — preserves optimistic/failed bubbles',
   /const rendered = new Set\(\)/.test(chat)
   && /if \(rendered\.has\(keyOf\(message\)\)\) return null/.test(chat)

@@ -90,7 +90,8 @@ expect('unknown fixture falls back to normal runtime',
   /return CHAT_FIXTURES\.has\(value\) \? value : ''/.test(fixtureContract));
 expect('known fixtures bypass local message read, backend authority and polling',
   /const stored\s+= fixture \? null : loadMessages\(chatId\)/.test(chat)
-  && /const backendRead = !fixture && isBackendEnabled\(\) && isRealThread/.test(chat)
+  && /const backendRead = !fixture && isBackendEnabled\(\) && Boolean\(tripId\)/.test(chat)
+  && /const preSelectLocked = !fixture && isBackendEnabled\(\) && !tripId && isRealThread/.test(chat)
   && /if \(isTerminal \|\| fixture\) return/.test(pollStarter));
 expect('fixture hydration stays synthetic even when tripId or responseId match persisted data',
   /const counterpartRole = viewerRole === 'driver' \? 'passenger' : 'driver'/.test(fixtureHydrationSource)

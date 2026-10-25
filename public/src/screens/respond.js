@@ -834,12 +834,11 @@ function renderPassengerRide(root, post) {
     // opens chat with role=driver. Without this, /chat defaults viewerRole
     // to 'passenger' and renders the driver's own outgoing bubble on the
     // wrong side of the thread.
-    // #784 CUT-4: for a LIVE offer (backend on + a canonical ride order) that responseId thread is
-    // orphaned — the passenger blocks pre-select chat and post-select chat opens by tripId — so hide
-    // the «Открыть чат» CTA (live-offer chat opens post-select via the ride). OFF / non-canonical
-    // posts keep the existing two-CTA overlay.
+    // #784 CUT-4 / BD-CHAT-AUTH-01 (#825, R7): on a live backend a responseId thread has no server
+    // thread at all — the server serves only a real ride's chat, which opens post-select by tripId —
+    // so hide the «Открыть чат» CTA for every post. Backend OFF keeps the existing two-CTA overlay.
     const chatBtn = root.querySelector('#respond-success-chat');
-    if (isBackendEnabled() && canonicalLink.orderId) {
+    if (isBackendEnabled()) {
       if (chatBtn) chatBtn.hidden = true;
     } else if (chatBtn) {
       const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}&role=driver`;
