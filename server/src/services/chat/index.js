@@ -114,6 +114,12 @@ export default async function chatService(app) {
       const status = await lockRideStatusForShare(client, seed.rideId);
       if (!status || TERMINAL_RIDE_STATUSES.has(status)) return { closed: true };
       await lockChatSender(client, seed.chatId, seed.senderRole);
+      // Re-check the re-send under the lock (CodeRabbit #1151): a concurrent copy of this message
+      // may have been written while we waited, and it must win over the rate limit.
+      if (seed.clientMsgId != null) {
+        const existing = await findMessageByDedup(client, seed.chatId, seed.senderRole, seed.clientMsgId);
+        if (existing) return { message: existing };
+      }
       const wait = await chatSendRetryAfter(client, {
         chatId: seed.chatId, senderRole: seed.senderRole, windowSeconds: SEND_WINDOW_SECONDS, max: SEND_LIMIT,
       });

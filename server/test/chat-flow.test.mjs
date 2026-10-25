@@ -192,6 +192,35 @@ test('chat: a cancel that commits while a send is in flight closes the chat (Cod
   assert.deepEqual(items.map((m) => m.body), ['прогрев'], 'nothing was written to the closed chat');
 });
 
+test('chat: two concurrent copies of a message at the limit both get the original, not 429 (CodeRabbit #1151)', { skip: SKIP }, async (t) => {
+  const { app, db, ride } = await fixture(t, [phone(5, 0), phone(5, 1)]);
+  const r = await ride(phone(5, 0), phone(5, 1));
+  for (let i = 0; i < 29; i += 1) {
+    assert.equal((await send(app, r.paxS, { chatId: r.chatId, body: `m${i}`, clientMsgId: i })).statusCode, 201);
+  }
+  // Hold the sender lock, so both copies pass the first dedup lookup and then wait for it.
+  const holder = new pg.Client({ connectionString: DATABASE_URL });
+  await holder.connect();
+  t.after(() => holder.end());
+  await holder.query('BEGIN');
+  await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`messages:passenger:${r.chatId}`]);
+  const copies = [0, 1].map(() => send(app, r.paxS, { chatId: r.chatId, body: 'тридцатое', clientMsgId: 500 }));
+  for (let i = 0; i < 100; i += 1) {
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+         AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`, [`messages:passenger:${r.chatId}`],
+    );
+    if (rows[0].n >= 2) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  await holder.query('COMMIT');
+  const results = await Promise.all(copies);
+  assert.deepEqual(results.map((res) => res.statusCode), [201, 201], results.map((res) => res.body).join(' | '));
+  assert.equal(results[0].json().message.id, results[1].json().message.id, 'one message, returned twice');
+  const count = await db.query('SELECT count(*)::int AS n FROM messages WHERE chat_id = $1', [r.chatId]);
+  assert.equal(count.rows[0].n, 30);
+});
+
 test('chat: 30 messages a minute per sender in a thread; the other side and re-sends are not limited', { skip: SKIP }, async (t) => {
   const { app, db, ride } = await fixture(t, [phone(3, 0), phone(3, 1), phone(3, 2), phone(3, 3)]);
   const r = await ride(phone(3, 0), phone(3, 1));
