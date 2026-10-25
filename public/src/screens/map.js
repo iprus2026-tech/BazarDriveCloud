@@ -205,6 +205,23 @@ function hydrateRealMap(container, lifecycle, badge) {
         return;
       }
       lifecycle.mapInstance = map;
+      // #1136 — follow the CONTAINER, not only the window. Inside Telegram the shell height changes
+      // through a CSS variable (viewport_changed after expand) with no window `resize`, so Mapbox's
+      // own trackResize never fires and the canvas keeps the collapsed height (map drawn only in the
+      // top part). One resize per frame however many entries arrive; disconnected by dispose() and by
+      // the teardown poll below. Without ResizeObserver, window resize alone keeps working.
+      if (typeof ResizeObserver === 'function') {
+        let frame = 0;
+        lifecycle.resizeObserver = new ResizeObserver(() => {
+          if (frame) return;
+          frame = requestAnimationFrame(() => {
+            frame = 0;
+            if (lifecycle.disposed || lifecycle.mapInstance !== map) return;
+            try { map.resize(); } catch { /* already torn down */ }
+          });
+        });
+        lifecycle.resizeObserver.observe(container);
+      }
       // A token or constructor success alone does not mean the map has loaded.
       if (badge) {
         map.once('load', () => {
@@ -219,6 +236,7 @@ function hydrateRealMap(container, lifecycle, badge) {
         if (lifecycle.disposed) { clearInterval(lifecycle.teardownId); lifecycle.teardownId = null; return; }
         if (!document.body.contains(container)) {
           try { map.remove(); } catch { /* already torn down */ }
+          if (lifecycle.resizeObserver) { lifecycle.resizeObserver.disconnect(); lifecycle.resizeObserver = null; }
           lifecycle.mapInstance = null;
           clearInterval(lifecycle.teardownId);
           lifecycle.teardownId = null;
@@ -426,7 +444,7 @@ export default function mapScreen() {
   stage.appendChild(mapWrap);
   // BD-SCREEN-LIFECYCLE-01A (#919) pilot — shared mutable handle between this closure's returned
   // dispose() and hydrateRealMap()'s async continuation (see the comment on hydrateRealMap).
-  const mapLifecycle = { disposed: false, mapInstance: null, teardownId: null };
+  const mapLifecycle = { disposed: false, mapInstance: null, teardownId: null, resizeObserver: null };
   // BD-MAP-RENDER-MAP (#805): in the live DEFAULT state WITH a token, hydrate a real Mapbox map over the
   // placeholder. DARK (no token) ⇒ resolveState() returns TOKEN_MISSING (never DEFAULT) AND
   // isMapboxEnabled() is false, so this never runs and the placeholder path is byte-for-byte unchanged.
@@ -470,6 +488,7 @@ export default function mapScreen() {
       if (mapLifecycle.disposed) return;
       mapLifecycle.disposed = true;
       if (mapLifecycle.teardownId) { clearInterval(mapLifecycle.teardownId); mapLifecycle.teardownId = null; }
+      if (mapLifecycle.resizeObserver) { mapLifecycle.resizeObserver.disconnect(); mapLifecycle.resizeObserver = null; }
       if (mapLifecycle.mapInstance) {
         try { mapLifecycle.mapInstance.remove(); } catch { /* already torn down */ }
         mapLifecycle.mapInstance = null;
