@@ -612,6 +612,20 @@ if (exists(passengerTripReceiptSmoke)) {
   }
 }
 
+// BD-TG-MINIAPP-01 M1 (#1126): the Telegram launch capture runs before the router (first import of
+// app.js), keeps initData only in sessionStorage, restores an allowlisted startapp route, and
+// leaves an ordinary (non-Telegram) launch exactly as before.
+const telegramLaunchSmoke = path.join(root, 'scripts', 'smoke-telegram-launch.mjs');
+if (exists(telegramLaunchSmoke)) {
+  try {
+    execFileSync(process.execPath, [telegramLaunchSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    // FAIL lines go to stderr (console.error); prefer them over the stdout PASS lines.
+    const msg = ((e.stderr && e.stderr.toString()) || (e.stdout && e.stdout.toString()) || e.message).slice(-400);
+    errors.push(`smoke-telegram-launch.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt

@@ -75,6 +75,8 @@ const NOT_CLEARED = [
   { key: 'bazardrive.debug.publish', documented: true },      // dev flag, survives
   { key: 'bazardrive.ops.mel.v1', documented: false },        // dev tooling, out of boundary
   { key: 'bd-reloading', documented: false, session: true },  // transient SW reload flag (sw-update.js)
+  { key: 'bazardrive.tg_init_data.v1', documented: true, session: true }, // reset by auth flow (clearTelegramInitData)
+  { key: 'bazardrive.tg_launch.v1', documented: false, session: true },   // transient Telegram launch environment (telegram_launch.js)
 ];
 const NC_KEYS = NOT_CLEARED.map((e) => e.key);
 const ALL = [...CLEARED, ...NC_KEYS];
@@ -264,10 +266,21 @@ try {
   ss.clear(); ls.clear();
   ss.set('bazardrive.smoke_role.v1', SENTINEL);
   const auth = await import(pathToFileURL(path.join(SRC, 'mock_auth.js')).href);
+  // BD-TG-MINIAPP-01 M1 — seeded after import: the module's own capture ran at import time
+  // against the shim's plain location and must have written nothing.
+  expect('importing the Telegram launch capture outside Telegram writes no session key',
+    !ss.has('bazardrive.tg_launch.v1') && !ss.has('bazardrive.tg_init_data.v1'));
+  ss.set('bazardrive.tg_init_data.v1', SENTINEL);
+  ss.set('bazardrive.tg_launch.v1', SENTINEL);
   auth.resetLocalSession();
   expect('resetLocalSession() clears the sessionStorage role override (auth-reset)',
     ss.get('bazardrive.smoke_role.v1') == null,
     ss.get('bazardrive.smoke_role.v1') != null ? 'smoke_role survived logout' : '');
+  expect('resetLocalSession() clears the tab\'s raw Telegram initData (auth-reset, no silent re-sign-in)',
+    ss.get('bazardrive.tg_init_data.v1') == null,
+    ss.get('bazardrive.tg_init_data.v1') != null ? 'tg_init_data survived logout' : '');
+  expect('resetLocalSession() keeps the transient Telegram launch environment',
+    ss.get('bazardrive.tg_launch.v1') === SENTINEL);
 } catch (e) {
   expect('mock_auth.js imports + runs resetLocalSession() under a shim', false, e.message.slice(0, 200));
 }
