@@ -61,12 +61,68 @@ test('production still requires ALLOWED_ORIGIN to be present', () => {
 
 // --- AUTH knobs (BD-DOCS-032; parsed-but-dark until the OTP-verify cutover, R02) ---
 
-test('OTP/session knobs default sensibly (ttl 300, length 4, maxAttempts 5, session ttl 0)', () => {
+test('OTP/session knobs default sensibly (ttl 300, length 6, maxAttempts 5, session ttl 0)', () => {
   const cfg = loadConfig({ ...base, NODE_ENV: 'development' });
   assert.equal(cfg.otp.ttlSeconds, 300);
-  assert.equal(cfg.otp.length, 4);
+  assert.equal(cfg.otp.length, 6, 'BD-AUTH-HARDEN-01 (#824): 6 digits by default');
   assert.equal(cfg.otp.maxAttempts, 5);
   assert.equal(cfg.session.ttlSeconds, 0, 'no session expiry modeled by default');
+});
+
+// BD-AUTH-HARDEN-01 (#824): loadConfig always turns the OTP limits on — in every profile, with no
+// env value that turns them off. Only a hand-built test config without `otp.limits` runs without.
+test('OTP limits are on by default in every profile (60 s resend, 5/phone, 20/address, 10 failed checks per hour)', () => {
+  const expected = { resendSeconds: 60, phoneRequestsPerHour: 5, ipRequestsPerHour: 20, phoneFailedVerifiesPerHour: 10 };
+  for (const env of [
+    { NODE_ENV: 'development' },
+    { NODE_ENV: 'test' },
+    { NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://a.github.io' },
+    { NODE_ENV: 'development', PUBLIC_EXPOSURE: 'true', HOST: '127.0.0.1', SESSION_TTL_SECONDS: '86400' },
+  ]) {
+    assert.deepEqual(loadConfig({ ...base, ...env }).otp.limits, expected, JSON.stringify(env));
+  }
+});
+
+test('OTP limits honor explicit env overrides; the resend pause alone may be 0', () => {
+  const cfg = loadConfig({
+    ...base,
+    NODE_ENV: 'development',
+    OTP_RESEND_SECONDS: '0',
+    OTP_PHONE_REQUESTS_PER_HOUR: '50',
+    OTP_IP_REQUESTS_PER_HOUR: '500',
+    OTP_PHONE_FAILED_VERIFIES_PER_HOUR: '30',
+  });
+  assert.deepEqual(cfg.otp.limits, {
+    resendSeconds: 0, phoneRequestsPerHour: 50, ipRequestsPerHour: 500, phoneFailedVerifiesPerHour: 30,
+  });
+});
+
+test('OTP limits out of range are rejected at startup; no cap can be 0 (no "off" value)', () => {
+  const cases = {
+    OTP_RESEND_SECONDS: ['-1', '3601', 'abc', ''],
+    OTP_PHONE_REQUESTS_PER_HOUR: ['0', '-1', '1001', 'abc', ''],
+    OTP_IP_REQUESTS_PER_HOUR: ['0', '100001', 'abc', ''],
+    OTP_PHONE_FAILED_VERIFIES_PER_HOUR: ['0', '1001', 'abc', ''],
+  };
+  for (const [name, values] of Object.entries(cases)) {
+    for (const bad of values) {
+      assert.throws(
+        () => loadConfig({ ...base, NODE_ENV: 'development', [name]: bad }),
+        new RegExp(`Invalid ${name}`),
+        `${name}=${JSON.stringify(bad)}`,
+      );
+    }
+  }
+  // The upper bounds themselves are accepted.
+  const max = loadConfig({
+    ...base,
+    NODE_ENV: 'development',
+    OTP_RESEND_SECONDS: '3600',
+    OTP_PHONE_REQUESTS_PER_HOUR: '1000',
+    OTP_IP_REQUESTS_PER_HOUR: '100000',
+    OTP_PHONE_FAILED_VERIFIES_PER_HOUR: '1000',
+  });
+  assert.equal(max.otp.limits.ipRequestsPerHour, 100_000);
 });
 
 test('OTP dev-mode defaults ON outside production, OFF in production', () => {
@@ -83,13 +139,13 @@ test('OTP/session knobs honor explicit env overrides', () => {
     ...base,
     NODE_ENV: 'development',
     OTP_TTL_SECONDS: '120',
-    OTP_LENGTH: '6',
+    OTP_LENGTH: '8',
     OTP_MAX_ATTEMPTS: '3',
     OTP_DEV_MODE: 'false',
     SESSION_TTL_SECONDS: '86400',
   });
   assert.equal(cfg.otp.ttlSeconds, 120);
-  assert.equal(cfg.otp.length, 6);
+  assert.equal(cfg.otp.length, 8);
   assert.equal(cfg.otp.maxAttempts, 3);
   assert.equal(cfg.otp.devMode, false, 'explicit OTP_DEV_MODE=false overrides the dev default');
   assert.equal(cfg.session.ttlSeconds, 86400);
@@ -271,6 +327,22 @@ test('outside the public profile the same values still start (no behaviour chang
   const dev = { ...base, NODE_ENV: 'development' };
   assert.doesNotThrow(() => loadConfig({ ...dev, OTP_DEV_MODE: 'true', DRIVER_ENROLLMENT_AUTO_APPROVE: 'true', SESSION_TTL_SECONDS: '0', HOST: '0.0.0.0' }));
   assert.doesNotThrow(() => loadConfig({ ...dev, PUBLIC_EXPOSURE: 'false', OTP_DEV_MODE: 'true', HOST: '0.0.0.0' }));
+});
+
+test('.env.example states the OTP length and limit defaults (#824)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const text = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  const keys = ['OTP_LENGTH', 'OTP_RESEND_SECONDS', 'OTP_PHONE_REQUESTS_PER_HOUR', 'OTP_IP_REQUESTS_PER_HOUR', 'OTP_PHONE_FAILED_VERIFIES_PER_HOUR'];
+  const example = {};
+  for (const key of keys) {
+    const m = new RegExp(`^${key}=(.*)$`, 'm').exec(text);
+    assert.ok(m, `${key} is in the example`);
+    example[key] = m[1];
+  }
+  const fromExample = loadConfig({ ...base, NODE_ENV: 'development', ...example }).otp;
+  const defaults = loadConfig({ ...base, NODE_ENV: 'development' }).otp;
+  assert.equal(fromExample.length, defaults.length);
+  assert.deepEqual(fromExample.limits, defaults.limits);
 });
 
 test('.env.example: only flipping PUBLIC_EXPOSURE is refused; the documented overrides start (#1134 review)', async () => {

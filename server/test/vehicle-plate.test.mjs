@@ -77,7 +77,8 @@ test('migration 0013: schema-only, re-applicable, ASCII', () => {
   const dir = new URL('../migrations/', import.meta.url);
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
   assert.ok(files.includes('0013_offer_vehicle_fields.sql'));
-  assert.equal(files.at(-1), '0013_offer_vehicle_fields.sql', 'the newest migration');
+  // The number is taken once (0014, BD-AUTH-HARDEN-01, follows it — "newest" no longer holds).
+  assert.deepEqual(files.filter((f) => f.startsWith('0013_')), ['0013_offer_vehicle_fields.sql'], 'one 0013 migration');
   const sql = fs.readFileSync(new URL('0013_offer_vehicle_fields.sql', dir), 'utf8');
   assert.doesNotMatch(sql, /[^\x00-\x7F]/, 'ASCII only');
   for (const col of ['vehicle_model', 'vehicle_color', 'vehicle_plate']) {
