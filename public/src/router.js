@@ -277,6 +277,37 @@ async function render() {
   }
 
   syncTabActive(path);
+  publishRenderedRoute(routes.has(lookupPath) ? lookupPath : '/feed');
+}
+
+// BD-TG-MINIAPP-01 M2 (#1126) — read-only seam for the Telegram bridge: the route the router
+// actually rendered (after the /order/<id> prefix rule and the /feed fallback above; an unknown
+// hash keeps its text but renders /feed) and a notification after each mount. Observers only
+// read: they run after the mount and tab sync, a throwing observer is ignored, and nothing here
+// navigates, re-renders or touches the hash. A stale render returns earlier and never publishes.
+let renderedRoute = null;
+const routeRenderedObservers = new Set();
+
+function publishRenderedRoute(route) {
+  renderedRoute = route;
+  for (const observer of [...routeRenderedObservers]) {
+    try {
+      observer(route);
+    } catch {
+      // observers never affect routing
+    }
+  }
+}
+
+export function getRenderedRoute() {
+  return renderedRoute;
+}
+
+// Returns an unsubscribe function.
+export function onRouteRendered(observer) {
+  if (typeof observer !== 'function') return () => {};
+  routeRenderedObservers.add(observer);
+  return () => { routeRenderedObservers.delete(observer); };
 }
 
 function syncTabActive(path) {

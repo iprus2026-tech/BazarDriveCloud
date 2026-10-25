@@ -79,6 +79,16 @@ body {
     var(--bg-0);
 }
 
+/* BD-TG-MINIAPP-01 M2 (#1126) — inside Telegram only: telegram_bridge.js adds .bd-telegram and
+   keeps --bd-tg-viewport-stable-height in px. The shell follows Telegram's stable viewport (the
+   window is a resizable sheet). Device insets stay with the existing env() rules; the
+   --bd-tg-safe-* / --bd-tg-content-safe-* variables are maintained for the on-device check.
+   Outside Telegram this rule never applies. */
+.bd-telegram #shell {
+  height: var(--bd-tg-viewport-stable-height, 100dvh);
+  min-height: var(--bd-tg-viewport-stable-height, 100dvh);
+}
+
 #app {
   flex: 1;
   min-height: 0;

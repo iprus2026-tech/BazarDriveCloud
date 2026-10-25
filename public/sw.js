@@ -260,7 +260,8 @@
 // v383 (#1085, #1048): order-map-draft in-form clicks; the earnings sheet navigates once.
 // v384 (#1086, #1088): the profile adopts the server session role on mount; no passenger-mode row ON.
 // v393 (BD-TG-MINIAPP-01 M1, #1126): new telegram_launch.js — Telegram launch capture before the router.
-const VERSION    = 'v393';
+// v394 (BD-TG-MINIAPP-01 M2, #1126): new telegram_bridge.js + router rendered-route seam + .bd-telegram shell height.
+const VERSION    = 'v394';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -278,6 +279,7 @@ const PRECACHE = [
   './styles/daily_communication.css',
   './src/app.js',
   './src/telegram_launch.js',
+  './src/telegram_bridge.js',
   './src/app_error_overlay.js',
   './src/app_connection_status.js',
   './src/app_error_triggers.js',

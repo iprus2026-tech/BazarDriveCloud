@@ -626,6 +626,20 @@ if (exists(telegramLaunchSmoke)) {
   }
 }
 
+// BD-TG-MINIAPP-01 M2 (#1126): the Telegram bridge is inert outside Telegram, posts only to
+// https://web.telegram.org, accepts only that origin/source, and drives BackButton / closing
+// confirmation from the router's read-only rendered-route seam, which never changes routing.
+for (const name of ['smoke-telegram-bridge.mjs', 'smoke-router-rendered-route.mjs']) {
+  const file = path.join(root, 'scripts', name);
+  if (!exists(file)) continue;
+  try {
+    execFileSync(process.execPath, [file], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = ((e.stderr && e.stderr.toString()) || (e.stdout && e.stdout.toString()) || e.message).slice(-400);
+    errors.push(`${name} failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
 // ride history + driver receipt surfaces. Pins ride_history.js
 // builder fallbacks (no demo identity leak), mock_api receipt
