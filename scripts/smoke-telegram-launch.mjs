@@ -328,6 +328,29 @@ await check('sw.js precaches telegram_launch.js', () => {
   assert.match(swSource, /'\.\/src\/telegram_launch\.js',/);
 });
 
+// ── Demo feed ids ↔ startapp (Telegram Desktop check, 2026-10-25: post_2 → «Публикация не найдена») ──
+// The feed and post detail read listFeedPosts() (FEED_POSTS_V2: sys-1, trip-1, …), not the older
+// numeric posts store. Every demo feed post must be reachable through startapp=post_<id>, found by
+// the same lookup post_detail.js uses. A numeric id like 2 is not a feed post.
+await check('every demo feed post is reachable via startapp=post_<id> and found by the post-detail lookup', async () => {
+  installEnv({ hash: '#/feed' });
+  delete globalThis.__BD_API_BASE__; // backend OFF, as on GitHub Pages
+  const { FEED_POSTS_V2, listFeedPosts } = await import(new URL('../public/src/mock_api.js', import.meta.url).href);
+  const feed = await listFeedPosts();
+  assert.ok(FEED_POSTS_V2.length >= 6, 'the demo feed has posts');
+  const idFromRoute = (route) => new URLSearchParams(route.slice(route.indexOf('?') + 1)).get('id');
+  for (const post of FEED_POSTS_V2) {
+    const route = mod.routeForStartParam(`post_${post.id}`);
+    assert.equal(route, `/post?id=${post.id}`, `post_${post.id}`);
+    const id = idFromRoute(route);
+    assert.ok(feed.find((p) => String(p.id) === String(id)), `post_${post.id} → found in listFeedPosts()`);
+  }
+  assert.ok(FEED_POSTS_V2.some((p) => p.id === 'trip-1'), 'trip-1 (the checklist example) is a demo feed post');
+  const reported = idFromRoute(mod.routeForStartParam('post_2'));
+  assert.equal(reported, '2');
+  assert.equal(feed.find((p) => String(p.id) === reported), undefined, 'post_2 is not a feed post (the reported «Публикация не найдена»)');
+});
+
 delete globalThis.location;
 delete globalThis.history;
 console.log(`\n${passed} passed; ${failures.length} failed`);
