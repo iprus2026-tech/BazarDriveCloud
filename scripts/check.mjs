@@ -259,6 +259,18 @@ if (exists(mapboxRenderMapSmoke)) {
   }
 }
 
+// BD-UX-ROLES-02 (#1139) — one 760px shell column for every screen with the tab bar; no screen
+// widens the shell on its own; both profiles in one column; .has-tabbar is set before the screen loads.
+const shellWidthSmoke = path.join(root, 'scripts', 'smoke-shell-width.mjs');
+if (exists(shellWidthSmoke)) {
+  try {
+    execFileSync(process.execPath, [shellWidthSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = ((e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : e.message)).slice(-400);
+    errors.push(`smoke-shell-width.mjs failed\n${msg}`);
+  }
+}
+
 // BD-POST-01 — static regression smoke for the post-detail primary-action
 // resolver (pickCtaSpec kinds + runCtaAction per-kind routing). Audit #455
 // flagged this resolver had no behavioural pin.
