@@ -211,3 +211,86 @@ test('production rejects DRIVER_ENROLLMENT_AUTO_APPROVE=true at startup, accepts
   assert.equal(loadConfig({ ...prod, DRIVER_ENROLLMENT_AUTO_APPROVE: 'false' }).drivers.enrollmentAutoApprove, false);
   assert.equal(loadConfig(prod).drivers.enrollmentAutoApprove, false);
 });
+
+// BD-STAND-PUBLIC-01 (#1124) — the public profile for a stand reachable from the internet.
+const pub = { ...base, NODE_ENV: 'development', PUBLIC_EXPOSURE: 'true', SESSION_TTL_SECONDS: '86400' };
+
+test('PUBLIC_EXPOSURE is strict true / false; unset = false and development is unchanged', () => {
+  const dev = loadConfig({ ...base, NODE_ENV: 'development' });
+  assert.equal(dev.publicExposure, false);
+  assert.equal(dev.host, '0.0.0.0', 'dev bind default unchanged');
+  assert.equal(dev.otp.devMode, true, 'dev OTP echo default unchanged');
+  assert.equal(dev.session.ttlSeconds, 0, 'dev may keep non-expiring sessions');
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development', PUBLIC_EXPOSURE: 'false' }).publicExposure, false);
+  for (const bad of ['', 'yes', '1', 'TRUE', 'on']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', PUBLIC_EXPOSURE: bad }),
+      /Invalid PUBLIC_EXPOSURE: .* must be true or false/,
+      `expected reject: ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('the public profile defaults to a loopback bind and OTP dev-mode off', () => {
+  const c = loadConfig(pub);
+  assert.equal(c.publicExposure, true);
+  assert.equal(c.host, '127.0.0.1');
+  assert.equal(c.otp.devMode, false);
+  assert.equal(c.drivers.enrollmentAutoApprove, false);
+  assert.equal(c.session.ttlSeconds, 86400);
+  for (const host of ['127.0.0.1', '127.0.0.2', '127.255.255.254', '::1', 'localhost']) {
+    assert.equal(loadConfig({ ...pub, HOST: host }).host, host, `loopback ${host} accepted`);
+  }
+  assert.equal(loadConfig({ ...pub, OTP_DEV_MODE: 'false' }).otp.devMode, false);
+  assert.equal(loadConfig({ ...pub, NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://iprus2026-tech.github.io' }).publicExposure, true,
+    'combines with production');
+});
+
+test('the public profile refuses startup on each explicitly dangerous value', () => {
+  const refused = [
+    [{ OTP_DEV_MODE: 'true' }, /Invalid OTP_DEV_MODE: true is forbidden when PUBLIC_EXPOSURE=true/],
+    [{ DRIVER_ENROLLMENT_AUTO_APPROVE: 'true' }, /Invalid DRIVER_ENROLLMENT_AUTO_APPROVE: true is forbidden when PUBLIC_EXPOSURE=true/],
+    [{ SESSION_TTL_SECONDS: '0' }, /Invalid SESSION_TTL_SECONDS: must be > 0 when PUBLIC_EXPOSURE=true/],
+    [{ SESSION_TTL_SECONDS: undefined }, /Invalid SESSION_TTL_SECONDS: must be > 0 when PUBLIC_EXPOSURE=true/],
+    [{ HOST: '0.0.0.0' }, /Invalid HOST: 0\.0\.0\.0 — must be a loopback address when PUBLIC_EXPOSURE=true/],
+    [{ HOST: '::' }, /Invalid HOST: :: — must be a loopback address/],
+    [{ HOST: '192.168.1.5' }, /Invalid HOST: 192\.168\.1\.5 — must be a loopback address/],
+    [{ HOST: 'stand.example.com' }, /Invalid HOST: stand\.example\.com — must be a loopback address/],
+    // #1134 review: out-of-range octets are not an address at all.
+    [{ HOST: '127.999.1.1' }, /Invalid HOST: 127\.999\.1\.1 — must be a loopback address/],
+    [{ HOST: '127.0.0.256' }, /Invalid HOST: 127\.0\.0\.256 — must be a loopback address/],
+  ];
+  for (const [patch, re] of refused) {
+    const env = { ...pub, ...patch };
+    for (const [k, v] of Object.entries(patch)) if (v === undefined) delete env[k];
+    assert.throws(() => loadConfig(env), re, `expected refusal for ${JSON.stringify(patch)}`);
+  }
+});
+
+test('outside the public profile the same values still start (no behaviour change)', () => {
+  const dev = { ...base, NODE_ENV: 'development' };
+  assert.doesNotThrow(() => loadConfig({ ...dev, OTP_DEV_MODE: 'true', DRIVER_ENROLLMENT_AUTO_APPROVE: 'true', SESSION_TTL_SECONDS: '0', HOST: '0.0.0.0' }));
+  assert.doesNotThrow(() => loadConfig({ ...dev, PUBLIC_EXPOSURE: 'false', OTP_DEV_MODE: 'true', HOST: '0.0.0.0' }));
+});
+
+test('.env.example: only flipping PUBLIC_EXPOSURE is refused; the documented overrides start (#1134 review)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const text = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  const env = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line.trim());
+    if (m) env[m[1]] = m[2];
+  }
+  assert.equal(env.PUBLIC_EXPOSURE, 'false', 'the example ships the profile off');
+  assert.throws(() => loadConfig({ ...env, PUBLIC_EXPOSURE: 'true' }), /Invalid (HOST|OTP_DEV_MODE|SESSION_TTL_SECONDS)/);
+  // The overrides the example documents beside PUBLIC_EXPOSURE (the block right above it):
+  const block = text.slice(text.indexOf('To enable the'), text.indexOf('\nPUBLIC_EXPOSURE=false'));
+  const documented = [...block.matchAll(/^#\s{2,}([A-Z_]+)=(\S+)/gm)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(documented.map(([k]) => k).sort(),
+    ['DRIVER_ENROLLMENT_AUTO_APPROVE', 'HOST', 'OTP_DEV_MODE', 'PUBLIC_EXPOSURE', 'SESSION_TTL_SECONDS']);
+  const c = loadConfig({ ...env, ...Object.fromEntries(documented) });
+  assert.equal(c.publicExposure, true);
+  assert.equal(c.host, '127.0.0.1');
+  assert.equal(c.otp.devMode, false);
+  assert.ok(c.session.ttlSeconds > 0);
+});

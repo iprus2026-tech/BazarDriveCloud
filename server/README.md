@@ -73,6 +73,30 @@ The detailed current-state matrix, PWA seams, error-code policy and delivery dep
 are governed by
 `docs-site/docs/processes/backend-spine-inspector.md`.
 
+## Public profile — `PUBLIC_EXPOSURE=true` (BD-STAND-PUBLIC-01, #1124)
+
+Use it for a stand reachable from the internet, for example through a tunnel. Every
+`NODE_ENV=production` guard above keys off `NODE_ENV` only. This profile adds guards for a
+development stand that is exposed. The flag is strictly `true` / `false`; unset means `false`,
+and development is unchanged.
+
+- **Startup is refused** on any of these: `OTP_DEV_MODE=true`, `DRIVER_ENROLLMENT_AUTO_APPROVE=true`,
+  `SESSION_TTL_SECONDS` equal to `0` or unset, or a non-loopback `HOST`.
+- **Safe defaults:** `HOST=127.0.0.1` and `OTP_DEV_MODE=false`. A tunnel daemon and the stand proxy
+  reach the server locally.
+- **OTP is off.** `POST /auth/otp/request` and `/auth/otp/verify` answer
+  `403 { code: 'OTP_DISABLED', error: 'Вход через Telegram' }`. This happens before any body
+  parsing or DB access. Sign-in there goes through Telegram (#1127).
+- **Client IP.** `X-Forwarded-For` is trusted from loopback peers only (`trustProxy: 'loopback'`):
+  - for the chain cloudflared → stand proxy → this server, `req.ip` is the client;
+  - a forwarded header from any non-loopback peer is ignored.
+
+**In every profile:**
+- the request body is capped at 64 KiB; the largest legitimate bodies are about 17 KB
+  (chat message) and 14 KB (order);
+- `POST /webhooks/whatsapp` keeps its own 1 MiB limit, because Meta sizes that payload;
+- CORS allows `PUT` (`/auth/session/active-role`).
+
 ## Pilot safety boundaries
 
 - A client cutover stays guarded until its module-specific exit conditions are met.
