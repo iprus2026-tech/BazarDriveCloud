@@ -50,7 +50,7 @@ delivery, operations or activation gap still prevents pilot use.
 | Module / route | State | Boundary that matters before pilot |
 |---|---|---|
 | `GET /api/v1/health`, `GET /api/v1/readyz` | LIVE | Readiness checks database connectivity and migration state. |
-| `/api/v1/auth/*` | LIVE / PILOT-BLOCKED | Session and OTP request/verify exist. `GET /session` returns the account's current `roles`. `PUT /session/active-role` switches the current session to a granted role and seeds the next login. Verify revokes a presented live bearer of the same account in the login transaction, or fails with 503 (`docs/driver-role-grant-contract.md` §2). OTP throttling/delivery and final session policy remain. |
+| `/api/v1/auth/*` | LIVE / PILOT-BLOCKED | Session and OTP request/verify exist. `GET /session` returns the account's current `roles`. `PUT /session/active-role` switches the current session to a granted role and seeds the next login. Verify revokes a presented live bearer of the same account in the login transaction, or fails with 503 (`docs/driver-role-grant-contract.md` §2). OTP limits are on (BD-AUTH-HARDEN-01 #824): 6-digit codes and `codeLength` in the request response; per hour, a resend pause and a cap per phone, a cap per source address, and a cap on failed checks per phone across codes; a refusal is 429 `OTP_RATE_LIMITED` / `OTP_LOCKED` with `Retry-After`; codes older than a day are swept. OTP delivery and final session policy remain. |
 | `/api/v1/orders` | LIVE | Created-order read is public; create requires a live authenticated session, while `phone_verified` and passenger-role enforcement remain pilot gates. |
 | `/api/v1/matching` | LIVE / PILOT-BLOCKED | Owner/self-offer checks exist; offer creation requires a live authenticated session, while `phone_verified`, granted driver role and readiness are not enforced yet. |
 | `/api/v1/ride-state` | LIVE | Participant-only; terminal freeze and append-only events are authoritative. |
@@ -103,7 +103,7 @@ and development is unchanged.
 - PostgreSQL/server domain rules own order, offer, assignment and ride state after activation.
 - Matching selection is transactional; terminal rides are frozen; `ride_events` is append-only.
 - Chat must not be activated until sender identity and order/ride participation are session-derived.
-- OTP delivery/rate limiting, driver role/readiness, deploy/rollback and observability are pilot gates.
+- OTP delivery, driver role/readiness, deploy/rollback and observability are pilot gates (OTP rate limits are on since BD-AUTH-HARDEN-01, #824).
 - API responses remain outside the service-worker cache.
 
 ## Origins and CI gates

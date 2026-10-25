@@ -61,9 +61,23 @@ export function loadConfig(env = process.env) {
     sessionSecret: env.SESSION_SECRET || '',
     otp: {
       ttlSeconds: Number.parseInt(env.OTP_TTL_SECONDS ?? '300', 10),
-      length: Number.parseInt(env.OTP_LENGTH ?? '4', 10),
+      // BD-AUTH-HARDEN-01 (#824): 6 digits by default (was 4).
+      length: Number.parseInt(env.OTP_LENGTH ?? '6', 10),
       // Coarse brute-force cap applied by the verify endpoint (R02); no schema threshold.
       maxAttempts: Number.parseInt(env.OTP_MAX_ATTEMPTS ?? '5', 10),
+      // BD-AUTH-HARDEN-01 (#824) — request/verify limits, counted from auth_otp over the last hour.
+      // Always on from loadConfig: there is no env switch to turn them off. Only a hand-built
+      // config without `limits` (the DB-gated tests) runs without them.
+      limits: {
+        // Pause before the same phone can get another code.
+        resendSeconds: Number.parseInt(env.OTP_RESEND_SECONDS ?? '60', 10),
+        // Codes per phone per hour.
+        phoneRequestsPerHour: Number.parseInt(env.OTP_PHONE_REQUESTS_PER_HOUR ?? '5', 10),
+        // Code requests per source address (req.ip) per hour.
+        ipRequestsPerHour: Number.parseInt(env.OTP_IP_REQUESTS_PER_HOUR ?? '20', 10),
+        // Failed checks per phone per hour, across all of its codes.
+        phoneFailedVerifiesPerHour: Number.parseInt(env.OTP_PHONE_FAILED_VERIFIES_PER_HOUR ?? '10', 10),
+      },
       // Dev-mode echoes the minted code in the request response instead of sending SMS (no
       // provider yet — BD-DOCS-032 open question). On by default only outside production and
       // outside the public profile.
@@ -131,6 +145,20 @@ export function loadConfig(env = process.env) {
   }
   if (!Number.isInteger(config.otp.maxAttempts) || config.otp.maxAttempts <= 0 || config.otp.maxAttempts > 100) {
     throw new Error(`Invalid OTP_MAX_ATTEMPTS: ${env.OTP_MAX_ATTEMPTS} — must be an integer 1..100`);
+  }
+  // The limits are bounded like the knobs above, and none can be 0: a zero cap would refuse every
+  // request, and there is deliberately no value that turns a cap off. Only the resend pause may be
+  // 0 (no pause; the hourly caps still apply).
+  const limitKnobs = [
+    ['OTP_RESEND_SECONDS', config.otp.limits.resendSeconds, 0, 3600],
+    ['OTP_PHONE_REQUESTS_PER_HOUR', config.otp.limits.phoneRequestsPerHour, 1, 1000],
+    ['OTP_IP_REQUESTS_PER_HOUR', config.otp.limits.ipRequestsPerHour, 1, 100_000],
+    ['OTP_PHONE_FAILED_VERIFIES_PER_HOUR', config.otp.limits.phoneFailedVerifiesPerHour, 1, 1000],
+  ];
+  for (const [name, value, min, max] of limitKnobs) {
+    if (!Number.isInteger(value) || value < min || value > max) {
+      throw new Error(`Invalid ${name}: ${env[name]} — must be an integer ${min}..${max}`);
+    }
   }
   if (!Number.isInteger(config.session.ttlSeconds) || config.session.ttlSeconds < 0 || config.session.ttlSeconds > 315_360_000) {
     throw new Error(`Invalid SESSION_TTL_SECONDS: ${env.SESSION_TTL_SECONDS} — must be an integer 0..315360000 (seconds; 0 = no expiry)`);

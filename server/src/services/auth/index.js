@@ -2,7 +2,7 @@
 // BD-DOCS-041 §API). All five routes are LIVE (OTP R02; logout #829 B1; active role
 // BD-AUTH-POLICY-01B-B):
 //   GET  /api/v1/auth/session             -> { user } (null when anonymous; user.roles = current grants)
-//   POST /api/v1/auth/otp/request         -> { ok, expiresInSeconds, devCode? }
+//   POST /api/v1/auth/otp/request         -> { ok, expiresInSeconds, codeLength, devCode? }
 //   POST /api/v1/auth/otp/verify          -> { token, user }
 //   POST /api/v1/auth/logout              -> { ok: true }
 //   PUT  /api/v1/auth/session/active-role -> { user }   switch THIS session to a granted role
@@ -22,11 +22,21 @@
 // compare, so the cap bounds guesses even under a concurrent burst. A wrong code and an absent
 // code return the SAME generic 401 body (no account-existence oracle); the only residual signal
 // is transient pending-OTP presence (the lock-out 429 / the extra count write), which is
-// self-inducible via the open /otp/request and closes with the request-side rate-limiting noted
-// below (deferred to pre-go-live, BD-DOCS-032).
+// self-inducible via /otp/request and bounded by its limits below.
+//
+// BD-AUTH-HARDEN-01 (#824) — limits, counted from auth_otp over the last hour under a per-phone
+// (and per-address) advisory lock: a resend pause and an hourly cap per phone, an hourly cap per
+// source address (req.ip — trustProxy from BD-STAND-PUBLIC-01 makes it the client behind one
+// loopback proxy), and an hourly cap on failed checks per phone across all of its codes. A refusal
+// is 429 with Retry-After. loadConfig always sets the limits; a hand-built config without
+// `otp.limits` (the DB-gated tests) runs without them. Each issued code also sweeps codes older
+// than a day.
 import { generateToken, generateOtpCode, hashOtpCode, hashToken, hashesEqual } from './tokens.js';
 import { normalizePhone, isValidPhone } from './phone.js';
-import { insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts } from '../../repositories/otps.js';
+import {
+  insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts,
+  lockOtpKeys, otpRequestUsage, otpFailedVerifyUsage, deleteOldOtps,
+} from '../../repositories/otps.js';
 import {
   resolveVerifiedLoginUser, findUserAuthorityById, lockUserForGrant, setUserActiveRole,
 } from '../../repositories/users.js';
@@ -46,6 +56,40 @@ class SessionReplacementError extends Error {}
 // client loadResource overlay reads these the same as a thrown error.
 const problem = (reply, status, code, error, retryable = false) =>
   reply.code(status).send({ error, code, retryable });
+
+// BD-AUTH-HARDEN-01 (#824). The limit window, and how long codes are kept: longer than the window,
+// so the sweep never removes a row a limit still counts.
+const OTP_LIMIT_WINDOW_SECONDS = 3600;
+const OTP_RETENTION_SECONDS = 24 * 3600;
+const OTP_SWEEP_BATCH = 100;
+
+// A limit refusal: 429 with the wait in the Retry-After header and, additively to the uniform
+// problem shape, in the body (`retryAfterSeconds`) for the client. Not retryable: an immediate
+// retry is refused again.
+const rateLimited = (reply, code, error, retryAfterSeconds) => reply
+  .code(429)
+  .header('retry-after', String(retryAfterSeconds))
+  .send({ error, code, retryable: false, retryAfterSeconds });
+
+// Seconds to wait before this phone may get another code from this address, or 0. Checks the
+// phone's resend pause and hourly cap, then the address's hourly cap; the longest wait wins.
+async function otpRequestWait(db, { phone, ip, limits }) {
+  const waits = [];
+  const byPhone = await otpRequestUsage(db, {
+    by: 'phone', value: phone, windowSeconds: OTP_LIMIT_WINDOW_SECONDS, max: limits.phoneRequestsPerHour,
+  });
+  if (byPhone.secondsSinceLatest !== null && byPhone.secondsSinceLatest < limits.resendSeconds) {
+    waits.push(Math.ceil(limits.resendSeconds - byPhone.secondsSinceLatest));
+  }
+  if (byPhone.retryAfterSeconds) waits.push(byPhone.retryAfterSeconds);
+  if (ip) {
+    const byIp = await otpRequestUsage(db, {
+      by: 'ip', value: ip, windowSeconds: OTP_LIMIT_WINDOW_SECONDS, max: limits.ipRequestsPerHour,
+    });
+    if (byIp.retryAfterSeconds) waits.push(byIp.retryAfterSeconds);
+  }
+  return waits.length ? Math.max(...waits) : 0;
+}
 
 // auth_session.active_role is constrained to passenger|driver|NULL (migration 0002); a
 // 'guest'/unset role maps to NULL — only a granted role rides on the session.
@@ -162,11 +206,9 @@ export default async function authService(app) {
   });
 
   // POST /otp/request — mint + store a hashed code for a phone; dev-mode echoes it.
-  // NOTE (deferred, pre-go-live): this endpoint is intentionally UNTHROTTLED in R02. The
-  // per-code attempt cap (verify) is NOT a per-phone brute-force ceiling — re-requesting mints a
-  // fresh code with attempts=0 — and there is no per-phone/IP rate limit yet (OTP policy is
-  // deferred per BD-DOCS-032; the SMS provider is also still dark). A request-side rate limiter
-  // is a REQUIRED hardening step before real delivery goes live (epic #784, R14/R19).
+  // The per-code attempt cap (verify) alone is not a per-phone ceiling — re-requesting mints a
+  // fresh code with attempts=0 — so BD-AUTH-HARDEN-01 (#824) bounds the requests themselves:
+  // the resend pause and the hourly caps per phone and per address (429 OTP_RATE_LIMITED).
   // BD-STAND-PUBLIC-01 (#1124): on a public stand OTP is off entirely. Both OTP routes answer
   // 403 OTP_DISABLED in onRequest: no body parsing or validation, no code minted, no DB read
   // or write. Sign-in there is Telegram only (BD-AUTH-TELEGRAM-01 #1127).
@@ -186,10 +228,13 @@ export default async function authService(app) {
       response: {
         200: {
           type: 'object',
-          required: ['ok', 'expiresInSeconds'],
+          required: ['ok', 'expiresInSeconds', 'codeLength'],
           properties: {
             ok: { type: 'boolean' },
             expiresInSeconds: { type: 'integer' },
+            // BD-AUTH-HARDEN-01 (#824): how many digits to enter (additive; the client no longer
+            // has to infer it from devCode).
+            codeLength: { type: 'integer' },
             devCode: { type: 'string' },
           },
         },
@@ -202,13 +247,31 @@ export default async function authService(app) {
     }
     const code = generateOtpCode(config.otp.length);
     const expiresAt = new Date(Date.now() + config.otp.ttlSeconds * 1000);
-    await insertOtp(app.db, {
-      phone,
-      codeHash: hashOtpCode(code),
-      expiresAt,
-      requestedIp: req.ip ?? null,
-    });
-    const out = { ok: true, expiresInSeconds: config.otp.ttlSeconds };
+    const otp = { phone, codeHash: hashOtpCode(code), expiresAt, requestedIp: req.ip ?? null };
+    const limits = config.otp.limits ?? null;
+    if (limits) {
+      // Check and write under the address + phone locks, so concurrent requests cannot both
+      // pass the same count. A refused request writes nothing and so does not count.
+      const wait = await app.db.tx(async (client) => {
+        await lockOtpKeys(client, { phone, ip: otp.requestedIp });
+        const seconds = await otpRequestWait(client, { phone, ip: otp.requestedIp, limits });
+        if (seconds > 0) return seconds;
+        await insertOtp(client, otp);
+        return 0;
+      });
+      if (wait > 0) {
+        return rateLimited(reply, 'OTP_RATE_LIMITED', 'too many code requests — try again later', wait);
+      }
+    } else {
+      await insertOtp(app.db, otp);
+    }
+    // Retention, best effort: a failed sweep never fails the request; the next one retries.
+    try {
+      await deleteOldOtps(app.db, { retentionSeconds: OTP_RETENTION_SECONDS, batch: OTP_SWEEP_BATCH });
+    } catch {
+      req.log.warn('auth otp retention sweep failed');
+    }
+    const out = { ok: true, expiresInSeconds: config.otp.ttlSeconds, codeLength: config.otp.length };
     // Echo the code ONLY in dev-mode (the sole delivery channel in R02); never in prod.
     if (config.otp.devMode) out.devCode = code;
     return reply.send(out);
@@ -271,7 +334,29 @@ export default async function authService(app) {
     // slip past, defeating the cap. Counting first closes that TOCTOU — the same shape as
     // markOtpConsumed's atomic recheck that closed the R01 #787 consume race.) The count
     // persists even when we then reject a wrong code, so the cap is always reachable.
-    const attempts = await incrementOtpAttempts(app.db, otp.id);
+    //
+    // BD-AUTH-HARDEN-01 (#824): with limits on, the phone's failed checks across ALL of its codes
+    // in the last hour are capped too (a new code does not reset them). The check and the count
+    // run under the phone lock, so a concurrent burst cannot pass the same total. A refusal does
+    // not count, so it does not extend itself.
+    const limits = config.otp.limits ?? null;
+    let attempts;
+    if (limits) {
+      const gate = await app.db.tx(async (client) => {
+        await lockOtpKeys(client, { phone });
+        const usage = await otpFailedVerifyUsage(client, {
+          phone, windowSeconds: OTP_LIMIT_WINDOW_SECONDS, max: limits.phoneFailedVerifiesPerHour,
+        });
+        if (usage.retryAfterSeconds) return { wait: usage.retryAfterSeconds };
+        return { attempts: await incrementOtpAttempts(client, otp.id) };
+      });
+      if (gate.wait) {
+        return rateLimited(reply, 'OTP_LOCKED', 'too many failed attempts — try again later', gate.wait);
+      }
+      attempts = gate.attempts;
+    } else {
+      attempts = await incrementOtpAttempts(app.db, otp.id);
+    }
     if (attempts === null) {
       // Row vanished between the read and the count (reaped/superseded) — treat as no live code.
       return problem(reply, 401, 'OTP_INVALID', 'invalid or expired code');

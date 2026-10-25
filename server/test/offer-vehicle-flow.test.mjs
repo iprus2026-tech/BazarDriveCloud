@@ -33,6 +33,48 @@ async function mintSession(app, phone) {
 
 const FULL = 'А108ОР77';
 const MASKED = 'А•••ОР77';
+const TYPED = '  a108op77 ';
+const HIDDEN_DIGITS = '108';
+
+// #1141: what must not leave the server before selection is the PLATE. Check it where a plate can
+// be — each item's vehicle plate and its car line — and check that the full plate (normalized or
+// as typed) is nowhere in the body. The old bare check for the hidden digits over the whole JSON
+// also matched UUIDs and millisecond timestamps (…:19.108Z) and failed at random.
+function assertPlateHiddenInOffers(bodyText) {
+  const body = JSON.parse(bodyText);
+  assert.ok(Array.isArray(body.items) && body.items.length > 0, 'the offers list has items');
+  for (const item of body.items) {
+    assert.equal(item.vehicle?.plate, MASKED, 'the plate is masked');
+    if (typeof item.car === 'string') {
+      assert.ok(!item.car.includes(HIDDEN_DIGITS), `no hidden plate digits in the car line "${item.car}"`);
+    }
+  }
+  const text = bodyText.toUpperCase();
+  for (const plate of [FULL, TYPED.trim()]) {
+    assert.ok(!text.includes(plate.toUpperCase()), 'the full plate is nowhere in the body');
+  }
+}
+
+test('#1141: the plate check ignores "108" in ids and timestamps and still catches a leaked plate', () => {
+  const item = (over = {}) => ({
+    id: 'offer-0108',
+    orderId: 'order-6f1e9108-1080-4108-8108-000000000108',
+    driverId: '9a2c1080-0000-4000-8000-000000000108',
+    createdAt: '2026-10-25T13:31:19.108Z',
+    car: 'Kia Rio · Серый',
+    vehicle: { model: 'Kia Rio', color: 'Серый', plate: MASKED },
+    ...over,
+  });
+  const body = (items) => JSON.stringify({ items });
+  // "108" in the ids and in the milliseconds of a timestamp is not a leak — the old whole-body
+  // substring check would have failed here.
+  assert.ok(body([item()]).includes(HIDDEN_DIGITS));
+  assert.doesNotThrow(() => assertPlateHiddenInOffers(body([item()])));
+  // A real leak is still caught: in the vehicle, in the car line, or anywhere else in the body.
+  assert.throws(() => assertPlateHiddenInOffers(body([item({ vehicle: { model: 'Kia Rio', color: 'Серый', plate: FULL } })])));
+  assert.throws(() => assertPlateHiddenInOffers(body([item({ car: 'Kia Rio · А108ОР77' })])));
+  assert.throws(() => assertPlateHiddenInOffers(body([item({ note: 'a108op77' })])));
+});
 
 test('offer car: plate required + normalized; masked in the offers list; full on the ride and in history', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
@@ -87,7 +129,7 @@ test('offer car: plate required + normalized; masked in the offers list; full on
   // The driver's offer: the car as separate fields; the plate normalized; the driver sees it in full.
   const created = await post(app, '/api/v1/matching/offers', {
     orderId: order.id, driverName: 'Иван', car: 'Kia Rio · Серый', price: 800,
-    vehicleModel: '  Kia   Rio ', vehicleColor: ' Серый ', vehiclePlate: '  a108op77 ',
+    vehicleModel: '  Kia   Rio ', vehicleColor: ' Серый ', vehiclePlate: TYPED,
   }, bearer(drvS));
   assert.equal(created.statusCode, 201);
   assert.deepEqual(created.json().offer.vehicle, { model: 'Kia Rio', color: 'Серый', plate: FULL });
@@ -100,7 +142,7 @@ test('offer car: plate required + normalized; masked in the offers list; full on
   const list = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
   assert.equal(list.statusCode, 200);
   assert.deepEqual(list.json().items[0].vehicle, { model: 'Kia Rio', color: 'Серый', plate: MASKED });
-  assert.ok(!list.body.includes('108'), 'the hidden digits never leave the server before selection');
+  assertPlateHiddenInOffers(list.body);
 
   // /select: the passenger has chosen — the accepted offer and the ride carry the full plate.
   const sel = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: drvS.user.userId }, bearer(paxS));
