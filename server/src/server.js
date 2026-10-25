@@ -24,16 +24,33 @@ import { SERVICES } from './services/index.js';
 import chatService from './services/chat/index.js';
 import whatsappWebhookRoutes from './routes/webhooks/whatsapp.js';
 
-export async function buildApp(overrides = {}) {
-  const config = overrides.config || loadConfig();
+// BD-STAND-PUBLIC-01 (#1124) — the default request-body ceiling for every route; Fastify's own
+// default is 1 MiB. The largest legitimate bodies are well below it: POST /chat/messages
+// (4000-char body) is at most ~17 KB in UTF-8, POST /orders (two bounded points + a 1000-char
+// comment) at most ~14 KB. A route that legitimately needs more sets its own bodyLimit, as the
+// WhatsApp webhook does.
+export const BODY_LIMIT_BYTES = 64 * 1024;
 
-  const app = Fastify({
+// The Fastify constructor options, shared by buildApp() and the tests.
+// trustProxy: only in the public profile, and only for loopback peers. There the chain is
+// cloudflared → the stand proxy → this server, all on 127.0.0.1/::1, so req.ip becomes the client
+// from X-Forwarded-For. An X-Forwarded-For from any non-loopback peer is ignored.
+export function fastifyOptions(config) {
+  return {
     logger: loggerOptions(config),
     disableRequestLogging: config.nodeEnv === 'test',
     // /api/v1/orders and /api/v1/orders/ hit the same route (Fastify 5: router option).
     routerOptions: { ignoreTrailingSlash: true },
     ajv: { customOptions: { coerceTypes: false, removeAdditional: false } },
-  });
+    bodyLimit: BODY_LIMIT_BYTES,
+    trustProxy: config.publicExposure === true ? 'loopback' : false,
+  };
+}
+
+export async function buildApp(overrides = {}) {
+  const config = overrides.config || loadConfig();
+
+  const app = Fastify(fastifyOptions(config));
 
   app.decorate('config', config);
 

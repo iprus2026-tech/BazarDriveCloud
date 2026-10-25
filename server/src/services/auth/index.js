@@ -167,7 +167,15 @@ export default async function authService(app) {
   // fresh code with attempts=0 — and there is no per-phone/IP rate limit yet (OTP policy is
   // deferred per BD-DOCS-032; the SMS provider is also still dark). A request-side rate limiter
   // is a REQUIRED hardening step before real delivery goes live (epic #784, R14/R19).
+  // BD-STAND-PUBLIC-01 (#1124): on a public stand OTP is off entirely. Both OTP routes answer
+  // 403 OTP_DISABLED in onRequest: no body parsing or validation, no code minted, no DB read
+  // or write. Sign-in there is Telegram only (BD-AUTH-TELEGRAM-01 #1127).
+  const otpDisabledGuard = config.publicExposure === true
+    ? { onRequest: async (req, reply) => problem(reply, 403, 'OTP_DISABLED', 'Вход через Telegram') }
+    : null;
+
   app.post('/otp/request', {
+    ...otpDisabledGuard,
     schema: {
       body: {
         type: 'object',
@@ -209,6 +217,7 @@ export default async function authService(app) {
   // POST /otp/verify — check the code under the attempt cap; on success consume it once and
   // mint a verified session (all-or-nothing in one transaction).
   app.post('/otp/verify', {
+    ...otpDisabledGuard,
     schema: {
       body: {
         type: 'object',

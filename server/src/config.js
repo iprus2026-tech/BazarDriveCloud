@@ -27,16 +27,27 @@ function parseBooleanFlag(raw) {
   return null;
 }
 
+// A loopback bind address. The public profile listens only there: the tunnel daemon and the
+// stand proxy reach the server locally, and nothing else can.
+function isLoopbackHost(host) {
+  return host === 'localhost' || host === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'development';
   const isProd = nodeEnv === 'production';
   const port = Number.parseInt(env.PORT ?? '3000', 10);
+  // BD-STAND-PUBLIC-01 (#1124) — a stand reachable from the internet (a tunnel). The flag is
+  // strictly true/false. Its defaults are safe: a loopback bind and OTP dev-mode off. The guards
+  // below refuse startup on an explicitly dangerous value.
+  const publicExposure = parseBooleanFlag(env.PUBLIC_EXPOSURE);
 
   const config = {
     nodeEnv,
     isProd,
+    publicExposure,
     port,
-    host: env.HOST || '0.0.0.0',
+    host: env.HOST || (publicExposure === true ? '127.0.0.1' : '0.0.0.0'),
     logLevel: env.LOG_LEVEL || (nodeEnv === 'test' ? 'silent' : 'info'),
 
     // --- ACTIVE (Phase 1) ---
@@ -51,8 +62,9 @@ export function loadConfig(env = process.env) {
       // Coarse brute-force cap applied by the verify endpoint (R02); no schema threshold.
       maxAttempts: Number.parseInt(env.OTP_MAX_ATTEMPTS ?? '5', 10),
       // Dev-mode echoes the minted code in the request response instead of sending SMS (no
-      // provider yet — BD-DOCS-032 open question). On by default outside production.
-      devMode: env.OTP_DEV_MODE != null ? env.OTP_DEV_MODE === 'true' : !isProd,
+      // provider yet — BD-DOCS-032 open question). On by default only outside production and
+      // outside the public profile.
+      devMode: env.OTP_DEV_MODE != null ? env.OTP_DEV_MODE === 'true' : !isProd && publicExposure !== true,
     },
     session: {
       // 0 = no expiry modeled (auth_session.expires_at stays NULL); lifetime/refresh policy
@@ -135,6 +147,25 @@ export function loadConfig(env = process.env) {
   // Production must never self-approve driver grants; fail fast like OTP_DEV_MODE.
   if (isProd && config.drivers.enrollmentAutoApprove) {
     throw new Error('Invalid DRIVER_ENROLLMENT_AUTO_APPROVE: true is forbidden when NODE_ENV=production');
+  }
+  // BD-STAND-PUBLIC-01 (#1124): the public profile refuses every dev-only authority shortcut,
+  // whatever NODE_ENV is. Without the flag nothing below applies, and development is unchanged.
+  if (publicExposure === null) {
+    throw new Error(`Invalid PUBLIC_EXPOSURE: ${env.PUBLIC_EXPOSURE} — must be true or false`);
+  }
+  if (publicExposure) {
+    if (config.otp.devMode) {
+      throw new Error('Invalid OTP_DEV_MODE: true is forbidden when PUBLIC_EXPOSURE=true (OTP is off on a public stand)');
+    }
+    if (config.drivers.enrollmentAutoApprove) {
+      throw new Error('Invalid DRIVER_ENROLLMENT_AUTO_APPROVE: true is forbidden when PUBLIC_EXPOSURE=true');
+    }
+    if (config.session.ttlSeconds === 0) {
+      throw new Error('Invalid SESSION_TTL_SECONDS: must be > 0 when PUBLIC_EXPOSURE=true (sessions must expire on a public stand)');
+    }
+    if (!isLoopbackHost(config.host)) {
+      throw new Error(`Invalid HOST: ${config.host} — must be a loopback address when PUBLIC_EXPOSURE=true (the tunnel reaches the stand locally)`);
+    }
   }
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(', ')}`);

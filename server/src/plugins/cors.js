@@ -15,8 +15,12 @@ async function corsPlugin(app) {
   }
   await app.register(cors, {
     origin: [origin],
+    // Auth is Bearer-only (no cookies), but the client still fetches with credentials:'include'
+    // (public/src/api_client.js). Turning this off would make the browser drop every
+    // cross-origin response, so it stays on until the client switches to 'omit' (#1124 follow-up).
     credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    // PUT: /auth/session/active-role (BD-STAND-PUBLIC-01 #1124 — its preflight was rejected).
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 }
 

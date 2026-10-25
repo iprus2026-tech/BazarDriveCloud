@@ -13,6 +13,9 @@
 
 import { hashToken, hashesEqual } from '../../services/auth/tokens.js';
 
+// Route-specific body limit for the inbound webhook (see the POST handler).
+export const WHATSAPP_WEBHOOK_BODY_LIMIT = 1024 * 1024;
+
 export default async function whatsappWebhookRoutes(app) {
   // GET — Meta subscription verification challenge.
   // logLevel:'warn' suppresses Fastify's automatic info-level request log, which would
@@ -54,7 +57,10 @@ export default async function whatsappWebhookRoutes(app) {
   });
 
   // POST — inbound message event (dark until BD-WHATSAPP-INTAKE-01B).
-  app.post('/whatsapp', async (req, reply) => {
+  // BD-STAND-PUBLIC-01 (#1124): Meta, not BazarDrive, sizes this payload (batched notifications),
+  // so the route keeps its own limit — Fastify's previous 1 MiB default — instead of the 64 KiB
+  // app ceiling. Revisit with the X-Hub-Signature-256 check when intake goes live.
+  app.post('/whatsapp', { bodyLimit: WHATSAPP_WEBHOOK_BODY_LIMIT }, async (req, reply) => {
     return reply.code(501).send({
       error: 'WhatsApp message processing is not implemented yet',
       code: 'NOT_IMPLEMENTED',
