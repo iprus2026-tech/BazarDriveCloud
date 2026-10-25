@@ -620,7 +620,8 @@ if (exists(telegramLaunchSmoke)) {
   try {
     execFileSync(process.execPath, [telegramLaunchSmoke], { stdio: 'pipe' });
   } catch (e) {
-    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    // FAIL lines go to stderr (console.error); prefer them over the stdout PASS lines.
+    const msg = ((e.stderr && e.stderr.toString()) || (e.stdout && e.stdout.toString()) || e.message).slice(-400);
     errors.push(`smoke-telegram-launch.mjs failed\n${msg}`);
   }
 }

@@ -41,33 +41,45 @@ const INIT_DATA = 'query_id=AAHdF6IQAAAAAN0XohDhrOrc'
   + '&auth_date=1729800000'
   + '&hash=c501b71e775f74ce10e377dea85a7ea24ecd640b223ea86dfe453e0eaed2e2b2';
 
-function storageShim(map, { throws = false } = {}) {
+// throws: every call fails · failSetKey: only setItem(failSetKey) fails (e.g. a quota error on the
+// second write) · readOnly: setItem and removeItem fail, getItem works.
+function storageShim(map, { throws = false, failSetKey = null, readOnly = false } = {}) {
   const guard = () => { if (throws) throw new Error('SecurityError: storage is disabled'); };
+  const deny = (what) => { throw new Error(`QuotaExceededError: ${what}`); };
   return {
     getItem: (k) => { guard(); return map.has(k) ? map.get(k) : null; },
-    setItem: (k, v) => { guard(); map.set(k, String(v)); },
-    removeItem: (k) => { guard(); map.delete(k); },
+    setItem: (k, v) => { guard(); if (readOnly || k === failSetKey) deny(`setItem ${k}`); map.set(k, String(v)); },
+    removeItem: (k) => { guard(); if (readOnly) deny(`removeItem ${k}`); map.delete(k); },
     clear: () => { guard(); map.clear(); },
     get length() { return map.size; },
   };
 }
 
 // Installs fake globals for one page load and returns handles to inspect them.
-function installEnv({ hash = '', search = '', session = new Map(), sessionThrows = false } = {}) {
+function installEnv({ hash = '', search = '', session = new Map(), sessionThrows = false, sessionOpts = {},
+  replaceStateThrows = false } = {}) {
   const local = new Map();
   const replaced = [];
   const location = { hash, search, pathname: PATHNAME };
   globalThis.location = location;
   globalThis.history = {
     replaceState(_state, _title, url) {
+      if (replaceStateThrows) throw new Error('SecurityError: replaceState is not allowed');
       replaced.push(String(url));
       const i = String(url).indexOf('#');
       location.hash = i >= 0 ? String(url).slice(i) : '';
     },
   };
-  globalThis.sessionStorage = storageShim(session, { throws: sessionThrows });
+  globalThis.sessionStorage = storageShim(session, { throws: sessionThrows, ...sessionOpts });
   globalThis.localStorage = storageShim(local);
   return { location, replaced, session, local };
+}
+// An older launch already stored in this tab (a previous capture).
+function olderLaunch() {
+  return new Map([
+    [LAUNCH_KEY, JSON.stringify({ v: 1, version: '7.10', platform: 'ios', startParam: 'rules', capturedAt: 1 })],
+    [INIT_DATA_KEY, 'query_id=OLD&auth_date=1&hash=old'],
+  ]);
 }
 
 // The hash Telegram builds: each value URL-encoded once (encodeURIComponent).
@@ -232,6 +244,48 @@ await check('sessionStorage unavailable: the hash is still restored and the laun
   assert.equal(mod.getTelegramLaunch().platform, 'android');
   assert.equal(mod.getTelegramInitData(), INIT_DATA, 'this page load keeps its copy');
   assert.equal(e.local.size, 0, 'never falls back to localStorage');
+});
+
+await check('a failed second write drops BOTH records: no reload can pair this launch with older initData', () => {
+  const session = olderLaunch();
+  installEnv({ hash: tgHash(), search: startSearch('map'), session, sessionOpts: { failSetKey: INIT_DATA_KEY } });
+  mod.captureTelegramLaunch();
+  assert.equal(session.has(LAUNCH_KEY), false, 'the new launch record is rolled back');
+  assert.equal(session.has(INIT_DATA_KEY), false, 'the older initData is invalidated');
+  assert.equal(mod.getTelegramInitData(), INIT_DATA, 'this page load keeps its own capture');
+  const reload = installEnv({ hash: '#/map', session });
+  mod.captureTelegramLaunch();
+  assert.equal(reload.replaced.length, 0);
+  assert.equal(mod.getTelegramLaunch(), null, 'nothing half-written to recover');
+  assert.equal(mod.getTelegramInitData(), null, 'never the older tab value');
+});
+
+await check("read-only storage: getTelegramInitData() returns this page's capture, never the stale stored copy", () => {
+  const session = olderLaunch();
+  installEnv({ hash: tgHash(), search: startSearch('map'), session, sessionOpts: { readOnly: true } });
+  mod.captureTelegramLaunch();
+  assert.equal(session.get(INIT_DATA_KEY), 'query_id=OLD&auth_date=1&hash=old', 'the stale copy could not be removed');
+  assert.equal(mod.getTelegramInitData(), INIT_DATA);
+  assert.equal(mod.getTelegramLaunch().startParam, 'map');
+});
+
+await check('a throwing replaceState never aborts the import: the hash falls back to the target', () => {
+  const e = installEnv({ hash: tgHash(), search: startSearch('map'), replaceStateThrows: true });
+  assert.doesNotThrow(() => mod.captureTelegramLaunch());
+  assert.equal(e.location.hash.replace(/^#?/, '#'), '#/map');
+  assert.equal(mod.getTelegramLaunch().startParam, 'map');
+});
+
+await check('a throwing location never aborts the import: captureTelegramLaunch() returns null', () => {
+  globalThis.location = { get hash() { throw new Error('SecurityError: location is not readable'); }, search: '', pathname: PATHNAME };
+  assert.equal(mod.captureTelegramLaunch(), null);
+  assert.equal(mod.getTelegramLaunch(), null);
+  assert.equal(mod.getTelegramInitData(), null);
+});
+
+await check('check.mjs reports this smoke from stderr first (FAIL lines are console.error)', () => {
+  const block = read('../scripts/check.mjs').split("const telegramLaunchSmoke")[1] || '';
+  assert.match(block.slice(0, 800), /\(e\.stderr && e\.stderr\.toString\(\)\) \|\| \(e\.stdout && e\.stdout\.toString\(\)\) \|\| e\.message/);
 });
 
 await check('clearTelegramInitData(): the initData goes, the launch environment stays', () => {
