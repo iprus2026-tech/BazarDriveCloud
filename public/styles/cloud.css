@@ -106,6 +106,15 @@ body {
   }
 }
 
+/* BD-UX-ROLES-02 (#1139) — one content width for every screen with the tab bar: the phone width
+   up to 430px, one centred 760px column above it. No screen widens the shell on its own any more
+   (the feed's 1120px and the profiles' wide layouts are gone). router.js sets .has-tabbar before
+   the screen mounts, so the tab bar keeps its width and position on every tab switch.
+   Chrome-less screens (welcome, onboarding, active ride, trip confirmation) keep the 430px shell. */
+@media (min-width: 431px) {
+  #shell.has-tabbar { max-width: 760px; }
+}
+
 /* ── Shell state: scroll-pad variants ───────────────────────
    no-chrome = welcome/onboarding: minimal bottom padding
    has-fab   = feed: extra room above FAB                    */
@@ -1342,8 +1351,8 @@ body {
   margin-top: 8px;
 }
 
-/* BD-FEED-RESPONSIVE-01 — widen only the feed shell. Keep one readable
-   column for cards, loading and empty states, with shared header/filter edges. */
+/* BD-FEED-RESPONSIVE-01 — one readable column for cards, loading and empty states, with shared
+   header/filter edges. The shell width itself is the common tab-bar rule (#1139, near #shell). */
 #shell:has(.screen--feed) {
   --feed-content-width: 720px;
   --feed-gutter: var(--pad);
@@ -1365,15 +1374,11 @@ body {
 }
 @media (min-width: 431px) {
   #shell:has(.screen--feed) {
-    max-width: 760px;
     --feed-gutter: 24px;
   }
   #shell:has(.screen--feed) > #fab {
     right: max(var(--feed-gutter), calc((100% - var(--feed-content-width)) / 2 + var(--feed-gutter)));
   }
-}
-@media (min-width: 900px) {
-  #shell:has(.screen--feed) { max-width: 1120px; }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -16541,10 +16546,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 
 /* BD-PROFILE-EXPERIENCE-01B — passenger presentation only.
-   Conditional shell width and every descendant rule require pfp-experience;
-   the driver profile and all other routes retain their existing Cloud shell. */
+   The shell background and every descendant rule require pfp-experience; the shell width is the
+   common tab-bar rule (#1139). The driver profile and all other routes retain their Cloud shell. */
 #shell:has(.pfp-experience) {
-  max-width: 1120px;
   background: #0b0b0d;
 }
 .pfp-experience {
@@ -16589,9 +16593,10 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding: 28px 24px max(32px, env(safe-area-inset-bottom, 0px));
   scroll-padding-block: 20px;
 }
+/* #1139: one column at every width (the shell is at most 760px). */
 .pfp-experience .pfp-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 28px;
 }
@@ -16880,8 +16885,6 @@ button.pfp-menu-row:active { opacity: 0.7; }
   .pfp-experience .profile-history__card--clickable:hover { border-color: #777783; }
 }
 @media (max-width: 899px) {
-  #shell:has(.pfp-experience) { max-width: 760px; }
-  .pfp-experience .pfp-layout { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .pfp-experience .pfp-identity-name { font-size: 1.85rem; }
 }
 @media (max-width: 479px) {
@@ -16922,7 +16925,6 @@ button.pfp-menu-row:active { opacity: 0.7; }
 
 /* BD-PROFILE-D-UI-01 — driver workspace. All overrides stay inside the
    driver branch; the passenger profile and shared tokens retain their styles. */
-#shell:has(.pf2-dashboard) { max-width: 1120px; }
 .pf2-dashboard {
   --pf2-muted: #b5b5c0;
   --pf2-border: rgba(255,255,255,.12);
@@ -16976,7 +16978,8 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-context-banner strong { font-size: 13px; font-weight: 650; color: #c1d8f6; }
 .pf2-context-banner p { margin: 3px 0 0; color: var(--pf2-muted); font-size: 12px; line-height: 1.6; }
 .pf2-context-note { color: var(--pf2-muted); margin: 14px 16px; font-size: 13px; line-height: 1.65; }
-.pf2-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+/* #1139: one column at every width (the shell is at most 760px). */
+.pf2-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-items: start; }
 .pf2-dashboard-main, .pf2-dashboard-side { min-width: 0; }
 .pf2-dashboard :is(.bd-card, .pf2-status-card, .pf2-readiness-card, .pf2-doc-card, .pf2-po-weekly, .pf2-po-methods, .pf2-po-history, .pf2-po-report) {
   border-color: var(--pf2-border); border-radius: 20px;
