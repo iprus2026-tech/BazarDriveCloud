@@ -130,6 +130,21 @@ const BODY_TYPES = ['Седан', 'Минивэн', 'Внедорожник', '�
 
 const REQ_DOC_COUNT = DOCS.filter((d) => d.required).length; // 3
 
+// BD-AUTH-OTP-CLIENT-01 (#1143) — OTP limits from the server (BD-AUTH-HARDEN-01, #824).
+// The code length comes from the request response: `codeLength`, else the dev-mode echo's length,
+// else the server default (6). Only a plausible 4..10 is accepted (the server's OTP_LENGTH range).
+const OTP_DEFAULT_LENGTH = 6;
+const isOtpLength = (n) => Number.isInteger(n) && n >= 4 && n <= 10;
+function otpLengthFrom(resp) {
+  if (resp && isOtpLength(resp.codeLength)) return resp.codeLength;
+  const echoed = resp && typeof resp.devCode === 'string' ? resp.devCode.length : 0;
+  return isOtpLength(echoed) ? echoed : OTP_DEFAULT_LENGTH;
+}
+// A 429 wait for people: under a minute in seconds, otherwise whole minutes rounded up.
+function otpWaitText(seconds) {
+  return seconds < 60 ? `${seconds} с` : `${Math.ceil(seconds / 60)} мин`;
+}
+
 // ── Step sequences ────────────────────────────────────────────────────────────
 function formatPhoneDisplay(raw) {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -703,6 +718,9 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           : ecode === 'AUTH_IDENTITY_MISMATCH' ? 'Учётная запись не совпала. Повторите проверку входа.'
           : 'Не удалось подтвердить вход. Повторите проверку сессии.'
         )
+        // #1143: the per-phone lock (failed checks across codes) carries a wait; a new code does not help.
+        : ecode === 'OTP_LOCKED' && err.retryAfterSeconds
+          ? `Слишком много неверных попыток. Повторите через ${otpWaitText(err.retryAfterSeconds)}.`
         : (err && err.status === 429) || ecode === 'OTP_LOCKED' ? 'Слишком много попыток. Запросите код заново.'
         : (err && err.status === 0) || ecode === 'NETWORK' ? 'Не удалось связаться с сервером. Попробуйте ещё раз.'
         : 'Неверный код. Попробуйте ещё раз.',
@@ -1128,15 +1146,19 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
             const resp = await apiFetch('/auth/otp/request', { method: 'POST', body: { phone } });
             if (!ownsAttempt(attempt)) return;
             attempt.requested = true;
-            // Match the UI to the server's code length (dev echoes devCode; prod default is 4).
-            draft.otpLen = ((resp && resp.devCode) || '').length || 4;
+            // Match the UI to the server's code length (#1143: codeLength, then devCode, then 6).
+            draft.otpLen = otpLengthFrom(resp);
             next();
           } catch (err) {
             if (!ownsAttempt(attempt)) return;
             nextBtn.disabled = false;
             if (phoneInput) phoneInput.disabled = false;
+            const wait = err && err.retryAfterSeconds;
             setStepError(err && err.code === 'INVALID_PHONE'
               ? 'Неверный номер телефона.'
+              // #1143: a limit refusal (resend pause / hourly caps) — retrying now is refused again.
+              : err && err.status === 429
+                ? (wait ? `Слишком много запросов кода. Повторите через ${otpWaitText(wait)}.` : 'Слишком много запросов кода. Повторите позже.')
               : 'Не удалось отправить код. Попробуйте ещё раз.');
           }
         });

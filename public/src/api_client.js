@@ -19,12 +19,14 @@ import { getApiBase, isBackendEnabled, getSessionToken, API_VERSION_PREFIX } fro
 // A failed API call. `status` is the HTTP status (0 = never sent: disabled / network /
 // abort), `code` mirrors the server's machine code, `retryable` whether a retry may help.
 export class ApiError extends Error {
-  constructor({ status = 0, code = 'UNKNOWN', retryable = false, message } = {}) {
+  constructor({ status = 0, code = 'UNKNOWN', retryable = false, message, retryAfterSeconds = null } = {}) {
     super(message || code);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.retryable = retryable;
+    // A limit refusal's wait (BD-AUTH-HARDEN-01 #824: 429 bodies carry retryAfterSeconds); null otherwise.
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -81,6 +83,8 @@ async function apiFetchCore(path, {
       code: (payload && payload.code) || `HTTP_${res.status}`,
       retryable: !!(payload && payload.retryable),
       message: (payload && payload.error) || `request failed (${res.status})`,
+      retryAfterSeconds: payload && Number.isInteger(payload.retryAfterSeconds) && payload.retryAfterSeconds > 0
+        ? payload.retryAfterSeconds : null,
     });
   }
   if (expectedStatus !== undefined && res.status !== expectedStatus) {

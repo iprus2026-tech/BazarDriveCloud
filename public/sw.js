@@ -262,7 +262,8 @@
 // v393 (BD-TG-MINIAPP-01 M1, #1126): new telegram_launch.js — Telegram launch capture before the router.
 // v394 (BD-TG-MINIAPP-01 M2, #1126): new telegram_bridge.js + router rendered-route seam + .bd-telegram shell height.
 // v395 (#1136): refresh precached screens/map.js — the map follows its container (ResizeObserver → map.resize()).
-const VERSION    = 'v395';
+// v396 (#1143): refresh precached api_client.js + screens/onboarding.js — OTP code length from codeLength, 429 wait texts.
+const VERSION    = 'v396';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
