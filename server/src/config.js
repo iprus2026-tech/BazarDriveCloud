@@ -30,7 +30,10 @@ function parseBooleanFlag(raw) {
 // A loopback bind address. The public profile listens only there: the tunnel daemon and the
 // stand proxy reach the server locally, and nothing else can.
 function isLoopbackHost(host) {
-  return host === 'localhost' || host === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+  if (host === 'localhost' || host === '::1') return true;
+  // 127.0.0.0/8 with every octet a real 0..255 value (127.999.1.1 is not an address).
+  const octets = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  return octets !== null && octets.slice(1).every((octet) => Number(octet) <= 255);
 }
 
 export function loadConfig(env = process.env) {

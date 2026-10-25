@@ -238,7 +238,7 @@ test('the public profile defaults to a loopback bind and OTP dev-mode off', () =
   assert.equal(c.otp.devMode, false);
   assert.equal(c.drivers.enrollmentAutoApprove, false);
   assert.equal(c.session.ttlSeconds, 86400);
-  for (const host of ['127.0.0.1', '127.0.0.2', '::1', 'localhost']) {
+  for (const host of ['127.0.0.1', '127.0.0.2', '127.255.255.254', '::1', 'localhost']) {
     assert.equal(loadConfig({ ...pub, HOST: host }).host, host, `loopback ${host} accepted`);
   }
   assert.equal(loadConfig({ ...pub, OTP_DEV_MODE: 'false' }).otp.devMode, false);
@@ -256,6 +256,9 @@ test('the public profile refuses startup on each explicitly dangerous value', ()
     [{ HOST: '::' }, /Invalid HOST: :: — must be a loopback address/],
     [{ HOST: '192.168.1.5' }, /Invalid HOST: 192\.168\.1\.5 — must be a loopback address/],
     [{ HOST: 'stand.example.com' }, /Invalid HOST: stand\.example\.com — must be a loopback address/],
+    // #1134 review: out-of-range octets are not an address at all.
+    [{ HOST: '127.999.1.1' }, /Invalid HOST: 127\.999\.1\.1 — must be a loopback address/],
+    [{ HOST: '127.0.0.256' }, /Invalid HOST: 127\.0\.0\.256 — must be a loopback address/],
   ];
   for (const [patch, re] of refused) {
     const env = { ...pub, ...patch };
