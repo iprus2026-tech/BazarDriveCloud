@@ -23,7 +23,7 @@ import {
 import { isBackendEnabled, getSessionToken } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
-import { getSmokeRole, setSmokeRole, applySmokeRole, clearSmokeRole } from '../smoke_role.js';
+import { getSmokeRole, setSmokeRole, applySmokeRole, clearSmokeRole, resolveRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
@@ -318,7 +318,8 @@ function hasComposerDraft() {
     if (!raw) return false;
     const draft = JSON.parse(raw);
     if (!draft || typeof draft !== 'object') return false;
-    const current = user.get()?.role;
+    // This tab's effective role (resolveRole), as in composer.js draftRoleFor.
+    const current = resolveRole(user.get());
     const role = current === 'driver' || current === 'passenger' ? current : 'guest';
     const { role: owner, type: _type, ...fields } = draft;
     return owner === role && Object.values(fields).some((v) => typeof v === 'string' && v.trim() !== '');

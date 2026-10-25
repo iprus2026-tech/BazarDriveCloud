@@ -4,6 +4,7 @@ import { createFeedPost, createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
 import { isDriverMode, isPassengerMode } from '../ride_actions.js';
+import { resolveRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
 import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
@@ -71,11 +72,11 @@ function emptyDraft() {
 // `role`, and loadDraft ignores a draft of another role (or an untagged one from before this
 // change), so it never chooses the type or prefills there. A driver therefore opens on «Поездка»
 // unless an explicit ?type= intent says otherwise. The other role's draft stays stored until this
-// role saves its own (one key, one draft).
+// role saves its own (one key, one draft). The role is this tab's effective one (resolveRole: the
+// per-tab override of the backend-OFF profile switch, else user.role), the same as the router's.
 function draftRoleFor(u) {
-  if (isDriverMode(u)) return 'driver';
-  if (isPassengerMode(u)) return 'passenger';
-  return 'guest';
+  const role = resolveRole(u);
+  return role === 'driver' || role === 'passenger' ? role : 'guest';
 }
 
 function loadDraft() {

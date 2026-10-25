@@ -1498,8 +1498,11 @@ async function roleUxCase(name) {
     'driver-intent': { type: 'passenger', from: 'Чужой черновик', role: 'passenger' },
     'driver-own-draft': { type: 'passenger', from: 'Свой черновик', role: 'driver' },
     'passenger-own-draft': { type: 'passenger', from: 'Пассажирский', role: 'passenger' },
+    // CodeRabbit #1148: the backend-OFF profile switch sets only this tab's role; the draft follows it.
+    'tab-passenger-draft': { type: 'passenger', from: 'По вкладке', role: 'passenger' },
   }[name];
   if (draft) localStorage.setItem(KEY, JSON.stringify(draft));
+  if (name === 'tab-passenger-draft') sessionStorage.setItem(SMOKE_ROLE_KEY, 'passenger'); // persisted: driver
   location.hash = name === 'off-switch' ? '#/profile' : name === 'driver-intent' ? '#/new?type=passenger_request' : '#/new';
   await import('../public/src/app.js');
   const settle = async () => { for (let i = 0; i < 6; i++) await flush(); };
@@ -1528,6 +1531,7 @@ async function roleUxCase(name) {
     'driver-intent': ['passenger', ''],
     'driver-own-draft': ['passenger', 'Свой черновик'],
     'passenger-own-draft': ['passenger', 'Пассажирский'],
+    'tab-passenger-draft': ['passenger', 'По вкладке'],
     'driver-save': ['trip', ''],
   }[name];
   assert.ok(expected, 'unknown case ' + name);
@@ -4347,7 +4351,7 @@ if (process.argv[2] === '--onboarding-detach-case') {
     });
   }
   for (const scenario of ['driver-no-draft', 'driver-passenger-draft', 'driver-legacy-draft', 'driver-intent',
-    'driver-own-draft', 'passenger-own-draft', 'driver-save', 'off-switch']) {
+    'driver-own-draft', 'passenger-own-draft', 'driver-save', 'off-switch', 'tab-passenger-draft']) {
     await check('actual app role UX — role-scoped draft and «Перейти в режим пассажира» (#1140, BD-UX-ROLES-03): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--role-ux-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
