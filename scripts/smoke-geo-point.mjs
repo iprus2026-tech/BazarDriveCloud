@@ -244,12 +244,16 @@ await test('real local order storage and both ride seeders keep coordinate metad
 });
 
 await test('server serialization and JSON transport do not relabel an existing point', () => {
-  // No server write/DB/provider work: exercise the existing opaque JSON projection.
+  // No server write/DB/provider work: exercise the existing opaque JSON projection. Since #1125 the
+  // exact point is the OWNER's projection; anyone else gets no coordinates at all.
   for (const provenance of Object.values(COORDINATE_PROVENANCE)) {
     const point = { id: 'p', label: 'Адрес', ...fix, provenance };
-    const response = clone(serializeOrder({ id: 'order', pickup: point, dropoff: point }));
+    const row = { id: 'order', passenger_id: 'owner', pickup: point, dropoff: point };
+    const response = clone(serializeOrder(row, { viewerId: 'owner' }));
     assert.deepEqual(enrichOrderPointWithCoords(response.pickup), point);
     assert.deepEqual(enrichOrderPointWithCoords(response.dropoff), point);
+    const other = clone(serializeOrder(row, { viewerId: 'someone-else' }));
+    assert.deepEqual(other.pickup, { label: 'Адрес' }, 'a non-owner gets no coordinates');
   }
 });
 
