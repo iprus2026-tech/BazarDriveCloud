@@ -6,11 +6,14 @@
 //   POST /api/v1/auth/otp/verify          -> { token, user }
 //   POST /api/v1/auth/logout              -> { ok: true }
 //   PUT  /api/v1/auth/session/active-role -> { user }   switch THIS session to a granted role
+//   POST /api/v1/auth/telegram            -> { token, user }  Mini App initData (./telegram.js, BD-DOCS-052)
 //
 // Same-account session replacement (docs/driver-role-grant-contract.md §2, CWE-613): verify
 // revokes a presented live bearer of the SAME account in the transaction that mints the new
 // session; a failure there fails the verify (503) — a successful verify never leaves the
 // replaced session live. Another account's bearer is untouched (B2-C account switch, #829).
+// Replacement is same-method too (ADR BD-DOCS-052 R7): OTP replaces OTP, Telegram replaces
+// Telegram, so a Telegram Mini App session never signs a browser out, and the reverse.
 //
 // request mints a numeric code, stores ONLY its hash (auth_otp), and — in dev-mode — echoes
 // the plaintext in the response (there is no SMS provider yet; BD-DOCS-032 open question).
@@ -45,6 +48,7 @@ import {
   lockLiveSessionById,
 } from '../../repositories/sessions.js';
 import { bearerToken } from '../../plugins/auth.js';
+import { registerTelegramSignIn } from './telegram.js';
 
 const SWITCHABLE_ROLES = ['passenger', 'driver'];
 
@@ -386,12 +390,13 @@ export default async function authService(app) {
         if (!consumed) return null;
         const verified = await resolveVerifiedLoginUser(client, { phone });
         // Same-account session replacement (BD-AUTH-POLICY-01B-B, CWE-613): a presented LIVE
-        // session of THIS account is revoked in this transaction. Missing / revoked / expired
-        // presented sessions are ignored; another account's session is left alone (B2-C).
+        // OTP session of THIS account is revoked in this transaction (R7: same method only).
+        // Missing / revoked / expired presented sessions are ignored; another account's session is
+        // left alone (B2-C).
         if (presented) {
           try {
             const previous = await resolveLiveSessionByTokenHash(client, hashToken(presented));
-            if (previous && String(previous.user_id) === String(verified.id)) {
+            if (previous && String(previous.user_id) === String(verified.id) && previous.auth_method === 'otp') {
               await revokeSessionById(client, previous.id);
             }
           } catch (err) {
@@ -504,4 +509,8 @@ export default async function authService(app) {
       },
     };
   });
+
+  // BD-AUTH-TELEGRAM-01 M4 (#1127) — not behind otpDisabledGuard: on a public stand this is the
+  // only sign-in.
+  registerTelegramSignIn(app, { problem, rateLimited, sessionRole });
 }

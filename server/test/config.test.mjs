@@ -366,3 +366,38 @@ test('.env.example: only flipping PUBLIC_EXPOSURE is refused; the documented ove
   assert.equal(c.otp.devMode, false);
   assert.ok(c.session.ttlSeconds > 0);
 });
+
+// BD-AUTH-TELEGRAM-01 (ADR BD-DOCS-052, R10/R11): the bot token is optional, checked by shape only,
+// and an error never echoes it.
+test('TELEGRAM_*: defaults, a well-formed token, and bounded knobs', () => {
+  const off = loadConfig(base);
+  assert.deepEqual(off.telegram, { botToken: '', initDataMaxAgeSeconds: 600, sessionTtlSeconds: 604800 });
+  const token = '1234567890:TEST_fake_token_for_unit_tests_only_x';
+  assert.equal(loadConfig({ ...base, TELEGRAM_BOT_TOKEN: token }).telegram.botToken, token);
+  for (const [name, value] of [
+    ['TELEGRAM_INITDATA_MAX_AGE_SECONDS', '59'], ['TELEGRAM_INITDATA_MAX_AGE_SECONDS', '86401'],
+    ['TELEGRAM_INITDATA_MAX_AGE_SECONDS', 'abc'], ['TELEGRAM_SESSION_TTL_SECONDS', '299'],
+    ['TELEGRAM_SESSION_TTL_SECONDS', '31536001'], ['TELEGRAM_SESSION_TTL_SECONDS', '0'],
+  ]) {
+    assert.throws(() => loadConfig({ ...base, [name]: value }), new RegExp(`Invalid ${name}`), `${name}=${value}`);
+  }
+});
+
+test('TELEGRAM_BOT_TOKEN: a malformed token is refused without echoing it', () => {
+  for (const bad of ['secret-without-colon-value-xxxxxxxxxxxxxxx', '123:short', 'abc:TEST_fake_token_for_unit_tests_only_x',
+    '1234567890:has spaces in the secret part xxxxxxxx']) {
+    let message = '';
+    try { loadConfig({ ...base, TELEGRAM_BOT_TOKEN: bad }); } catch (err) { message = err.message; }
+    assert.match(message, /^Invalid TELEGRAM_BOT_TOKEN: unexpected format/);
+    assert.equal(message.includes(bad), false, 'the value is never in the message');
+    assert.equal(message.includes(bad.split(':')[1] ?? bad), false);
+  }
+});
+
+test('.env.example: TELEGRAM_BOT_TOKEN is present and EMPTY (the real one lives only in server/.env)', async () => {
+  const fs = await import('node:fs');
+  const text = fs.readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  assert.match(text, /^TELEGRAM_BOT_TOKEN=$/m);
+  assert.match(text, /^TELEGRAM_INITDATA_MAX_AGE_SECONDS=600$/m);
+  assert.match(text, /^TELEGRAM_SESSION_TTL_SECONDS=604800$/m);
+});

@@ -68,6 +68,11 @@ async function dbPlugin(app, opts) {
     // so a database with 0001-0009 and not 0010 must report schema-incomplete, checked
     // structurally like the rest (columns, named constraints, the one-open partial unique
     // index, the updated_at trigger).
+    //
+    // 0015 (BD-AUTH-TELEGRAM-01, ADR BD-DOCS-052) — auth_session.auth_method is read by every
+    // sign-in (same-method replacement), and the LIVE /api/v1/auth/telegram route writes
+    // telegram_identities and auth_telegram_attempts (the replay store is the partial unique
+    // index), so a database without 0015 must report schema-incomplete.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -599,6 +604,51 @@ async function dbPlugin(app, opts) {
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='driver_enrollments_decision_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='driver_enrollments_one_open_per_user_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='user_id' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%PENDING%' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%APPROVED%')
                  AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_driver_enrollments_updated_at' AND NOT t.tgisinternal)
+            )
+            -- 0015 (BD-AUTH-TELEGRAM-01, ADR BD-DOCS-052) — the session method, read by every sign-in,
+            -- and the LIVE /api/v1/auth/telegram tables.
+            AND EXISTS (
+              SELECT 1 FROM pg_attribute a
+               WHERE a.attrelid = to_regclass('public.auth_session') AND a.attname = 'auth_method'
+                 AND NOT a.attisdropped AND a.attnotnull
+            )
+            AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=to_regclass('public.auth_session') AND pc.conname='auth_session_auth_method_check' AND pc.contype='c')
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'telegram_identities'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'telegram_user_id','user_id','linked_at','consented_at','consent_version',
+                        'revoked_at','created_at','updated_at'
+                      )
+                 ) = 8
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='telegram_identities_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='telegram_identities_user_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.users') AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='telegram_identities_user_id_uq' AND pc.contype='u' AND pg_get_constraintdef(pc.oid)='UNIQUE (user_id)')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_telegram_identities_guard_immutability' AND NOT t.tgisinternal)
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_telegram_identities_updated_at' AND NOT t.tgisinternal)
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'auth_telegram_attempts'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN ('id','ip','telegram_user_id','init_data_hash','outcome','created_at')
+                 ) = 6
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='auth_telegram_attempts_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='auth_telegram_attempts_outcome_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='auth_telegram_attempts_init_data_hash_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='init_data_hash' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%init_data_hash IS NOT NULL%')
             )
             ) AS ok`,
       );
