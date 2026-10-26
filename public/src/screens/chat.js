@@ -765,12 +765,17 @@ export default function chat() {
   // messages shows the designed empty / first-message state, not a fabricated mock
   // conversation. The demo thread (chatId === 'demo') keeps MOCK_MESSAGES as a showcase.
   const isRealThread = chatId !== 'demo';
-  // #784 cutover: on a live backend a real thread reads the SHARED SERVER thread (the source of
+  // #784 cutover: on a live backend a ride's thread reads the SHARED SERVER thread (the source of
   // truth), so local pre-cutover stored messages are ignored to avoid mixing the two histories.
-  const backendRead = !fixture && isBackendEnabled() && isRealThread;
+  // BD-CHAT-AUTH-01 (#825, R7) — the server serves only the thread of a real ride ('trip-<tripId>'),
+  // to its two participants. A response thread before selection has no server thread, so on a live
+  // backend it is closed in place («Чат откроется после выбора») — never a local-only thread the
+  // other side cannot see, and never a request the server answers 404.
+  const backendRead = !fixture && isBackendEnabled() && Boolean(tripId);
+  const preSelectLocked = !fixture && isBackendEnabled() && !tripId && isRealThread;
   let messages = fixture === CHAT_READ_STATE.LOADED
     ? CHAT_FIXTURE_MESSAGES.map((message) => ({ ...message }))
-    : fixture || backendRead
+    : fixture || backendRead || preSelectLocked
       ? []
       : (stored ? [...stored] : (isRealThread ? [] : MOCK_MESSAGES.map((message) => ({ ...message }))));
 
@@ -925,6 +930,15 @@ export default function chat() {
     }
   }
   if (isTerminal) applyTerminalLock();
+  // #825 R7 — the pre-selection note (the composer itself is locked in syncComposerAvailability).
+  if (preSelectLocked && !isTerminal && !root.querySelector('.chat__readonly-note')) {
+    const composerEl = root.querySelector('.chat__composer');
+    const note = document.createElement('div');
+    note.className = 'chat__readonly-note';
+    note.setAttribute('role', 'note');
+    note.textContent = 'Чат откроется после выбора водителя.';
+    if (composerEl) composerEl.parentNode.insertBefore(note, composerEl);
+  }
 
   // ── Initial message-list state + incremental backend refresh ─────
   // `rendered` tracks message ids already in the DOM so background refreshes
@@ -1221,13 +1235,15 @@ export default function chat() {
   function syncComposerAvailability() {
     const readLocked = backendRead
       && (readState === CHAT_READ_STATE.LOADING || readState === CHAT_READ_STATE.ERROR);
-    const writeLocked = isTerminal || Boolean(fixture) || readLocked;
+    const writeLocked = isTerminal || Boolean(fixture) || readLocked || preSelectLocked;
     const composerEl = root.querySelector('.chat__composer');
 
     if (!isTerminal) {
       inputEl.disabled = writeLocked;
       inputEl.placeholder = fixture
         ? 'Режим предпросмотра'
+        : preSelectLocked
+          ? 'Чат откроется после выбора'
         : readState === CHAT_READ_STATE.LOADING
           ? 'История загружается…'
           : readState === CHAT_READ_STATE.ERROR

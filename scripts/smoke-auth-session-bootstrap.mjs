@@ -1413,6 +1413,62 @@ async function appAuthenticatedIncompleteCase(entry) {
   go('/boot-cleanup'); await flush();
 }
 
+// BD-CHAT-AUTH-01 (#825, R7) — the real app + chat on a live backend: the server serves only a
+// ride's thread, so a response thread (before selection) never calls /chat/messages and is locked
+// in place, while a ride thread still reads the server. Stubbed transport, signed-in driver.
+async function chatPreselectCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  // The chat screen builds nodes with append/prepend/insertBefore; add them to the shim locally.
+  const toNode = (n) => (typeof n === 'string' ? Object.assign(new dom.Element('span'), { textContent: n }) : n);
+  if (!('value' in dom.Element.prototype)) dom.Element.prototype.value = ''; // inputs parsed from markup
+  globalThis.requestAnimationFrame ??= (fn) => setTimeout(fn, 0);
+  dom.Element.prototype.scrollTo ??= function scrollTo() {};
+  dom.Element.prototype.append ??= function append(...nodes) { for (const n of nodes) this.appendChild(toNode(n)); };
+  dom.Element.prototype.prepend ??= function prepend(...nodes) {
+    for (const n of nodes.reverse()) { const node = toNode(n); this.appendChild(node); this.children.unshift(this.children.pop()); }
+  };
+  dom.Element.prototype.insertBefore ??= function insertBefore(node, ref) {
+    this.appendChild(node);
+    const at = this.children.indexOf(ref);
+    if (at >= 0) { this.children.pop(); this.children.splice(at, 0, node); }
+    return node;
+  };
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  user.set({ welcomeSeen: true, onboarded: true, role: 'driver', phoneVerified: true, firstName: 'Chat fixture' });
+  assert.equal(auth.setAuth({ token: 'chat-A', userId: 'user-A' }), true);
+  auth.commitAuthCandidate(auth.getAuthOwnerVersion());
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, method: options.method || 'GET' });
+    if (url.endsWith('/auth/session')) {
+      return response({ user: { ...userDTO('user-A'), roles: ['passenger', 'driver'] } });
+    }
+    if (url.includes('/chat/messages')) return response({ items: [] });
+    return response({ code: 'NOT_FOUND' }, 404);
+  };
+  location.hash = name === 'trip' ? '#/chat?tripId=trip_x&role=driver' : '#/chat?responseId=resp_x&role=driver';
+  await import('../public/src/app.js');
+  for (let round = 0; round < 3; round++) {
+    for (let i = 0; i < 6; i++) await flush();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const node = id => document.getElementById(id);
+  const chatCalls = requests.filter((r) => r.url.includes('/chat/messages'));
+  assert.ok(node('chat-input'), 'the chat is mounted');
+  if (name === 'trip') {
+    assert.ok(chatCalls.some((r) => r.url.includes(encodeURIComponent('trip-trip_x'))), 'a ride thread reads the server');
+    return;
+  }
+  assert.deepEqual(chatCalls, [], 'a response thread never calls /chat/messages on a live backend');
+  assert.equal(node('chat-input').disabled, true, 'the composer is locked');
+  assert.equal(node('chat-input').placeholder, 'Чат откроется после выбора');
+  const all = (el) => [el, ...(el.children ?? []).flatMap(all)];
+  const notes = all(document.body).filter((el) => (el.className || '').split(/\s+/).includes('chat__readonly-note'));
+  assert.deepEqual(notes.map((el) => el.textContent), ['Чат откроется после выбора водителя.']);
+}
+
 // BD-AUTH-OTP-CLIENT-01 (#1143) — the real app + onboarding against the OTP limits of
 // BD-AUTH-HARDEN-01 (#824): the code field length comes from `codeLength` (then the devCode echo,
 // then 6), and a 429 shows the server's wait instead of the generic retry text. Stubbed transport.
@@ -3124,6 +3180,10 @@ if (process.argv[2] === '--onboarding-detach-case') {
 } else if (process.argv[2] === '--login-handoff-case') {
   await loginHandoffCase(process.argv[3]);
   console.log('PASS actual app/onboarding handoff — ' + process.argv[3]);
+} else if (process.argv[2] === '--chat-preselect-case') {
+  await chatPreselectCase(process.argv[3]);
+  console.log('PASS actual app chat on a live backend (#825 R7) — ' + process.argv[3]);
+  process.exit(0); // the chat screen keeps its poll timers alive
 } else if (process.argv[2] === '--otp-limits-case') {
   await otpLimitsCase(process.argv[3]);
   console.log('PASS actual app/onboarding OTP limits (#1143) — ' + process.argv[3]);
@@ -4166,6 +4226,12 @@ if (process.argv[2] === '--onboarding-detach-case') {
     'off-demo']) {
     await check('actual app/onboarding handoff: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['response', 'trip']) {
+    await check('actual app chat on a live backend — response thread locked, ride thread served (#825 R7): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--chat-preselect-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }

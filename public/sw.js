@@ -264,7 +264,8 @@
 // v395 (#1136): refresh precached screens/map.js — the map follows its container (ResizeObserver → map.resize()).
 // v396 (#1143): refresh precached api_client.js + screens/onboarding.js — OTP code length from codeLength, 429 wait texts.
 // v397 (#1139): refresh precached styles/cloud.css — one 760px column for every screen with the tab bar.
-const VERSION    = 'v397';
+// v399 (#825 R7): refresh precached screens/chat.js + screens/respond.js — on a live backend only a ride's thread is a server chat; a response chat is locked «Чат откроется после выбора».
+const VERSION    = 'v399';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
