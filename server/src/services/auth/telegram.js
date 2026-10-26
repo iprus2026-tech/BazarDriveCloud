@@ -78,10 +78,15 @@ export function registerTelegramSignIn(app, { problem, rateLimited, sessionRole 
     if (!botToken) return problem(reply, 503, 'TELEGRAM_DISABLED', 'Telegram sign-in is not configured');
     const ip = req.ip || null;
 
-    // R6 — the replay store is swept like auth_otp: kept for max age + the limit window.
-    await deleteOldTelegramAttempts(app.db, {
-      retentionSeconds: initDataMaxAgeSeconds + ATTEMPT_WINDOW_SECONDS, batch: SWEEP_BATCH,
-    });
+    // R6 — the replay store is swept like auth_otp: kept for max age + the limit window. Best
+    // effort, as for OTP: a failed sweep never fails a sign-in; the next request retries it.
+    try {
+      await deleteOldTelegramAttempts(app.db, {
+        retentionSeconds: initDataMaxAgeSeconds + ATTEMPT_WINDOW_SECONDS, batch: SWEEP_BATCH,
+      });
+    } catch {
+      req.log.warn('auth telegram attempts sweep failed');
+    }
 
     const verdict = verifyInitData(req.body.initData, {
       botToken, nowSeconds: Math.floor(Date.now() / 1000), maxAgeSeconds: initDataMaxAgeSeconds,

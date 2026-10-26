@@ -362,6 +362,24 @@ test('telegram: the per-id limit counts only valid signatures', { skip: SKIP }, 
   assert.equal(res.json().code, 'TELEGRAM_RATE_LIMITED');
 });
 
+test('telegram: a failed retention sweep never fails a sign-in (CodeRabbit #1163)', { skip: SKIP }, async (t) => {
+  const { app, track } = await fixture(t);
+  const id = track.id(nextTgId());
+  const p = track.phone(phone(10));
+  assert.equal((await linkTelegramContact(app.db, contact(id, p))).ok, true);
+  const query = app.db.query;
+  let sweeps = 0;
+  app.db.query = (text, params) => {
+    if (/DELETE FROM auth_telegram_attempts/.test(text)) { sweeps += 1; return Promise.reject(new Error('sweep down')); }
+    return query(text, params);
+  };
+  t.after(() => { app.db.query = query; });
+  const res = await signIn(app, initDataFor(id));
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal((await signIn(app, 'hash=00')).statusCode, 401, 'refusals still answer normally');
+  assert.equal(sweeps, 2, 'the sweep was attempted and failed both times');
+});
+
 test('telegram: attempts older than max age + 1 hour are swept', { skip: SKIP }, async (t) => {
   const { app, db, track } = await fixture(t);
   const oldId = track.id(nextTgId());
