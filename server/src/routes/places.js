@@ -42,5 +42,5 @@ export default async function placesRoutes(app) {
         },
       },
     },
-  }, async () => ({ items: ITEMS, attribution: '© OpenStreetMap contributors, ODbL' }));
+  }, async () => ({ items: ITEMS, attribution: '© OpenStreetMap contributors, ODbL — https://www.openstreetmap.org/copyright' }));
 }

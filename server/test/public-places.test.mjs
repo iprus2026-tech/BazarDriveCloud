@@ -64,7 +64,7 @@ test('GET /api/v1/places: the catalog pickup points, public, no DB', async (t) =
   const res = await app.inject({ method: 'GET', url: '/api/v1/places' });
   assert.equal(res.statusCode, 200);
   const body = res.json();
-  assert.equal(body.attribution, '© OpenStreetMap contributors, ODbL');
+  assert.equal(body.attribution, '© OpenStreetMap contributors, ODbL — https://www.openstreetmap.org/copyright');
   assert.deepEqual(body.items.map((i) => i.id), PUBLIC_PLACES.map((p) => p.id));
   const svoB = body.items.find((i) => i.id === 'svo-b');
   assert.deepEqual(svoB, {
