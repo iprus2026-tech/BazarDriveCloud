@@ -163,8 +163,11 @@ function buildMapPlaceholder(orderCount, { variant = MAP_VARIANT.NEARBY, dimmed 
 }
 
 function buildOrderRow(order, index, { locked = false } = {}) {
-  const pickupLabel  = pointLabel(order.pickup,  'Точка подачи');
-  const dropoffLabel = pointLabel(order.dropoff, 'Точка назначения');
+  // #1125 R2 — a nearby order is another passenger's: the server's public projection carries
+  // the street without the house, or no point when the address cannot be cut reliably.
+  const hidden = order.projection === 'public' ? 'Адрес скрыт' : null;
+  const pickupLabel  = pointLabel(order.pickup,  hidden || 'Точка подачи');
+  const dropoffLabel = pointLabel(order.dropoff, hidden || 'Точка назначения');
   const safeId = escapeHtml(order.id);
 
   const row = document.createElement('li');

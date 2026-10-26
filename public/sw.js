@@ -266,7 +266,8 @@
 // v397 (#1139): refresh precached styles/cloud.css — one 760px column for every screen with the tab bar.
 // v399 (#825 R7): refresh precached screens/chat.js + screens/respond.js — on a live backend only a ride's thread is a server chat; a response chat is locked «Чат откроется после выбора».
 // v400 (#1140): refresh precached app.js + screens/composer.js + screens/profile.js — role-scoped composer draft; «Перейти в режим пассажира» is a real role switch to the feed.
-const VERSION    = 'v400';
+// v401 (#1125): refresh precached mock_api.js + screens/feed.js + screens/post_detail.js + screens/driver_map.js + styles/cloud.css — a Guest on a live backend gets «Войдите» instead of the order feed; a hidden public point reads «Адрес скрыт».
+const VERSION    = 'v401';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

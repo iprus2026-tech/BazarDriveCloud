@@ -1129,8 +1129,10 @@ export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
     author: createdByCurrentUser ? 'Вы' : 'Пассажир',
     role: 'Пассажир',
     time: 'Только что',
-    from: pointLabel(order.pickup, 'Точка подачи'),
-    to: pointLabel(order.dropoff, 'Точка назначения'),
+    // #1125 R2 — the server's public projection shows other people the street without the
+    // house, or no point at all when the address cannot be cut reliably: say so.
+    from: pointLabel(order.pickup, order.projection === 'public' ? 'Адрес скрыт' : 'Точка подачи'),
+    to: pointLabel(order.dropoff, order.projection === 'public' ? 'Адрес скрыт' : 'Точка назначения'),
     when: formatRideOrderWhen(order),
     // #1061 — /respond offers the pickup-timing choice only for a scheduled order.
     scheduledMode: order.scheduledMode === 'later' ? 'later' : 'now',

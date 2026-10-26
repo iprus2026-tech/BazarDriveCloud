@@ -11,6 +11,7 @@ import {
   acceptCanonicalRideOrder,
 } from '../ride_actions.js';
 import { applySmokeRole } from '../smoke_role.js';
+import { isBackendEnabled } from '../api_config.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -84,8 +85,26 @@ export default function feed(renderContext) {
 
   const chipRow  = root.querySelector('.feed-chip-row');
   const feedList = root.querySelector('.feed-list');
+  // #1125 R1 — on a live backend the order feed is for signed-in viewers only
+  // (GET /orders answers 401), so a guest gets the sign-in prompt instead of a
+  // request that can only fail into the server_error overlay. Nothing to filter
+  // until then.
+  const guestSignIn = guestReadOnly && isBackendEnabled();
+  if (guestSignIn) chipRow.hidden = true;
+
+  function renderSignIn() {
+    feedList.setAttribute('aria-busy', 'false');
+    feedList.innerHTML = `
+      <div class="bd-empty feed-signin">
+        <div class="bd-empty__title">Войдите, чтобы видеть заказы</div>
+        <p>Поездки в ленте видны только участникам сервиса.</p>
+        <button type="button" class="bd-btn primary sm feed-signin__cta" id="feed-signin">Войти</button>
+      </div>`;
+    feedList.querySelector('#feed-signin').addEventListener('click', () => go('/onboarding'));
+  }
 
   async function refreshList(isRetry) {
+    if (guestSignIn) return renderSignIn();
     // Skeleton only on the first load; a retry shows the global 'retrying'
     // overlay (loadResource), so the existing content / empty state stays put.
     if (!isRetry) renderLoading();

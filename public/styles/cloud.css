@@ -12660,6 +12660,10 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .post-detail__missing-cta {
   margin-top: 14px;
 }
+/* #1125 R1 — the Guest feed sign-in prompt (backend ON). */
+.feed-signin__cta {
+  margin-top: 14px;
+}
 
 .feed-list [data-post-card] {
   cursor: pointer;
