@@ -29,17 +29,33 @@ const baseRow = {
   accepted_at: null,
 };
 
-test('serializeOrder maps the DB row to the client camelCase shape (id = legacy_id)', () => {
-  const o = serializeOrder(baseRow, { viewerId: null });
+test('serializeOrder maps the DB row to the client camelCase shape (id = legacy_id) — the owner\'s view', () => {
+  const o = serializeOrder(baseRow, { viewerId: 'user-1' });
   assert.equal(o.id, 'order-abc', 'client-facing id is the legacy join key');
   assert.equal(o.status, 'CREATED');
   assert.equal(o.source, 'map');
+  assert.equal(o.projection, 'owner');
   assert.deepEqual(o.pickup, { lng: 37.6, lat: 55.7, label: 'A' });
   assert.equal(o.distanceKm, 12.5, 'NUMERIC string -> number');
   assert.equal(o.estimatedPrice, 1480);
   assert.equal(o.estimatedPriceLabel, '1 480 ₽');
   assert.equal(o.comment, 'hi');
   assert.equal(o.createdAt, '2026-06-28T12:00:00.000Z', 'Date -> ISO');
+});
+
+test('serializeOrder: everyone but the owner gets the public projection (#1125 R2)', () => {
+  const row = { ...baseRow, pickup: { lng: 37.6, lat: 55.7, label: 'ул. Ленина, 10, кв. 5' }, dropoff: { label: 'возле дома 5' } };
+  for (const viewerId of ['user-2', null]) {
+    const o = serializeOrder(row, { viewerId });
+    assert.equal(o.projection, 'public');
+    assert.deepEqual(o.pickup, { label: 'ул. Ленина' }, 'the street, no house, no coordinates');
+    assert.equal(o.dropoff, null, 'an unparseable address is not shown');
+    assert.equal(o.comment, '', 'no comment');
+    // Everything else stays: price, distance, time, type, status.
+    assert.equal(o.estimatedPrice, 1480);
+    assert.equal(o.distanceKm, 12.5);
+    assert.equal(o.status, 'CREATED');
+  }
 });
 
 test('isCurrentUser is per-viewer; the public projection exposes NO passenger PII', () => {

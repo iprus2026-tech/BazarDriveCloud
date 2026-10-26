@@ -81,6 +81,21 @@ export async function listCreatedOrders(db, { limit = 50 } = {}) {
   return rows;
 }
 
+// BD-ORDERS-PUBLIC-PROJECTION-01 (#1125 R6) — the open-order cap. Serialize a passenger's creates
+// until the transaction ends (a hash collision only serializes two unrelated passengers), then
+// count their CREATED orders.
+export async function lockPassengerOrders(db, passengerId) {
+  await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`orders:passenger:${passengerId}`]);
+}
+
+export async function countOpenOrdersByPassenger(db, passengerId) {
+  const { rows } = await db.query(
+    `SELECT count(*)::int AS n FROM orders WHERE passenger_id = $1 AND status = 'CREATED'`,
+    [passengerId],
+  );
+  return rows[0].n;
+}
+
 // Order-lifecycle contract (#1051): move an order with its ride, forward only — the UPDATE matches
 // only while the order is in one of `fromStatuses`, so a replay or a terminal order is a no-op.
 export async function advanceOrderStatus(db, id, toStatus, fromStatuses) {

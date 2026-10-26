@@ -1,9 +1,14 @@
 // /server/src/services/orders/index.js — #1 Order Dispatcher (BD-DOCS-023), LIVE in R03 of
 // #784. Routes (mounted at /api/v1/orders):
-//   GET  /  -> { items: [order] }   PUBLIC — the feed / nearby read (CREATED only, newest first,
-//                                   per-viewer isCurrentUser). The PWA feed seam (R13) calls this.
+//   GET  /  -> { items: [order] }   REQUIRES a session (BD-ORDERS-PUBLIC-PROJECTION-01 #1125: 401
+//                                   without one) — the feed / nearby read (CREATED only, newest first).
+//                                   The owner sees an order in full; everyone else gets the public
+//                                   projection (street without the house, no coordinates, no comment;
+//                                   serialize.js). The PWA feed seam (R13) calls this.
 //   POST /  -> 201 { order }        REQUIRES a session with a granted, active passenger role and a
 //                                   verified phone (BD-AUTH-POLICY-01B-C; 403 PASSENGER_ROLE_REQUIRED).
+//                                   At most 5 open (CREATED) orders per passenger (#1125 R6); a sixth
+//                                   -> 409 ORDER_LIMIT.
 //   POST /:orderId/cancel -> 200 { order }   the owner cancels an order that has no driver yet
 //                                   (CREATED -> CANCELED; open offers rejected). Repeat -> 200.
 //                                   An order with a driver (ACCEPTED or later, or CANCELED through
@@ -14,45 +19,63 @@
 // until then only this server + tests exercise POST.
 import { newOrderId } from '../../infra/ids.js';
 import { serializeOrder } from '../../serialize.js';
-import { insertOrder, listCreatedOrders, lockOrderByLegacyId, cancelCreatedOrder } from '../../repositories/orders.js';
+import {
+  insertOrder, listCreatedOrders, lockOrderByLegacyId, cancelCreatedOrder,
+  lockPassengerOrders, countOpenOrdersByPassenger,
+} from '../../repositories/orders.js';
 import { rejectOpenOffersOnOrderCancel } from '../../repositories/offers.js';
 import { findAssignmentByOrderId } from '../../repositories/assignment.js';
 import { resolveActorAuthority, requirePassengerActor, roleAuthorityProblem } from '../auth/authority.js';
 
-// A route point. The SHIPPED client stores { id, label } today (order_map_draft.js / composer.js)
-// and the route-picker adds { hint, source, coords }; typed lng/lat geo is #4 (deferred, coords is
-// null today). The EXACT point shape is frozen at the R18 write cutover, so this accepts the
-// current client fields and tolerates forward-compatible additions — NO additionalProperties:false,
-// which would 400 every real createRideOrder payload over its extra `id`/`hint`/`source`/`coords`
-// (Codex #789). The value is stored as opaque JSONB and only `.label` is read by the feed today,
-// so `label` is the one required, bounded field; the rest are length/range-bounded.
+// A route point — strict since BD-ORDERS-PUBLIC-PROJECTION-01 (#1125, owner's decision R5). The
+// shipped client sends { id, label } plus, when it has them, the flat geo fields of
+// passenger_order_utils.enrichOrderPointWithCoords (lng, lat, provenance, capturedAt,
+// accuracyMeters); older paths may still carry { hint, source, coords }. Exactly those fields are
+// allowed (additionalProperties:false — the reason Codex #789 kept it open is covered by listing
+// every field the client sends), each bounded; `coords` is only an object of the same geo fields.
+const PROVENANCE = {
+  type: 'string',
+  enum: ['device_fix', 'user_pin', 'geocode_point', 'provider_routable_point', 'mock_hash', 'simulation', 'unknown'],
+};
+const GEO_FIELDS = {
+  lng: { type: 'number', minimum: -180, maximum: 180 },
+  lat: { type: 'number', minimum: -90, maximum: 90 },
+  provenance: PROVENANCE,
+  // Epoch milliseconds (geo_point.js isEpochMilliseconds).
+  capturedAt: { type: 'integer', minimum: 0, maximum: 8640000000000000 },
+  accuracyMeters: { type: 'number', minimum: 0, maximum: 100000 },
+};
 const POINT = {
   type: 'object',
   required: ['label'],
+  additionalProperties: false,
   properties: {
     label: { type: 'string', minLength: 1, maxLength: 200 },
     id: { type: ['string', 'null'], maxLength: 200 },
     hint: { type: 'string', maxLength: 500 },
     source: { type: 'string', maxLength: 50 },
-    coords: { type: ['object', 'array', 'null'] },
-    lng: { type: 'number', minimum: -180, maximum: 180 },
-    lat: { type: 'number', minimum: -90, maximum: 90 },
+    coords: { type: ['object', 'null'], additionalProperties: false, properties: GEO_FIELDS },
+    ...GEO_FIELDS,
   },
 };
+// #1125 R6 — open (CREATED) orders a passenger may have at once.
+const OPEN_ORDER_LIMIT = 5;
 
 export default async function ordersService(app) {
-  // GET /api/v1/orders — public feed/nearby read. Resolving the viewer is OPTIONAL (anonymous
-  // browse is allowed); it only drives the per-viewer isCurrentUser recompute in serializeOrder.
+  // GET /api/v1/orders — the feed/nearby read, for signed-in viewers only (#1125 R1). The viewer
+  // decides the projection per order in serializeOrder (owner: exact; everyone else: public).
   app.get('/', async (req, reply) => {
     const viewer = await req.resolveUser();
-    // A token WAS presented but its lookup failed (DB outage) — surface it as retryable, never a
-    // misleading anonymous feed where the owner's own orders read as not-theirs (Codex #789).
-    // Mirrors the /auth/session and POST contracts (plugins/auth.js).
+    // A token WAS presented but its lookup failed (DB outage) — surface it as retryable (Codex
+    // #789). Mirrors the /auth/session and POST contracts (plugins/auth.js).
     if (req.authError) {
       return reply.code(503).send({ error: 'session lookup failed', code: 'SESSION_LOOKUP_FAILED', retryable: true });
     }
+    if (!viewer) {
+      return reply.code(401).send({ error: 'authentication required', code: 'UNAUTHENTICATED', retryable: false });
+    }
     const rows = await listCreatedOrders(app.db, { limit: 50 });
-    return { items: rows.map((row) => serializeOrder(row, { viewerId: viewer?.userId ?? null })) };
+    return { items: rows.map((row) => serializeOrder(row, { viewerId: viewer.userId })) };
   });
 
   // POST /api/v1/orders — create an order owned by the authenticated passenger.
@@ -100,6 +123,12 @@ export default async function ordersService(app) {
       // Passenger authority first (contract §4), on the same tx client as the insert.
       const authority = requirePassengerActor(await resolveActorAuthority(client, viewer));
       if (!authority.ok) return { err: roleAuthorityProblem(authority, 'passenger') };
+      // #1125 R6: count this passenger's open orders under a per-passenger lock, so two concurrent
+      // creates cannot both pass the same count.
+      await lockPassengerOrders(client, viewer.userId);
+      if (await countOpenOrdersByPassenger(client, viewer.userId) >= OPEN_ORDER_LIMIT) {
+        return { err: [409, 'ORDER_LIMIT', `at most ${OPEN_ORDER_LIMIT} open orders at a time`, false] };
+      }
       const row = await insertOrder(client, {
         legacyId: newOrderId(),
         passengerId: viewer.userId,

@@ -108,8 +108,8 @@ test('select: transactional accept (target accepted, peers rejected, assignment,
   // and no NEW offer can be created on an accepted order (the locked status recheck, Codex #791).
   assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id }, bearer(drvBS))).statusCode, 409, 'cannot offer on an accepted order');
 
-  // the accepted order drops out of the public CREATED feed.
-  const feed = (await get(app, '/api/v1/orders')).json().items;
+  // the accepted order drops out of the CREATED feed (a signed-in read since #1125).
+  const feed = (await get(app, '/api/v1/orders', bearer(paxS))).json().items;
   assert.equal(feed.find((o) => o.id === order.id), undefined, 'ACCEPTED order is no longer in the feed');
 });
 
@@ -185,7 +185,7 @@ test('select refuses an offer past its TTL (expired-but-unswept), even though st
   assert.equal(sel.statusCode, 404, 'an expired sent offer is not a live candidate');
   assert.equal(sel.json().code, 'OFFER_NOT_FOUND');
   // the order is untouched (still CREATED, no assignment).
-  const o = (await get(app, '/api/v1/orders')).json().items.find((x) => x.id === order.id);
+  const o = (await get(app, '/api/v1/orders', bearer(paxS))).json().items.find((x) => x.id === order.id);
   assert.equal(o.status, 'CREATED', 'order stays open after a failed (expired) select');
 });
 
