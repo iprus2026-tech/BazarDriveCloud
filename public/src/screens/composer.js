@@ -3,7 +3,8 @@ import { go, setPendingAction } from '../router.js';
 import { createFeedPost, createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
-import { isDriverMode, isPassengerMode } from '../ride_actions.js';
+import { isDriverMode } from '../ride_actions.js';
+import { resolveRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
 import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
@@ -51,10 +52,12 @@ function readIntentTypeFromHash() {
 
 // Safe default composer intent by current role. Driver mode defaults to a
 // driver offer (never silently a passenger request); passenger mode to a
-// passenger request; guest / unknown role keeps the neutral trip default.
+// passenger request; guest / unknown role keeps the neutral trip default. The role is this tab's
+// effective one (resolveRole), the same as the draft owner's (CodeRabbit #1148).
 function defaultTypeForRole(u) {
-  if (isDriverMode(u)) return 'trip';
-  if (isPassengerMode(u)) return 'passenger';
+  const role = resolveRole(u);
+  if (role === 'driver') return 'trip';
+  if (role === 'passenger') return 'passenger';
   return 'trip';
 }
 
@@ -67,18 +70,31 @@ function emptyDraft() {
   };
 }
 
+// BD-UX-ROLES-03 (#1140) — the draft belongs to the role it was written in: saveDraft tags it with
+// `role`, and loadDraft ignores a draft of another role (or an untagged one from before this
+// change), so it never chooses the type or prefills there. A driver therefore opens on «Поездка»
+// unless an explicit ?type= intent says otherwise. The other role's draft stays stored until this
+// role saves its own (one key, one draft). The role is this tab's effective one (resolveRole: the
+// per-tab override of the backend-OFF profile switch, else user.role), the same as the router's.
+function draftRoleFor(u) {
+  const role = resolveRole(u);
+  return role === 'driver' || role === 'passenger' ? role : 'guest';
+}
+
 function loadDraft() {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
     if (!raw) return emptyDraft();
-    return { ...emptyDraft(), ...JSON.parse(raw) };
+    const { role, ...fields } = JSON.parse(raw) || {};
+    if (role !== draftRoleFor(user.get())) return emptyDraft();
+    return { ...emptyDraft(), ...fields };
   } catch {
     return emptyDraft();
   }
 }
 
 function saveDraft(d) {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {}
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, role: draftRoleFor(user.get()) })); } catch {}
 }
 
 function clearDraft() {

@@ -265,7 +265,8 @@
 // v396 (#1143): refresh precached api_client.js + screens/onboarding.js — OTP code length from codeLength, 429 wait texts.
 // v397 (#1139): refresh precached styles/cloud.css — one 760px column for every screen with the tab bar.
 // v399 (#825 R7): refresh precached screens/chat.js + screens/respond.js — on a live backend only a ride's thread is a server chat; a response chat is locked «Чат откроется после выбора».
-const VERSION    = 'v399';
+// v400 (#1140): refresh precached app.js + screens/composer.js + screens/profile.js — role-scoped composer draft; «Перейти в режим пассажира» is a real role switch to the feed.
+const VERSION    = 'v400';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

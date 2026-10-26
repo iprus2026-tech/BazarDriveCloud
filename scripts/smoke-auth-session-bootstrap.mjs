@@ -1469,6 +1469,100 @@ async function chatPreselectCase(name) {
   assert.deepEqual(notes.map((el) => el.textContent), ['Чат откроется после выбора водителя.']);
 }
 
+// BD-UX-ROLES-03 (#1140) — backend OFF, the real app: the composer draft belongs to the role that
+// wrote it (a driver opens on «Поездка» unless an explicit intent says otherwise), and the driver's
+// «Перейти в режим пассажира» switches the local role and lands on the feed.
+async function roleUxCase(name) {
+  installDOM({ parseMarkup: true });
+  // collectDraft() reads the form through FormData: read the named inputs of the shim form.
+  globalThis.FormData = class {
+    constructor(form) { this.form = form; }
+    get(field) {
+      const find = (el) => {
+        if (el.attrs?.name === field) return el;
+        for (const child of el.children ?? []) { const hit = find(child); if (hit) return hit; }
+        return null;
+      };
+      const el = find(this.form);
+      return el ? (el.value ?? el.attrs.value ?? '') : null;
+    }
+  };
+  const { user } = await import('../public/src/state.js');
+  const { SMOKE_ROLE_KEY } = await import('../public/src/smoke_role.js');
+  const KEY = 'bazardrive.draft.v2';
+  const role = name.startsWith('passenger-') ? 'passenger' : 'driver';
+  user.set({ welcomeSeen: true, onboarded: true, role, phoneVerified: true, firstName: 'Role UX' });
+  const draft = {
+    'driver-passenger-draft': { type: 'passenger', from: 'Чужой черновик', role: 'passenger' },
+    'driver-legacy-draft': { type: 'passenger', from: 'Старый черновик' },
+    'driver-intent': { type: 'passenger', from: 'Чужой черновик', role: 'passenger' },
+    'driver-own-draft': { type: 'passenger', from: 'Свой черновик', role: 'driver' },
+    'passenger-own-draft': { type: 'passenger', from: 'Пассажирский', role: 'passenger' },
+    // CodeRabbit #1148: the backend-OFF profile switch sets only this tab's role; the draft follows it.
+    'tab-passenger-draft': { type: 'passenger', from: 'По вкладке', role: 'passenger' },
+    // CodeRabbit #1148 (nitpick): the passenger profile's «Мои черновики» counts only its role's draft.
+    'passenger-drafts-own': { type: 'passenger', from: 'Мой', role: 'passenger' },
+    'passenger-drafts-foreign': { type: 'trip', from: 'Водительский', role: 'driver' },
+  }[name];
+  if (draft) localStorage.setItem(KEY, JSON.stringify(draft));
+  if (name === 'tab-passenger-draft') sessionStorage.setItem(SMOKE_ROLE_KEY, 'passenger'); // persisted: driver
+  // CodeRabbit #1148: with no draft, the default type follows the tab's role too.
+  if (name === 'passenger-tab-driver-default') sessionStorage.setItem(SMOKE_ROLE_KEY, 'driver'); // persisted: passenger
+  location.hash = name === 'off-switch' || name.startsWith('passenger-drafts-') ? '#/profile'
+    : name === 'driver-intent' ? '#/new?type=passenger_request' : '#/new';
+  await import('../public/src/app.js');
+  const settle = async () => { for (let i = 0; i < 6; i++) await flush(); };
+  await settle();
+  const node = id => document.getElementById(id);
+
+  if (name.startsWith('passenger-drafts-')) {
+    const row = node('pfp-menu-drafts');
+    assert.ok(row, 'the passenger profile renders «Мои черновики»');
+    assert.equal(row.disabled === true || row.getAttribute('disabled') !== null, name === 'passenger-drafts-foreign',
+      name === 'passenger-drafts-own' ? 'enabled for this role\'s draft' : 'disabled for another role\'s draft');
+    return;
+  }
+
+  if (name === 'off-switch') {
+    const button = node('pf2-act-passenger-mode');
+    assert.ok(button, 'the driver profile offers «Перейти в режим пассажира» with the backend OFF');
+    sessionStorage.setItem(SMOKE_ROLE_KEY, 'driver');
+    button.click(); await settle();
+    assert.equal(user.get().role, 'passenger', 'the local role changes (the feed and tab bar read it)');
+    assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), null, 'no per-tab override is left behind');
+    assert.equal(location.hash, '#/feed', 'it lands on the feed, not in the composer');
+    return;
+  }
+
+  const all = (el) => [el, ...(el.children ?? []).flatMap(all)];
+  const activeType = () => all(document.body)
+    .filter((el) => el.attrs?.['data-type'] && el.attrs['aria-selected'] === 'true')
+    .map((el) => el.attrs['data-type']);
+  const expected = {
+    'driver-no-draft': ['trip', ''],
+    'driver-passenger-draft': ['trip', ''],
+    'driver-legacy-draft': ['trip', ''],
+    'driver-intent': ['passenger', ''],
+    'driver-own-draft': ['passenger', 'Свой черновик'],
+    'passenger-own-draft': ['passenger', 'Пассажирский'],
+    'tab-passenger-draft': ['passenger', 'По вкладке'],
+    'passenger-tab-driver-default': ['trip', ''],
+    'driver-save': ['trip', ''],
+  }[name];
+  assert.ok(expected, 'unknown case ' + name);
+  assert.ok(node('composer-form'), 'the composer is mounted');
+  assert.deepEqual(activeType(), [expected[0]], 'the selected type');
+  assert.equal(node('c-from').getAttribute('value') ?? '', expected[1], 'the prefilled «Откуда»');
+
+  if (name === 'driver-save') {
+    node('c-from').value = 'Новый';
+    for (const fn of node('composer-form').handlers.input ?? []) fn({ target: node('c-from') });
+    const stored = JSON.parse(localStorage.getItem(KEY));
+    assert.equal(stored.role, 'driver', 'a saved draft is tagged with its role');
+    assert.equal(stored.from, 'Новый');
+  }
+}
+
 // BD-AUTH-OTP-CLIENT-01 (#1143) — the real app + onboarding against the OTP limits of
 // BD-AUTH-HARDEN-01 (#824): the code field length comes from `codeLength` (then the devCode echo,
 // then 6), and a 429 shows the server's wait instead of the generic retry text. Stubbed transport.
@@ -1755,6 +1849,7 @@ async function profileRoleCaseBody(name) {
       if (gates.put) await gates.put.promise;
       if (putFailures > 0) { putFailures--; return response({ code: 'ROLE_SWITCH_FAILED', retryable: true }, 503); }
       if (name === 'session-lost') return response({ code: 'UNAUTHENTICATED' }, 401);
+      if (name === 'passenger-mode-refused' && body.activeRole === 'passenger') return response({ code: 'ROLE_NOT_GRANTED' }, 403);
       if (!server.roles.includes(body.activeRole)) return response({ code: 'ROLE_NOT_GRANTED' }, 403);
       // 'unconfirmed': the reply claims a switch that the server's session never shows.
       if (name !== 'unconfirmed' && name !== 'foreign-reply') server.active = body.activeRole;
@@ -1823,6 +1918,34 @@ async function profileRoleCaseBody(name) {
     assert.equal(user.get().role, 'passenger');
     assert.ok(node('pfp-role-switch'), 'back on the passenger profile');
     assert.equal(server.active, 'passenger');
+    return;
+  }
+
+  // BD-UX-ROLES-03 (#1140) — the driver's «Перейти в режим пассажира» is a real server switch that
+  // lands on the FEED as a passenger; a refusal stays on the driver profile with its text.
+  if (name === 'passenger-mode-feed' || name === 'passenger-mode-refused') {
+    node('pfp-role-switch').click(); await settle();
+    assert.equal(user.get().role, 'driver', 'first become the driver');
+    const button = node('pf2-act-passenger-mode');
+    assert.ok(button, '#1140: «Перейти в режим пассажира» is rendered with the backend ON');
+    assert.ok(node('pf2-passenger-mode-err'), 'with its own error line');
+    const readsBefore = sessionReads();
+    button.click(); await settle();
+    assert.deepEqual(puts().at(-1).body, { activeRole: 'passenger' }, 'the server switch, not a composer link');
+    if (name === 'passenger-mode-feed') {
+      assert.equal(sessionReads(), readsBefore + 1, 'the PUT reply is re-read through the session');
+      assert.equal(user.get().role, 'passenger', 'the confirmed session changes the local role');
+      assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), null);
+      assert.equal(location.hash, '#/feed', 'it lands on the feed, not on /profile or /new');
+      assert.equal(server.active, 'passenger');
+      return;
+    }
+    assert.equal(user.get().role, 'driver', 'a refusal changes nothing');
+    assert.ok(node('pf2-act-passenger-mode'), 'the driver profile stays');
+    assert.equal(location.hash, '#/profile');
+    assert.equal(node('pf2-passenger-mode-err').hidden, false);
+    assert.equal(node('pf2-passenger-mode-err').textContent, 'Роль пассажира для этого аккаунта не выдана.');
+    assert.equal(node('pf2-act-passenger-mode').disabled, false, 'the control is usable again');
     return;
   }
 
@@ -2116,7 +2239,9 @@ async function profileSyncCaseBody(name) {
     assert.equal(sessionStorage.getItem(SMOKE_ROLE_KEY), null, 'the per-tab override is cleared');
     if (role === 'driver') {
       assert.ok(node('pf2-act-role-switch'), 'the driver profile renders, offering «Продолжить как пассажир»');
-      assert.equal(node('pf2-act-passenger-mode'), null, '#1088: no «Перейти в режим пассажира» with the backend ON');
+      // #1140 (owner's option A) supersedes #1088's hiding: the button is now a real role switch in
+      // both modes (its behaviour is pinned by the passenger-mode-* profile-role cases).
+      assert.ok(node('pf2-act-passenger-mode'), '#1140: «Перейти в режим пассажира» is rendered with the backend ON');
     } else {
       assert.ok(node('pfp-role-switch'), 'the passenger profile renders, offering «Продолжить как водитель»');
     }
@@ -3184,6 +3309,11 @@ if (process.argv[2] === '--onboarding-detach-case') {
   await chatPreselectCase(process.argv[3]);
   console.log('PASS actual app chat on a live backend (#825 R7) — ' + process.argv[3]);
   process.exit(0); // the chat screen keeps its poll timers alive
+} else if (process.argv[2] === '--role-ux-case') {
+  await roleUxCase(process.argv[3]);
+  console.log('PASS actual app role UX (#1140) — ' + process.argv[3]);
+  // The mounted composer / feed keep their timers alive; the case is done.
+  process.exit(0);
 } else if (process.argv[2] === '--otp-limits-case') {
   await otpLimitsCase(process.argv[3]);
   console.log('PASS actual app/onboarding OTP limits (#1143) — ' + process.argv[3]);
@@ -4235,6 +4365,14 @@ if (process.argv[2] === '--onboarding-detach-case') {
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
+  for (const scenario of ['driver-no-draft', 'driver-passenger-draft', 'driver-legacy-draft', 'driver-intent',
+    'driver-own-draft', 'passenger-own-draft', 'driver-save', 'off-switch', 'tab-passenger-draft',
+    'passenger-tab-driver-default', 'passenger-drafts-own', 'passenger-drafts-foreign']) {
+    await check('actual app role UX — role-scoped draft and «Перейти в режим пассажира» (#1140, BD-UX-ROLES-03): ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--role-ux-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
   for (const scenario of ['length-code', 'length-code-over-dev', 'length-dev', 'length-none', 'length-bogus',
     'rate-limited-minutes', 'rate-limited-seconds', 'rate-limited-no-wait', 'invalid-phone', 'send-failure',
     'locked-wait', 'locked-code']) {
@@ -4251,7 +4389,7 @@ if (process.argv[2] === '--onboarding-detach-case') {
     });
   }
   for (const scenario of ['both-ways', 'failure-retry', 'unconfirmed', 'foreign-reply', 'session-lost',
-    'not-granted', 'not-granted-close']) {
+    'not-granted', 'not-granted-close', 'passenger-mode-feed', 'passenger-mode-refused']) {
     await check('actual app/profile server role switch (BD-AUTH-POLICY-01C-2): ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--profile-role-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
