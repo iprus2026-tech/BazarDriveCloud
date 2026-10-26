@@ -16,6 +16,7 @@ import {
   saveMapPrefs,
 } from '../mapbox/mapbox_state.js';
 import { GEO_STATUS, getPermissionStatus } from '../mapbox/geolocation_service.js';
+import { listPublicPlaces } from '../public_places.js';
 
 const STATE_QUERY_KEYS = new Map([
   ['default',       MAP_STATE.DEFAULT],
@@ -205,6 +206,7 @@ function hydrateRealMap(container, lifecycle, badge) {
         return;
       }
       lifecycle.mapInstance = map;
+      pinPublicPlaces(mapboxgl, map, lifecycle);
       // #1136 — follow the CONTAINER, not only the window. Inside Telegram the shell height changes
       // through a CSS variable (viewport_changed after expand) with no window `resize`, so Mapbox's
       // own trackResize never fires and the canvas keeps the collapsed height (map drawn only in the
@@ -244,6 +246,25 @@ function hydrateRealMap(container, lifecycle, badge) {
       }, 2000);
     });
   }).catch(() => { /* load failed — the placeholder stays */ });
+}
+
+// #1160 — the public places catalog (airports, stations) pinned on the live map, with the backend ON
+// (none when OFF). Each marker is the taxi pickup point; map.remove() takes the markers with it.
+function pinPublicPlaces(mapboxgl, map, lifecycle) {
+  listPublicPlaces().then((places) => {
+    if (lifecycle.disposed || lifecycle.mapInstance !== map) return;
+    for (const place of places) {
+      const el = document.createElement('div');
+      el.className = 'map-place-marker';
+      el.dataset.placeId = place.id;
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', place.name);
+      el.title = place.name;
+      try {
+        new mapboxgl.Marker({ element: el }).setLngLat([place.lng, place.lat]).addTo(map);
+      } catch { /* the map was torn down meanwhile */ }
+    }
+  }, () => { /* no catalog — the map works without the pins */ });
 }
 
 // Rebuild the DEFAULT-state placeholder shell after a failed Map construction (Codex #812):

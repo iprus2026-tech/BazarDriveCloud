@@ -11,7 +11,8 @@ import { peekRepeatRouteDraft, clearRepeatRouteDraft } from '../repeat_route.js'
 import { peekFavoriteNotice, clearFavoriteNotice, loadFavoriteRoutes } from '../favorite_routes.js';
 import { findLatestHandedOffOrderTripId, listHistoryFromBackend } from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
-import { deriveMockCoordsFromLabel, resolvePointCoords } from '../passenger_order_utils.js';
+import { deriveMockCoordsFromLabel, resolvePointCoords, isPlaceId } from '../passenger_order_utils.js';
+import { listPublicPlaces, publicPlacePoint } from '../public_places.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const ALLOWED_SOURCES = new Set(['current', 'search', 'manual']);
@@ -115,7 +116,8 @@ const DEMO_POINT_IDS = new Set([
 // addresses from their completed rides (GET /history). No demo rows above, no mock suggestions
 // and no «Моё место» (there is no geolocation source yet). Backend OFF keeps the demo picker.
 const LIVE_RECENTS_LIMIT = 5;
-const live = { favorites: [], recents: [], recentsState: 'idle', runId: 0 };
+// #1160 — plus the server catalog of public places (airports, stations) as quick buttons.
+const live = { favorites: [], recents: [], recentsState: 'idle', runId: 0, places: [], placesRunId: 0 };
 
 // The newest completed passenger rides first; each ride gives its pickup then its dropoff;
 // an address appears once (case-insensitive); at most `limit` of them.
@@ -177,6 +179,19 @@ function loadLiveRecents(root) {
     // A guest (no session) simply has no rides yet; anything else is a failed read.
     (err) => settle([], Number(err?.status) === 401 ? 'ready' : 'error'),
   );
+}
+
+// #1160 — the public places catalog. A failed read just leaves the section out: the passenger can
+// still type the address.
+function loadLivePlaces(root) {
+  const runId = ++live.placesRunId;
+  listPublicPlaces().then((places) => {
+    if (runId !== live.placesRunId) return;
+    live.places = places;
+    if (!root.isConnected || routeDraft.manual || !places.length) return;
+    const typing = document.activeElement?.dataset?.input;
+    rerender(root, typing === 'pickup' || typing === 'dropoff' ? typing : null);
+  }, () => {});
 }
 
 // A persisted demo point (see DEMO_POINT_IDS) is dropped from the draft when the backend is ON.
@@ -331,7 +346,11 @@ function sanitizePoint(raw) {
   if (!id || !label) return null;
   const hint = typeof raw.hint === 'string' ? raw.hint : '';
   const source = ALLOWED_SOURCES.has(raw.source) ? raw.source : 'manual';
-  return { id, label, hint, source, coords: resolvePointCoords(raw, label) };
+  return {
+    id, label, hint, source, coords: resolvePointCoords(raw, label),
+    // #1160 — a catalog place keeps its id through the persisted draft.
+    ...(isPlaceId(raw.placeId) ? { placeId: raw.placeId } : {}),
+  };
 }
 
 function readPersistedDraft() {
@@ -759,7 +778,18 @@ function renderLivePlaces() {
       : '<p class="rp-places__note">Здесь появятся адреса ваших завершённых поездок.</p>';
   }
 
-  return `
+  // #1160 — catalog places first: one tap fills the focused field.
+  const places = live.places.length ? `
+    <section class="rp-places rp-places--public" aria-label="Аэропорты и вокзалы">
+      <h2 class="rp-places__title">Аэропорты и вокзалы</h2>
+      <div class="rp-public-places">
+        ${live.places.map((place) => `
+          <button class="rp-public-place" type="button" data-public-place="${escapeHtml(place.id)}">${escapeHtml(place.name)}</button>
+        `).join('')}
+      </div>
+    </section>` : '';
+
+  return `${places}
     <section class="rp-places" aria-label="Избранные маршруты">
       <h2 class="rp-places__title">Избранные маршруты</h2>
       ${favorites || '<p class="rp-places__note">Избранных маршрутов пока нет. Их можно сохранить из истории поездок в профиле.</p>'}
@@ -1209,6 +1239,14 @@ function handleClick(root, target) {
     return;
   }
 
+  const publicPlaceId = target.closest('[data-public-place]')?.dataset.publicPlace;
+  if (publicPlaceId) {
+    const place = live.places.find((item) => item.id === publicPlaceId);
+    if (place) setPoint(routeDraft.focus, publicPlacePoint(place));
+    rerender(root);
+    return;
+  }
+
   const placeId = target.closest('[data-place]')?.dataset.place;
   if (placeId) {
     const point = STATIC_PLACES.get(placeId);
@@ -1400,7 +1438,10 @@ export default function routePickerScreen() {
   root.className = 'screen screen--route-picker';
   root.dataset.status = routeDraft.status;
   root.replaceChildren(buildBody());
-  if (livePlaces) loadLiveRecents(root);
+  if (livePlaces) {
+    loadLiveRecents(root);
+    loadLivePlaces(root);
+  }
 
   root.addEventListener('input', (event) => {
     handleInput(root, event.target);

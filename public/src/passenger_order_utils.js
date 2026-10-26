@@ -56,7 +56,16 @@ export function enrichOrderPointWithCoords(point, fallbackLabel = '') {
     // Preserve provenance, capture time and accuracy through order/ride storage.
     // Rejected coordinates leave a text-only point, not nulls coerced to (0, 0).
     ...(coords || {}),
+    // #1160 — a catalog place keeps its id: the server shows it to others by the catalog name.
+    ...(isPlaceId(point?.placeId) ? { placeId: point.placeId } : {}),
   };
+}
+
+// BD-ORDERS-PUBLIC-PLACES-01 (#1160) — the id shape of a server catalog place (GET /api/v1/places),
+// the same pattern the server's point schema checks. Not the point's local `id`.
+const PLACE_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+export function isPlaceId(value) {
+  return typeof value === 'string' && PLACE_ID_RE.test(value);
 }
 
 // #1118 — the ride's short number, ONE rule for the order success card («ЗАКАЗ № 2a9008») and the

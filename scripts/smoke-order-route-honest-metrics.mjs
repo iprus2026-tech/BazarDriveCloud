@@ -134,6 +134,10 @@ function pickerHarness({ backend, draft = null }) {
     listHistoryFromBackend: () => Promise.resolve([]),
     deriveMockCoordsFromLabel: utils.deriveMockCoordsFromLabel,
     resolvePointCoords: utils.resolvePointCoords,
+    isPlaceId: utils.isPlaceId,
+    // #1160 — no catalog in this harness.
+    listPublicPlaces: () => Promise.resolve([]),
+    publicPlacePoint: () => null,
   } });
   vm.runInContext(`${stripModule(sources.picker)}
     globalThis.api = {
