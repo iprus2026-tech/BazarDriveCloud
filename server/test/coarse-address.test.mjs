@@ -34,6 +34,13 @@ const cases = [
   // No house at all: kept as is.
   ['Аэропорт Внуково, терминал А', 'Аэропорт Внуково, терминал А'],
   ['Аэропорт Внуково', 'Аэропорт Внуково'],
+  // CodeRabbit #1157: a house number before a house-word segment, or with no street word.
+  ['ул. Ленина 10, подъезд 2', 'ул. Ленина'],
+  ['ул. Ленина 10, кв. 5', 'ул. Ленина'],
+  ['Проектируемый проезд 4062, д. 6', 'Проектируемый проезд'],
+  ['Ленина 10', null],
+  ['Тверская 7, кв 3', null],
+  ['Москва, Ленина 10', null],
   // Unreliable or empty: no address (null), never the full text.
   ['возле дома 5', null],
   ['д. 10', null],
