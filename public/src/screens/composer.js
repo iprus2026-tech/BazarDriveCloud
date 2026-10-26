@@ -3,7 +3,7 @@ import { go, setPendingAction } from '../router.js';
 import { createFeedPost, createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
-import { isDriverMode, isPassengerMode } from '../ride_actions.js';
+import { isDriverMode } from '../ride_actions.js';
 import { resolveRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
@@ -52,10 +52,12 @@ function readIntentTypeFromHash() {
 
 // Safe default composer intent by current role. Driver mode defaults to a
 // driver offer (never silently a passenger request); passenger mode to a
-// passenger request; guest / unknown role keeps the neutral trip default.
+// passenger request; guest / unknown role keeps the neutral trip default. The role is this tab's
+// effective one (resolveRole), the same as the draft owner's (CodeRabbit #1148).
 function defaultTypeForRole(u) {
-  if (isDriverMode(u)) return 'trip';
-  if (isPassengerMode(u)) return 'passenger';
+  const role = resolveRole(u);
+  if (role === 'driver') return 'trip';
+  if (role === 'passenger') return 'passenger';
   return 'trip';
 }
 
