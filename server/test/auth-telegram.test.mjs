@@ -242,6 +242,20 @@ test('telegram: contact refusals store nothing', { skip: SKIP }, async (t) => {
   assert.equal((await db.query('SELECT 1 FROM users WHERE phone = $1', [p])).rowCount, 0);
 });
 
+test('telegram: after PHONE_REQUIRED and linking, the same initData is spent; a new launch signs in', { skip: SKIP }, async (t) => {
+  const { app, track } = await fixture(t);
+  const id = track.id(nextTgId());
+  const p = track.phone(phone(9));
+  const first = initDataFor(id);
+  assert.equal((await signIn(app, first)).json().code, 'PHONE_REQUIRED');
+  assert.equal((await linkTelegramContact(app.db, contact(id, p))).ok, true);
+  const again = await signIn(app, first);
+  assert.equal(again.statusCode, 409, 'the replay record from the PHONE_REQUIRED attempt stays');
+  assert.equal(again.json().code, 'TELEGRAM_REPLAYED');
+  const relaunch = await signIn(app, initDataFor(id));
+  assert.equal(relaunch.statusCode, 200, relaunch.body);
+});
+
 test('telegram: conflicts change nothing and log only ids and the type', { skip: SKIP }, async (t) => {
   const { app, db, track } = await fixture(t);
   const a = track.id(nextTgId());
@@ -252,10 +266,17 @@ test('telegram: conflicts change nothing and log only ids and the type', { skip:
   const log = { warn: (obj, msg) => logged.push(JSON.stringify({ obj, msg })) };
   const linked = await linkTelegramContact(app.db, contact(a, p));
   assert.equal(linked.ok, true);
+  // A state the OTP resolver would change (verify the phone, grant passenger): it must survive a
+  // conflict, proving the conflicts are checked before any account write (ADR R4 step 1).
+  await db.query("UPDATE users SET phone_verified = FALSE, roles = ARRAY['driver'], active_role = 'driver' WHERE id = $1", [linked.userId]);
+  const accountState = async () => (await db.query(
+    'SELECT phone_verified, roles, active_role, updated_at FROM users WHERE id = $1', [linked.userId])).rows[0];
+  const before = await accountState();
 
   // (a) The number's account is already linked to another Telegram id.
   assert.deepEqual(await linkTelegramContact(app.db, { ...contact(b, p), log }),
     { ok: false, code: 'TELEGRAM_CONFLICT', conflict: 'phone_linked_elsewhere' });
+  assert.deepEqual(await accountState(), before, 'a conflict writes nothing to the account');
   // (b) A linked Telegram id shares a different number.
   assert.deepEqual(await linkTelegramContact(app.db, { ...contact(a, p2), log }),
     { ok: false, code: 'TELEGRAM_CONFLICT', conflict: 'phone_changed' });
