@@ -4,20 +4,30 @@
 // mock_api order shape the PWA projects via rideOrderToFeedPost (id, status, source, comment,
 // pickup/dropoff, scheduled*, price*, createdAt).
 //
-// PRIVACY (Codex R03): GET /orders is a PUBLIC, unauthenticated feed read, so this projection
-// exposes NO passenger PII — only the per-viewer ownership flag. The stored passenger snapshot
-// (name / masked phone / authorId = the internal users.id) is per-order contact data meant for
-// the future AUTH-GATED driver-accept handoff (BD-ACTIVE-07, migrations/0002), NOT for broadcast
-// to anonymous callers, so it is withheld here. `passenger.isCurrentUser` is recomputed PER
-// VIEWER from the order's owner (passenger_id) vs the authenticated viewer; an anonymous viewer
-// always gets false.
+// PRIVACY (Codex R03): the order projection exposes NO passenger PII — only the per-viewer
+// ownership flag. The stored passenger snapshot (name / masked phone / authorId = the internal
+// users.id) is per-order contact data meant for the AUTH-GATED driver-accept handoff
+// (BD-ACTIVE-07, migrations/0002), so it is withheld here. `passenger.isCurrentUser` is recomputed
+// PER VIEWER from the order's owner (passenger_id) vs the authenticated viewer.
+//
+// BD-ORDERS-PUBLIC-PROJECTION-01 (#1125, owner's decisions R2–R3): only the OWNER gets the exact
+// pickup/dropoff (label, coordinates) and the comment (`projection: 'owner'`). Everyone else —
+// another passenger, a driver choosing an order — gets `projection: 'public'`: each point is
+// { label } with the street WITHOUT the house (domain/coarse-address.js), or null when the address
+// cannot be parsed reliably; no coordinates, no hint, no comment. The selected driver gets the
+// exact address through the ride (ride-state, participants only), not here.
 
 import { rideNoteText, rideOrderComment } from './domain/ride-order-comment.js';
 import { maskVehiclePlate } from './domain/vehicle-plate.js';
+import { coarseAddress } from './domain/coarse-address.js';
+
+function publicPoint(point) {
+  const label = coarseAddress(point && typeof point === 'object' ? point.label : null);
+  return label ? { label } : null;
+}
 
 // The server computes passenger.isCurrentUser per viewer. The client feed mapper
-// (mock_api.rideOrderToFeedPost) consumes it for backend ownership and author labels;
-// the public /orders projection exposes no passenger PII.
+// (mock_api.rideOrderToFeedPost) consumes it for backend ownership and author labels.
 export function serializeOrder(row, { viewerId = null } = {}) {
   if (!row) return null;
   const ownerId = row.passenger_id ?? null;
@@ -28,8 +38,9 @@ export function serializeOrder(row, { viewerId = null } = {}) {
     type: row.type,
     source: row.source,
     status: row.status,
-    pickup: row.pickup ?? null,
-    dropoff: row.dropoff ?? null,
+    projection: isCurrentUser ? 'owner' : 'public',
+    pickup: isCurrentUser ? (row.pickup ?? null) : publicPoint(row.pickup),
+    dropoff: isCurrentUser ? (row.dropoff ?? null) : publicPoint(row.dropoff),
     distanceKm: Number(row.distance_km) || 0,
     durationMin: Number(row.duration_min) || 0,
     estimatedPrice: Number(row.estimated_price) || 0,
@@ -37,8 +48,8 @@ export function serializeOrder(row, { viewerId = null } = {}) {
     scheduledMode: row.scheduled_mode,
     scheduledAt: row.scheduled_at ?? '',
     scheduledLabel: row.scheduled_label ?? '',
-    comment: row.comment ?? '',
-    // No passenger contact snapshot on this public projection — only the per-viewer flag.
+    comment: isCurrentUser ? (row.comment ?? '') : '',
+    // No passenger contact snapshot on any order projection — only the per-viewer flag.
     passenger: { isCurrentUser },
     createdAt: toIso(row.created_at),
     acceptedAt: row.accepted_at ? toIso(row.accepted_at) : null,

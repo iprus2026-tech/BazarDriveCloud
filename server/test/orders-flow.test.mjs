@@ -1,7 +1,8 @@
 // /server/test/orders-flow.test.mjs — DB-gated end-to-end for R03 (#1 Order Dispatcher) through
 // the real Fastify app + real Postgres. Mints a session via the live OTP flow (R02), creates an
-// order (POST, auth-gated), and reads it back (GET, public) — asserting the feed shape and the
-// PER-VIEWER isCurrentUser recompute (owner=true, other/anon=false). SKIPPED without DATABASE_URL;
+// order (POST, auth-gated), and reads it back (GET, auth-gated since BD-ORDERS-PUBLIC-PROJECTION-01
+// #1125) — asserting the feed shape, the PER-VIEWER isCurrentUser recompute (owner=true,
+// other=false), and the owner/public projections (exact vs street-only). SKIPPED without DATABASE_URL;
 // runs in server-ci's app job. Cleans up its rows (unique per-process phones) in t.after().
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -83,23 +84,32 @@ test('order create (auth) -> feed list (public); per-viewer isCurrentUser', { sk
   assert.equal(stored.name, 'Я', 'stored snapshot keeps the (sanitized) name for the future handoff');
   assert.equal(stored.isCurrentUser, undefined, 'stored snapshot does not persist the per-viewer flag');
 
-  // public feed list: the order appears (CREATED), and an anonymous viewer never owns it.
+  // #1125 R1: the feed requires a session.
   const feedAnon = await getFeed(app);
-  assert.equal(feedAnon.statusCode, 200);
-  const mineAnon = feedAnon.json().items.find((o) => o.id === order.id);
-  assert.ok(mineAnon, 'created order is in the public feed');
-  assert.equal(mineAnon.passenger.isCurrentUser, false, 'anonymous viewer never sees it as mine');
-  assert.equal(mineAnon.passenger.name, undefined, 'public feed leaks no passenger name');
-  assert.equal(mineAnon.passenger.authorId, undefined, 'public feed leaks no internal user id');
+  assert.equal(feedAnon.statusCode, 401);
+  assert.equal(feedAnon.json().code, 'UNAUTHENTICATED');
 
-  // a DIFFERENT authenticated viewer must NOT see it as mine (per-viewer recompute).
+  // a DIFFERENT authenticated viewer must NOT see it as mine, and gets the public projection:
+  // the order is listed, but no exact address, coordinates or comment (#1125 R2).
   const other = await mintSession(app, phone2);
   const mineOther = (await getFeed(app, { authorization: `Bearer ${other.token}` }))
     .json().items.find((o) => o.id === order.id);
+  assert.ok(mineOther, 'created order is in the feed');
   assert.equal(mineOther.passenger.isCurrentUser, false, 'another user does not own it');
+  assert.equal(mineOther.passenger.name, undefined, 'the feed leaks no passenger name');
+  assert.equal(mineOther.passenger.authorId, undefined, 'the feed leaks no internal user id');
+  assert.equal(mineOther.projection, 'public');
+  // The public label is a whitelist of «street type + name»: «Дом» / «Центр» are not streets,
+  // so other people see no point at all (and never the coordinates).
+  assert.equal(mineOther.pickup, null, 'a label that is not a street is not shown');
+  assert.equal(mineOther.dropoff, null);
+  assert.equal(mineOther.comment, '', 'no comment for non-owners');
 
-  // the owner DOES see it as mine via an authenticated feed read.
+  // the owner DOES see it as mine, in full.
   const mineMe = (await getFeed(app, { authorization: `Bearer ${me.token}` }))
     .json().items.find((o) => o.id === order.id);
   assert.equal(mineMe.passenger.isCurrentUser, true, 'owner sees it as mine');
+  assert.equal(mineMe.projection, 'owner');
+  assert.deepEqual(mineMe.pickup, { lng: 37.6, lat: 55.7, label: 'Дом' });
+  assert.equal(mineMe.comment, 'к центру');
 });
