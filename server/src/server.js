@@ -23,6 +23,7 @@ import metricsRoutes from './routes/metrics.js';
 import { SERVICES } from './services/index.js';
 import chatService from './services/chat/index.js';
 import whatsappWebhookRoutes from './routes/webhooks/whatsapp.js';
+import placesRoutes from './routes/places.js';
 
 // BD-STAND-PUBLIC-01 (#1124) — the default request-body ceiling for every route; Fastify's own
 // default is 1 MiB. The largest legitimate bodies are well below it: POST /chat/messages
@@ -84,6 +85,9 @@ export async function buildApp(overrides = {}) {
   // WhatsApp Business Account webhook (BD-DOCS-051) — GET verification live; POST dark 501.
   // Unauthenticated: Meta calls the verification endpoint with no BazarDrive session.
   await app.register(whatsappWebhookRoutes, { prefix: '/api/v1/webhooks' });
+
+  // Public places catalog (BD-ORDERS-PUBLIC-PLACES-01 #1160) — public data, no session, no DB.
+  await app.register(placesRoutes, { prefix: '/api/v1' });
 
   return app;
 }

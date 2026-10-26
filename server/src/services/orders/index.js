@@ -8,7 +8,8 @@
 //   POST /  -> 201 { order }        REQUIRES a session with a granted, active passenger role and a
 //                                   verified phone (BD-AUTH-POLICY-01B-C; 403 PASSENGER_ROLE_REQUIRED).
 //                                   At most 5 open (CREATED) orders per passenger (#1125 R6); a sixth
-//                                   -> 409 ORDER_LIMIT.
+//                                   -> 409 ORDER_LIMIT. A point may name a catalog place
+//                                   (`placeId`, #1160); an unknown one -> 400 UNKNOWN_PLACE.
 //   POST /:orderId/cancel -> 200 { order }   the owner cancels an order that has no driver yet
 //                                   (CREATED -> CANCELED; open offers rejected). Repeat -> 200.
 //                                   An order with a driver (ACCEPTED or later, or CANCELED through
@@ -26,6 +27,7 @@ import {
 import { rejectOpenOffersOnOrderCancel } from '../../repositories/offers.js';
 import { findAssignmentByOrderId } from '../../repositories/assignment.js';
 import { resolveActorAuthority, requirePassengerActor, roleAuthorityProblem } from '../auth/authority.js';
+import { findPublicPlace, PLACE_ID_PATTERN } from '../../domain/public-places.js';
 
 // A route point — strict since BD-ORDERS-PUBLIC-PROJECTION-01 (#1125, owner's decision R5). The
 // shipped client sends { id, label } plus, when it has them, the flat geo fields of
@@ -55,6 +57,9 @@ const POINT = {
     id: { type: ['string', 'null'], maxLength: 200 },
     hint: { type: 'string', maxLength: 500 },
     source: { type: 'string', maxLength: 50 },
+    // BD-ORDERS-PUBLIC-PLACES-01 (#1160): a catalog place (domain/public-places.js). Not the client's
+    // local `id` above — that is an untrusted handle. An unknown placeId is a 400 UNKNOWN_PLACE.
+    placeId: { type: 'string', pattern: PLACE_ID_PATTERN },
     coords: { type: ['object', 'null'], required: ['lng', 'lat'], additionalProperties: false, properties: GEO_FIELDS },
     ...GEO_FIELDS,
   },
@@ -124,6 +129,11 @@ export default async function ordersService(app) {
     }
 
     const b = req.body;
+    for (const point of [b.pickup, b.dropoff]) {
+      if (point.placeId !== undefined && !findPublicPlace(point.placeId)) {
+        return reply.code(400).send({ error: 'unknown place', code: 'UNKNOWN_PLACE', retryable: false });
+      }
+    }
     const result = await app.db.tx(async (client) => {
       // Passenger authority first (contract §4), on the same tx client as the insert.
       const authority = requirePassengerActor(await resolveActorAuthority(client, viewer));
