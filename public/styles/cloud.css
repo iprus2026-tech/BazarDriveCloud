@@ -1128,6 +1128,8 @@ body {
   touch-action: pan-x pan-y;
 }
 .feed-chip-row::-webkit-scrollbar { display: none; }
+/* #1125 — the Guest sign-in feed hides the filters; `display: flex` above must not override it. */
+.feed-chip-row[hidden] { display: none; }
 
 /* Matches prototype .bd-tab exactly */
 .feed-chip {

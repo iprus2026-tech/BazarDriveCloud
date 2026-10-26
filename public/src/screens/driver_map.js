@@ -621,9 +621,13 @@ export default function driverMapScreen() {
       activeRead = null;
     });
     const result = await loadResource(timedRead, { onRetry, isRetry, fallback: READ_FAILED, isActive: () => isCurrent(epoch) });
+    // #1125 R2 — another passenger's order (projection 'public') may carry a null point when its
+    // address could not be cut to the street; the row shows «Адрес скрыт». Any other point must be
+    // an object.
+    const usablePoint = (order, point) => (point && typeof point === 'object')
+      || (point === null && order.projection === 'public');
     const usable = Array.isArray(result) && result.every((order) => order && typeof order.id === 'string'
-      && order.pickup && typeof order.pickup === 'object'
-      && order.dropoff && typeof order.dropoff === 'object');
+      && usablePoint(order, order.pickup) && usablePoint(order, order.dropoff));
     return usable ? result : READ_FAILED;
   }
 
