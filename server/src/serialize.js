@@ -15,14 +15,30 @@
 // another passenger, a driver choosing an order — gets `projection: 'public'`: each point is
 // { label } with the street WITHOUT the house (domain/coarse-address.js), or null when the address
 // cannot be parsed reliably; no coordinates, no hint, no comment. The selected driver gets the
-// exact address through the ride (ride-state, participants only), not here.
+// exact address through the ride (ride-state, participants only), not here. A catalog place
+// (#1160) is public: it is shown by the catalog name and pickup point (publicPoint).
 
 import { rideNoteText, rideOrderComment } from './domain/ride-order-comment.js';
 import { maskVehiclePlate } from './domain/vehicle-plate.js';
 import { coarseAddress } from './domain/coarse-address.js';
+import { findPublicPlace } from './domain/public-places.js';
 
+// BD-ORDERS-PUBLIC-PLACES-01 (#1160): a point that names a catalog place is shown by the catalog —
+// its name and its taxi pickup point — never by the client's text. Any other point goes through the
+// street whitelist (#1125).
 function publicPoint(point) {
-  const label = coarseAddress(point && typeof point === 'object' ? point.label : null);
+  if (!point || typeof point !== 'object') return null;
+  const place = findPublicPlace(point.placeId);
+  if (place) {
+    return {
+      label: place.name,
+      placeId: place.id,
+      lng: place.pickup.lng,
+      lat: place.pickup.lat,
+      provenance: 'geocode_point',
+    };
+  }
+  const label = coarseAddress(point.label);
   return label ? { label } : null;
 }
 
