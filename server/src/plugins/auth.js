@@ -51,10 +51,16 @@ async function authPlugin(app) {
 
 // Exported for OTP verify, which revokes a presented same-account session inside its own
 // transaction (BD-AUTH-POLICY-01B-B) instead of resolving it through the lazy request seam.
+// No regular expression runs over the user-supplied tail (CodeQL js/polynomial-redos: `\s+(.+)$`
+// backtracks quadratically on a long run of whitespace). Same result as /^Bearer\s+(.+)$/i on the
+// trimmed header: the scheme word, at least one whitespace, then a token without a line break.
 export function bearerToken(authHeader) {
   if (typeof authHeader !== 'string') return '';
-  const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
-  return match ? match[1].trim() : '';
+  const value = authHeader.trim();
+  if (value.slice(0, 6).toLowerCase() !== 'bearer' || !/^\s$/.test(value.slice(6, 7))) return '';
+  const token = value.slice(6).trimStart();
+  // `.` excludes exactly the line terminators the old `(.+)$` excluded; anchored, it is linear.
+  return token && /^.+$/.test(token) ? token : '';
 }
 
 export default fp(authPlugin, { name: 'auth', dependencies: ['db'] });
