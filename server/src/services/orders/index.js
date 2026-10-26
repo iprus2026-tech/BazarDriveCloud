@@ -50,13 +50,18 @@ const POINT = {
   required: ['label'],
   additionalProperties: false,
   properties: {
-    label: { type: 'string', minLength: 1, maxLength: 200 },
+    // Not blank: the client trims it (enrichOrderPointWithCoords).
+    label: { type: 'string', minLength: 1, maxLength: 200, pattern: '\\S' },
     id: { type: ['string', 'null'], maxLength: 200 },
     hint: { type: 'string', maxLength: 500 },
     source: { type: 'string', maxLength: 50 },
-    coords: { type: ['object', 'null'], additionalProperties: false, properties: GEO_FIELDS },
+    coords: { type: ['object', 'null'], required: ['lng', 'lat'], additionalProperties: false, properties: GEO_FIELDS },
     ...GEO_FIELDS,
   },
+  // A geo field without the coordinate pair is a broken point (the client only spreads a whole
+  // readGeoPoint result), so any of them requires both lng and lat.
+  if: { anyOf: Object.keys(GEO_FIELDS).map((k) => ({ required: [k] })) },
+  then: { required: ['lng', 'lat'] },
 };
 // #1125 R6 — open (CREATED) orders a passenger may have at once.
 const OPEN_ORDER_LIMIT = 5;

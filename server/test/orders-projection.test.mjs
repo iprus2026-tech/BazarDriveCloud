@@ -137,6 +137,12 @@ test('orders: the strict point schema accepts what the PWA sends and rejects the
     { label: 'Дом', accuracyMeters: -1 },
     { label: 'я'.repeat(201) },
     { label: '' },
+    // CodeRabbit #1157: a blank label, and geo fields without the coordinate pair.
+    { label: '   ' },
+    { label: 'Дом', lng: 37.6 },
+    { label: 'Дом', provenance: 'device_fix' },
+    { label: 'Дом', coords: {} },
+    { label: 'Дом', coords: { lat: 55.7 } },
   ]) {
     const res = await create(bad);
     assert.equal(res.statusCode, 400, JSON.stringify(bad).slice(0, 80));

@@ -25,21 +25,22 @@ const STREET_WORDS = '(?:ул|улица|пр-т|проспект|пр-д|про
 const BARE_HOUSE = /^(?:№\s*)?\d{1,4}[а-яa-z]?(?:\s*(?:[\/кk]|корп\.?|к\.)\s*\d{1,3}[а-яa-z]?)?(?:\s*(?:стр\.?|с)\s*\d{1,3})?$/i;
 // A segment that starts with a house-part word followed by a number.
 const HOUSE_WORD = /^(?:д|дом|влад|вл|владение|к|корп|корпус|стр|строение|кв|квартира|офис|оф|под|подъезд|эт|этаж|литер|лит)\.?\s*№?\s*\d/i;
-// A segment that still ends in a bare number (a possible house): «Ленина 10», «Тверская 7».
-const TRAILING_NUMBER = /(?:^|\s)\d{1,4}[а-яa-z]?(?:\s*(?:[\/кk]|корп\.?)\s*\d{1,3}[а-яa-z]?)?$/i;
+// A segment that still ends in a bare number (a possible house): «Ленина 10», «Тверская 7», «Ленина 10с2».
+const TRAILING_NUMBER = /(?:^|\s)\d{1,4}[а-яa-z]?(?:\s*(?:[\/кk]|корп\.?)\s*\d{1,3}[а-яa-z]?)?(?:\s*(?:стр\.?|с)\s*\d{1,3})?$/i;
 // A house word inside a segment, after the street: «ул. Ленина д. 10», «Тверская ул. стр 2»,
 // and a «№» number («ул. Ленина №10» — CodeRabbit #1157).
 const INNER_HOUSE = /\s(?:(?:д|дом|вл|влад|к|корп|корпус|стр|строение|кв|квартира)\.?\s*№?|№)\s*\d.*$/i;
 // A house marker anywhere — if one survives the cut, the address is not trusted.
 // («дома 5» / «доме 5» included: free text like «возле дома 5»; any «№ + digit» too.)
 const HOUSE_MARKER = /(?:(?:^|[\s,])(?:д|дом[а-я]*|кв|квартира|корп|корпус|стр|строение|подъезд|этаж|офис)\.?\s*№?\s*\d)|№\s*\d/i;
-// A trailing house number after a street word and a street name inside one segment. JS `\b` does
-// not see Cyrillic word edges, so the street word is anchored on the start or a space instead.
+// A trailing house number (with an optional «с 2» / «стр. 2» building) after a street word and a
+// street name inside one segment. JS `\b` does not see Cyrillic word edges, so the street word is
+// anchored on the start or a space instead.
 const TRAILING_AFTER_WORD_FIRST = new RegExp(
-  `^(.*?(?:^|\\s)${STREET_WORDS}\\.?\\s+[^,]*?\\S)\\s+\\d{1,4}[а-яa-z]?(?:\\s*(?:[\\/кk]|корп\\.?)\\s*\\d{1,3}[а-яa-z]?)?$`, 'i',
+  `^(.*?(?:^|\\s)${STREET_WORDS}\\.?\\s+[^,]*?\\S)\\s+\\d{1,4}[а-яa-z]?(?:\\s*(?:[\\/кk]|корп\\.?)\\s*\\d{1,3}[а-яa-z]?)?(?:\\s*(?:стр\\.?|с)\\s*\\d{1,3})?$`, 'i',
 );
 const TRAILING_AFTER_WORD_LAST = new RegExp(
-  `^(.*?\\S\\s+${STREET_WORDS}\\.?)\\s+\\d{1,4}[а-яa-z]?(?:\\s*(?:[\\/кk]|корп\\.?)\\s*\\d{1,3}[а-яa-z]?)?$`, 'i',
+  `^(.*?\\S\\s+${STREET_WORDS}\\.?)\\s+\\d{1,4}[а-яa-z]?(?:\\s*(?:[\\/кk]|корп\\.?)\\s*\\d{1,3}[а-яa-z]?)?(?:\\s*(?:стр\\.?|с)\\s*\\d{1,3})?$`, 'i',
 );
 
 export function coarseAddress(label) {
