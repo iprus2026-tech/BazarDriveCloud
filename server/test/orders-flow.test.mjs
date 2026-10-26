@@ -99,8 +99,10 @@ test('order create (auth) -> feed list (public); per-viewer isCurrentUser', { sk
   assert.equal(mineOther.passenger.name, undefined, 'the feed leaks no passenger name');
   assert.equal(mineOther.passenger.authorId, undefined, 'the feed leaks no internal user id');
   assert.equal(mineOther.projection, 'public');
-  assert.deepEqual(mineOther.pickup, { label: 'Дом' }, 'a label with no house is kept, without coordinates');
-  assert.deepEqual(mineOther.dropoff, { label: 'Центр' });
+  // The public label is a whitelist of «street type + name»: «Дом» / «Центр» are not streets,
+  // so other people see no point at all (and never the coordinates).
+  assert.equal(mineOther.pickup, null, 'a label that is not a street is not shown');
+  assert.equal(mineOther.dropoff, null);
   assert.equal(mineOther.comment, '', 'no comment for non-owners');
 
   // the owner DOES see it as mine, in full.
