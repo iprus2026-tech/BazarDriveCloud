@@ -274,6 +274,32 @@ for (const [shape, wrap] of [['array', (rows) => rows], ['items', (rows) => ({ i
     && actions.canManageOwnOrder(own, readyDriver) && !actions.canAcceptOrder(own, readyDriver));
 }
 
+// #1125 R2 — the public projection carries the street without the house, or a null point.
+globalThis.fetch = () => okShape({ items: [
+  { ...orderRow, id: 'ord-public', projection: 'public', pickup: { label: 'ул. Ленина' }, dropoff: null },
+  { ...orderRow, id: 'ord-owner', projection: 'owner', pickup: null, dropoff: { label: 'ул. Ленина, 10' } },
+] });
+const [publicPost, ownerPost] = await mapi.listFeedPosts();
+expect('ON: a public order shows the street label and «Адрес скрыт» for a null point',
+  publicPost.from === 'ул. Ленина' && publicPost.to === 'Адрес скрыт');
+expect('ON: the owner projection keeps the neutral point placeholder and the full label',
+  ownerPost.from === 'Точка подачи' && ownerPost.to === 'ул. Ленина, 10');
+const driverMapSrc = fs.readFileSync(new URL('../public/src/screens/driver_map.js', import.meta.url), 'utf8');
+expect('DriverMap rows label a hidden public point «Адрес скрыт»',
+  /const hidden = order\.projection === 'public' \? 'Адрес скрыт' : null;[\s\S]{0,200}pointLabel\(order\.pickup,\s*hidden \|\| 'Точка подачи'\)[\s\S]{0,80}pointLabel\(order\.dropoff, hidden \|\| 'Точка назначения'\)/.test(driverMapSrc));
+// CodeRabbit #1158: the nearby read must accept a public null point, or no row ever shows «Адрес скрыт».
+const usableSrc = driverMapSrc.match(/const usablePoint = \(order, point\) => [\s\S]*?;\n/)?.[0] || '';
+const usablePoint = usableSrc ? new Function(`${usableSrc} return usablePoint;`)() : () => null;
+expect('DriverMap nearby read: a null point is usable only on a public order; a malformed point is not',
+  usablePoint({ projection: 'public' }, null) === true && usablePoint({ projection: 'owner' }, null) === false
+  && usablePoint({}, null) === false && usablePoint({ projection: 'public' }, { label: 'ул. Ленина' }) === true
+  && usablePoint({ projection: 'public' }, 'ул. Ленина') === false && usablePoint({ projection: 'public' }, undefined) === false);
+expect('DriverMap nearby read checks both points with usablePoint',
+  /usablePoint\(order, order\.pickup\) && usablePoint\(order, order\.dropoff\)/.test(driverMapSrc));
+// CodeRabbit #1158: `.feed-chip-row { display: flex }` must not override `hidden` on the Guest feed.
+const cloudCss = fs.readFileSync(new URL('../public/styles/cloud.css', import.meta.url), 'utf8');
+expect('the hidden feed filters are not displayed (CSS)', /\.feed-chip-row\[hidden\] \{ display: none; \}/.test(cloudCss));
+
 globalThis.fetch = () => okShape({ orders: [orderRow] }); // unexpected envelope
 let shapeErr = null;
 try { await mapi.listFeedPosts(); } catch (e) { shapeErr = e; }

@@ -11,6 +11,7 @@ import {
   acceptCanonicalRideOrder,
 } from '../ride_actions.js';
 import { applySmokeRole } from '../smoke_role.js';
+import { isBackendEnabled } from '../api_config.js';
 
 const TYPE_LABELS = {
   trip:          'Поездка',
@@ -205,6 +206,29 @@ function renderMissing(root) {
   root.querySelector('#pd-to-feed').addEventListener('click', () => go('/feed'));
 }
 
+function renderSignIn(root) {
+  root.innerHTML = `
+    <div class="respond__topbar post-detail__topbar">
+      <button type="button" class="respond__back" id="pd-back" aria-label="Назад">
+        ${SVG_BACK}
+      </button>
+      <span class="respond__title">Публикация</span>
+      <span class="respond__title-spacer" aria-hidden="true"></span>
+    </div>
+    <div class="bd-scroll post-detail__body">
+      <div class="bd-empty post-detail__missing">
+        <div class="bd-empty__title">Войдите, чтобы видеть заказ</div>
+        <p>Поездки видны только участникам сервиса.</p>
+        <button type="button" class="bd-btn primary sm post-detail__missing-cta" id="pd-signin">
+          Войти
+        </button>
+      </div>
+    </div>
+  `;
+  root.querySelector('#pd-back').addEventListener('click', () => go('/feed'));
+  root.querySelector('#pd-signin').addEventListener('click', () => go('/onboarding'));
+}
+
 // Decide which footer to render for a post given current user state.
 // Returns { kind: 'none' | 'own' | 'respond' | 'chat' | 'accept' } where 'none'
 // means the post has no primary interaction (announcement / system).
@@ -391,7 +415,11 @@ export default async function postDetail(renderContext) {
   // referencing it from onDetailRetry before its declaration is safe — the arrow
   // only runs when the user taps «Повторить».
   const onDetailRetry = () => { renderDetail(true); };
+  // #1125 R1 — on a live backend orders are read by signed-in viewers only
+  // (GET /orders answers 401): a guest gets the sign-in prompt, not a failed load.
+  const guestSignIn = renderContext?.guestReadOnly === true && isBackendEnabled();
   async function renderDetail(isRetry) {
+    if (guestSignIn) return renderSignIn(root);
     const posts = await loadResource(listFeedPosts, { onRetry: onDetailRetry, isRetry });
     const post = id ? posts.find((p) => String(p.id) === String(id)) : null;
     if (!post) {

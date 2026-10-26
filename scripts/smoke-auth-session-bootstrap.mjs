@@ -2589,8 +2589,14 @@ async function guestPublicCase(name) {
     screenNode('[data-role="guest"]').click();
     screenNode('#ob-next').click(); await flush();
     assert.equal(user.get().role, 'guest'); assert.equal(location.hash, '#/feed');
-    assert.ok(screenNode('.feed-list').innerHTML.includes('guest-order'));
+    // #1125 R1 — the live order feed is for signed-in viewers (GET /orders → 401): a Guest
+    // gets the sign-in prompt, never the order and never a doomed /orders read.
+    assert.ok(screenNode('.feed-signin'), 'Guest feed shows the sign-in prompt');
+    assert.equal(screenNode('.feed-list').innerHTML.includes('guest-order'), false);
+    assert.equal(screenNode('.feed-chip-row').hidden, true, 'no filters before sign-in');
     assert.equal(dom.elements.tabbar.hidden, false);
+    screenNode('#feed-signin').click(); await flush();
+    assert.equal(location.hash, '#/onboarding', '«Войти» opens sign-in');
 
     for (const query of ['', '?role=driver', '?role=passenger', '?smokeRole=passenger']) {
       await navigate('/profile' + query);
@@ -2611,27 +2617,28 @@ async function guestPublicCase(name) {
     list.appendChild(forged); forged.click(); await flush();
     assert.equal(localStorage.getItem('bazardrive.ride_orders.v1'), storesBefore);
     assert.equal(location.hash, '#/feed');
-    screenNode('[data-cat="marketplace"]').click();
-    assert.ok(list.innerHTML.includes('Ничего не найдено'), 'real filter changes the list');
-    screenNode('[data-cat="all"]').click();
-    const link = screenNode('.feed-card__open');
-    assert.equal(link.getAttribute('href'), '#/post?id=' + postId);
-    link.click(); await flush();
-    assert.equal(location.hash, '#/post?id=' + postId);
-    const detail = dom.elements.app.children[0];
-    assert.ok(detail.innerHTML.includes('post-detail__card'), 'actual post content remains readable');
+    // A shared /post link gets the same sign-in prompt instead of the order (#1125 R1).
+    const detail = await navigate('/post?id=' + postId);
+    assert.ok(screenNode('#pd-signin'), 'Guest post detail shows the sign-in prompt');
+    assert.equal(detail.innerHTML.includes('post-detail__card'), false);
     assert.equal(/href="tel:/.test(detail.innerHTML), false);
     assert.equal(detail.querySelector('#pd-respond'), null);
+    screenNode('#pd-signin').click(); await flush();
+    assert.equal(location.hash, '#/onboarding');
+    await navigate('/post?id=' + postId);
     screenNode('#pd-back').click(); await flush();
+    assert.equal(location.hash, '#/feed');
     assert.equal(dom.elements.app.querySelector('.feed-btn-new'), null, 'feed has no duplicate creation button');
     assert.equal(dom.elements.fab.hidden, false, 'the shell creation CTA remains available');
     dom.elements.fab.click(); await flush();
     assert.equal(location.hash, '#/onboarding');
+    // No card is rendered for a Guest, so exercise the real delegated respond and chat
+    // handlers with injected controls: both still end at sign-in.
     await navigate('/feed');
-    screenNode('[data-action="respond"]').click(); await flush();
+    const respond = new dom.Element('button');
+    respond.setAttribute('data-action', 'respond'); respond.setAttribute('data-post-id', postId);
+    screenNode('.feed-list').appendChild(respond); respond.click(); await flush();
     assert.equal(location.hash, '#/onboarding');
-    // Exercise the real delegated chat handler as well; this backend fixture
-    // is a passenger request, so its ordinary rendered CTA is respond.
     await navigate('/feed');
     const chat = new dom.Element('button');
     chat.setAttribute('data-action', 'chat'); chat.setAttribute('data-post-id', postId);
@@ -2668,6 +2675,7 @@ async function guestPublicCase(name) {
     screenNode('[data-rules-reset]').click();
     assert.equal(search.value, ''); assert.equal(location.hash, '#/rules');
     assert.equal(protectedLoads, 0);
+    assert.equal(requests.filter(r => r.url.endsWith('/orders')).length, 0, 'a Guest never reads /orders');
     assert.ok(feed !== dom.elements.app.children[0]);
   } else if (off || name === 'authenticated') {
     const detail = await navigate('/post?id=' + postId);

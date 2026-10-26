@@ -163,8 +163,11 @@ function buildMapPlaceholder(orderCount, { variant = MAP_VARIANT.NEARBY, dimmed 
 }
 
 function buildOrderRow(order, index, { locked = false } = {}) {
-  const pickupLabel  = pointLabel(order.pickup,  'Точка подачи');
-  const dropoffLabel = pointLabel(order.dropoff, 'Точка назначения');
+  // #1125 R2 — a nearby order is another passenger's: the server's public projection carries
+  // the street without the house, or no point when the address cannot be cut reliably.
+  const hidden = order.projection === 'public' ? 'Адрес скрыт' : null;
+  const pickupLabel  = pointLabel(order.pickup,  hidden || 'Точка подачи');
+  const dropoffLabel = pointLabel(order.dropoff, hidden || 'Точка назначения');
   const safeId = escapeHtml(order.id);
 
   const row = document.createElement('li');
@@ -618,9 +621,13 @@ export default function driverMapScreen() {
       activeRead = null;
     });
     const result = await loadResource(timedRead, { onRetry, isRetry, fallback: READ_FAILED, isActive: () => isCurrent(epoch) });
+    // #1125 R2 — another passenger's order (projection 'public') may carry a null point when its
+    // address could not be cut to the street; the row shows «Адрес скрыт». Any other point must be
+    // an object.
+    const usablePoint = (order, point) => (point && typeof point === 'object')
+      || (point === null && order.projection === 'public');
     const usable = Array.isArray(result) && result.every((order) => order && typeof order.id === 'string'
-      && order.pickup && typeof order.pickup === 'object'
-      && order.dropoff && typeof order.dropoff === 'object');
+      && usablePoint(order, order.pickup) && usablePoint(order, order.dropoff));
     return usable ? result : READ_FAILED;
   }
 
