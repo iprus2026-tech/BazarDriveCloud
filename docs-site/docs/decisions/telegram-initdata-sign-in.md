@@ -227,8 +227,9 @@ The general per-IP limit for all of `/api` stays a separate task (#1152).
 
 - The bot token is read only from `TELEGRAM_BOT_TOKEN` in `server/.env`. It is
   never logged, echoed, committed or put in a report. At startup the server
-  checks only its shape (`<digits>:<35+ chars>`), and `/readyz` reports only
-  whether it is configured, never its value.
+  checks only its shape (`<bot id>:<secret>`), and a startup error never
+  contains the value. `/readyz` does not expose it at all; without the token
+  the route answers 503 `TELEGRAM_DISABLED` (R11).
 - The `/auth/telegram` request body is never logged. Errors are logged without
   initData, and so are the outcome records.
 - Tests use a fake token and generate initData themselves.
