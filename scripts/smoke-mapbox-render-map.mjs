@@ -86,6 +86,7 @@ if (copySource && liveBadgeSource && hydrateSource) {
       document: { body: { contains: (node) => attached && node === container } },
       getDefaultCenter: () => ({ lng: 0, lat: 0, zoom: 1 }),
       MAPBOX_STYLE: 'test-style',
+      pinPublicPlaces: () => {},
       restoreMapPlaceholder: () => { restored += 1; },
       setInterval: () => 1,
       clearInterval() {},
@@ -153,6 +154,7 @@ if (copySource && liveBadgeSource && hydrateSource) {
       document: { body: { contains: (node) => attached && node === container } },
       getDefaultCenter: () => ({ lng: 0, lat: 0, zoom: 1 }),
       MAPBOX_STYLE: 'test-style',
+      pinPublicPlaces: () => {},
       restoreMapPlaceholder: () => {},
       setInterval: (callback) => { poll = callback; return 7; },
       clearInterval() {},
@@ -228,6 +230,72 @@ expect('a teardown frees the GL context (map.remove) once the container leaves t
 // ── The DARK / non-token path still renders the MapShell placeholder ──
 expect('buildMapPlaceholder still renders the MapShell placeholder (dark path unchanged)',
   /function buildMapPlaceholder\(state\)[\s\S]*?createMapShell\(/.test(src));
+
+// ── #1160 — the public places catalog is pinned on the live map ──
+const pinSource = src.match(/^function pinPublicPlaces\(mapboxgl, map, lifecycle\) \{[\s\S]*?^\}/m)?.[0];
+expect('hydrateRealMap pins the public places right after the map is constructed',
+  /lifecycle\.mapInstance = map;\s*\n\s*pinPublicPlaces\(mapboxgl, map, lifecycle\);/.test(src));
+expect('map.js reads the catalog through public_places.js',
+  /import \{ listPublicPlaces \} from '\.\.\/public_places\.js';/.test(src));
+if (pinSource) {
+  const CATALOG = [
+    { id: 'svo-b', name: 'Аэропорт Шереметьево, терминал B', lng: 37.416908, lat: 55.980107 },
+    { id: 'station-kazansky', name: 'Казанский вокзал', lng: 37.656435, lat: 55.77353 },
+  ];
+  const runPins = async ({ places, disposed = false, swap = false }) => {
+    const markers = [];
+    class Marker {
+      constructor({ element }) { this.element = element; markers.push(this); }
+      setLngLat(lngLat) { this.lngLat = lngLat; return this; }
+      addTo(target) { this.map = target; return this; }
+    }
+    const el = (tag) => ({
+      tag, dataset: {}, attrs: {}, children: [], listeners: {},
+      setAttribute(k, v) { this.attrs[k] = String(v); },
+      append(...c) { this.children.push(...c); },
+      addEventListener(type, fn) { this.listeners[type] = fn; },
+    });
+    const pin = runInNewContext(`${pinSource}\npinPublicPlaces;`, {
+      listPublicPlaces: places, document: { createElement: el },
+    });
+    const map = { id: 'map' };
+    const lifecycle = { disposed, mapInstance: map };
+    pin({ Marker }, map, lifecycle);
+    if (swap) lifecycle.mapInstance = { id: 'other' };
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    return { markers, map };
+  };
+  const live = await runPins({ places: () => Promise.resolve(CATALOG) });
+  expect('every catalog place gets one marker at its pickup point, on this map',
+    live.markers.length === 2
+    && live.markers[0].lngLat[0] === 37.416908 && live.markers[0].lngLat[1] === 55.980107
+    && live.markers.every((m) => m.map === live.map));
+  const marker = live.markers[1].element;
+  const label = marker.children[0];
+  expect('a marker is a button labelled by the place name and carries its id',
+    marker.tag === 'button' && marker.type === 'button'
+    && marker.attrs['aria-label'] === 'Казанский вокзал'
+    && marker.dataset.placeId === 'station-kazansky'
+    && marker.className === 'map-place-marker');
+  // CodeRabbit #1162: the name must be reachable by tap and keyboard, not only by `title`.
+  expect('the place name is a hidden label until the marker is tapped',
+    label?.tag === 'span' && label.className === 'map-place-marker__label'
+    && label.textContent === 'Казанский вокзал' && label.hidden === true
+    && marker.attrs['aria-expanded'] === 'false');
+  let stopped = 0;
+  marker.listeners.click?.({ stopPropagation() { stopped += 1; } });
+  const opened = label?.hidden === false && marker.attrs['aria-expanded'] === 'true';
+  marker.listeners.click?.({ stopPropagation() { stopped += 1; } });
+  expect('a tap (or Enter/Space on the button) toggles the name and aria-expanded, without reaching the map',
+    opened && label.hidden === true && marker.attrs['aria-expanded'] === 'false' && stopped === 2);
+  expect('a disposed screen or a replaced map gets no markers',
+    (await runPins({ places: () => Promise.resolve(CATALOG), disposed: true })).markers.length === 0
+    && (await runPins({ places: () => Promise.resolve(CATALOG), swap: true })).markers.length === 0);
+  expect('a failed catalog read leaves the map without pins (no throw)',
+    (await runPins({ places: () => Promise.reject(new Error('down')) })).markers.length === 0);
+} else {
+  expect('pinPublicPlaces is defined in map.js', false);
+}
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

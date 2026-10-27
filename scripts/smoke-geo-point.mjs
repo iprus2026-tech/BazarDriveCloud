@@ -7,7 +7,7 @@ import {
   readGeoPoint, isFreshDeviceFix, isTrustedLiveGeoPoint, isLiveVehiclePoint,
 } from '../public/src/geo_point.js';
 import {
-  deriveMockCoordsFromLabel, resolvePointCoords, enrichOrderPointWithCoords,
+  deriveMockCoordsFromLabel, resolvePointCoords, enrichOrderPointWithCoords, isPlaceId,
 } from '../public/src/passenger_order_utils.js';
 import { getDriverMarkerSummary } from '../public/src/mapbox/driver_markers.js';
 import { COORDINATE_PROVENANCE as SERVER_PROVENANCE } from '../server/src/domain/route-computation.js';
@@ -210,9 +210,9 @@ await test('the actual route-picker builders and hydration preserve origin, not 
   const sanitizeBody = source.match(/function sanitizePoint\(raw\) \{([\s\S]*?)\n\}/)?.[1];
   assert.ok(makeBody && sanitizeBody);
   const make = new Function('deriveMockCoordsFromLabel', `return function(id, label, hint, source) {${makeBody}}`)(deriveMockCoordsFromLabel);
-  const sanitize = new Function('resolvePointCoords', 'isPlainObject', 'ALLOWED_SOURCES',
+  const sanitize = new Function('resolvePointCoords', 'isPlainObject', 'ALLOWED_SOURCES', 'isPlaceId',
     `return function(raw) {${sanitizeBody}}`)(resolvePointCoords,
-    (value) => value !== null && typeof value === 'object' && !Array.isArray(value), new Set(['current', 'manual']));
+    (value) => value !== null && typeof value === 'object' && !Array.isArray(value), new Set(['current', 'manual']), isPlaceId);
   const fresh = make('p', 'Моё место', '', 'current');
   assert.equal(fresh.coords.provenance, 'mock_hash');
   assert.deepEqual(sanitize(clone(fresh)), fresh);
@@ -271,6 +271,19 @@ await test('shared geo module is available offline with its existing importing c
   assert.ok(sw.includes("'./src/geo_point.js'"));
   assert.ok(sw.includes("'./src/passenger_order_utils.js'"));
   assert.ok(sw.includes("'./src/mapbox/driver_markers.js'"));
+});
+
+await test('#1160: an order point keeps a catalog placeId; a malformed one is dropped', () => {
+  const place = { id: 'place-svo-b', label: 'Аэропорт Шереметьево, терминал B', placeId: 'svo-b',
+    coords: { lng: 37.416908, lat: 55.980107, provenance: 'geocode_point' } };
+  const point = enrichOrderPointWithCoords(clone(place));
+  assert.equal(point.placeId, 'svo-b');
+  assert.equal(point.label, 'Аэропорт Шереметьево, терминал B');
+  for (const bad of ['SVO-B', '', 'a', 5, null, 'x'.repeat(65)]) {
+    assert.equal('placeId' in enrichOrderPointWithCoords({ ...clone(place), placeId: bad }), false, String(bad));
+  }
+  assert.equal('placeId' in enrichOrderPointWithCoords({ label: 'ул. Ленина, 10' }), false);
+  assert.ok(isPlaceId('station-kazansky') && !isPlaceId('Казанский'));
 });
 
 console.log(`\nGeo point smoke: ${passed} passed, ${failures.length} failed.`);

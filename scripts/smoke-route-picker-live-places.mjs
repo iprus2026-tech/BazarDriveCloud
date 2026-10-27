@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { FakeElement, escapeHtml } from './lib/fake-dom.mjs';
+import { isPlaceId } from '../public/src/passenger_order_utils.js';
+import { publicPlacePoint } from '../public/src/public_places.js';
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
 const pickerSource = read('../public/src/screens/route_picker.js');
@@ -52,7 +54,8 @@ FakeElement.prototype.setSelectionRange = function setSelectionRange() {};
 
 const DEMO = /Малая Бронная|Лесная Плаза|Мега Химки|Парк Победы|Шереметьево|Внуково|Моё место/;
 
-function pickerHarness({ backend = true, favorites = [], history = () => Promise.resolve([]), draft = null } = {}) {
+function pickerHarness({ backend = true, favorites = [], history = () => Promise.resolve([]), draft = null,
+  places = () => Promise.resolve([]) } = {}) {
   const storage = new Map();
   if (draft) storage.set('bazardrive.route_draft.v1', JSON.stringify(draft));
   const navigation = [];
@@ -79,6 +82,9 @@ function pickerHarness({ backend = true, favorites = [], history = () => Promise
     isBackendEnabled: () => backend,
     deriveMockCoordsFromLabel: () => null,
     resolvePointCoords: () => null,
+    isPlaceId,
+    listPublicPlaces: () => places(),
+    publicPlacePoint,
   });
   const source = pickerSource.replace(/^import[\s\S]*?from\s*['"][^'"]+['"];?\s*$/gm, '')
     .replace(/^export\s+default\s+/m, '').replace(/^export\s+(?=(?:async\s+)?(?:function|const)\s)/gm, '');
@@ -216,16 +222,87 @@ await check('ON: history arriving while the manual form is open keeps what is ty
   assert.equal(street.value, 'Лесная, 7');
 });
 
+// ── B2. #1160 — the public places catalog as quick buttons ─────────────────────
+const CATALOG = [
+  { id: 'svo-b', name: 'Аэропорт Шереметьево, терминал B', kind: 'airport', lng: 37.416908, lat: 55.980107 },
+  { id: 'station-kazansky', name: 'Казанский вокзал', kind: 'railway_station', lng: 37.656435, lat: 55.77353 },
+];
+
+await check('ON (#1160): the catalog shows as quick buttons; a tap fills the focused point with its placeId', async () => {
+  const h = pickerHarness({ places: () => Promise.resolve(CATALOG) });
+  const f = mount(h);
+  await flush();
+  const buttons = f.$$('[data-public-place]');
+  assert.deepEqual(buttons.map((b) => b.textContent.trim()), ['Аэропорт Шереметьево, терминал B', 'Казанский вокзал']);
+  assert.match(f.text(), /Аэропорты и вокзалы/);
+  await f.$('[data-public-place="svo-b"]').fire();
+  const pickup = h.api.draft().pickup;
+  assert.equal(pickup.label, 'Аэропорт Шереметьево, терминал B');
+  assert.equal(pickup.placeId, 'svo-b');
+  assert.equal(pickup.hint, 'Аэропорт');
+  assert.deepEqual({ ...pickup.coords }, { lng: 37.416908, lat: 55.980107, provenance: 'geocode_point' });
+  await f.$('[data-public-place="station-kazansky"]').fire();
+  assert.equal(h.api.draft().dropoff.placeId, 'station-kazansky');
+  const saved = JSON.parse(h.storage.get('bazardrive.route_draft.v1'));
+  assert.deepEqual([saved.pickup.placeId, saved.dropoff.placeId], ['svo-b', 'station-kazansky'], 'the draft keeps the ids');
+});
+
+await check('ON (#1160): a persisted placeId survives a reload; a malformed one is dropped', () => {
+  const point = (placeId) => ({ id: 'place-x', label: 'Казанский вокзал', hint: 'Вокзал', source: 'search', placeId });
+  const h = pickerHarness({ draft: { pickup: point('station-kazansky'), dropoff: point('NOT valid!') } });
+  mount(h);
+  assert.equal(h.api.draft().pickup.placeId, 'station-kazansky');
+  assert.equal('placeId' in h.api.draft().dropoff, false);
+});
+
+await check('ON (#1160): no catalog or a failed read leaves the section out; the rest works', async () => {
+  for (const places of [() => Promise.resolve([]), () => Promise.reject(new Error('down'))]) {
+    const h = pickerHarness({ places, favorites: [favorite()] });
+    const f = mount(h);
+    await flush();
+    assert.equal(f.$$('[data-public-place]').length, 0);
+    assert.doesNotMatch(f.text(), /Аэропорты и вокзалы/);
+    assert.equal(f.$$('[data-favorite]').length, 1);
+  }
+});
+
 // ── C. backend OFF keeps the demo picker ─────────────────────────────────────
 await check('OFF: the demo saved / recent rows, «Моё место» and mock search are unchanged', async () => {
-  const h = pickerHarness({ backend: false, history: () => { throw new Error('no read OFF'); } });
+  const h = pickerHarness({ backend: false, history: () => { throw new Error('no read OFF'); },
+    places: () => { throw new Error('no catalog read OFF'); } });
   const f = mount(h);
   assert.match(f.text(), /Малая Бронная/);
   assert.match(f.text(), /Мега Химки/);
   assert.ok(f.$('[data-action="current-location"]'));
   assert.equal(f.$$('[data-favorite]').length, 0);
+  assert.equal(f.$$('[data-public-place]').length, 0, 'no catalog OFF');
   await f.type('pickup', 'Внуково');
   assert.ok(f.$$('[data-suggestion]').length >= 3);
+});
+
+// CodeRabbit #1162: a 2xx /places without an `items` array is a failed read, not a cached empty
+// catalog; the next caller reads again. An explicit empty catalog is cached.
+await check('listPublicPlaces: a malformed 2xx is not cached; an explicit empty catalog is', async () => {
+  const source = read('../public/src/public_places.js');
+  const fn = source.match(/^export function listPublicPlaces\(\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(fn, 'listPublicPlaces is defined');
+  const run = (responses) => {
+    let calls = 0;
+    const ctx = {
+      isBackendEnabled: () => true, readPlace: (p) => p, pending: null,
+      apiFetch: async () => responses[Math.min(calls++, responses.length - 1)],
+    };
+    const list = vm.runInNewContext(`let pending = null;\n${fn.replace('export ', '')}\nlistPublicPlaces;`, ctx);
+    return { list, calls: () => calls };
+  };
+  const malformed = run([{ places: [] }, { items: [{ id: 'svo-b' }] }]);
+  await assert.rejects(malformed.list());
+  assert.deepEqual(await malformed.list(), [{ id: 'svo-b' }]);
+  assert.equal(malformed.calls(), 2);
+  const empty = run([{ items: [] }, { items: [{ id: 'svo-b' }] }]);
+  assert.deepEqual(await empty.list(), []);
+  assert.deepEqual(await empty.list(), []);
+  assert.equal(empty.calls(), 1);
 });
 
 console.log(`\n${passed} passed; ${failures.length} failed`);

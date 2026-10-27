@@ -16,6 +16,7 @@ import {
   saveMapPrefs,
 } from '../mapbox/mapbox_state.js';
 import { GEO_STATUS, getPermissionStatus } from '../mapbox/geolocation_service.js';
+import { listPublicPlaces } from '../public_places.js';
 
 const STATE_QUERY_KEYS = new Map([
   ['default',       MAP_STATE.DEFAULT],
@@ -205,6 +206,7 @@ function hydrateRealMap(container, lifecycle, badge) {
         return;
       }
       lifecycle.mapInstance = map;
+      pinPublicPlaces(mapboxgl, map, lifecycle);
       // #1136 — follow the CONTAINER, not only the window. Inside Telegram the shell height changes
       // through a CSS variable (viewport_changed after expand) with no window `resize`, so Mapbox's
       // own trackResize never fires and the canvas keeps the collapsed height (map drawn only in the
@@ -244,6 +246,37 @@ function hydrateRealMap(container, lifecycle, badge) {
       }, 2000);
     });
   }).catch(() => { /* load failed — the placeholder stays */ });
+}
+
+// #1160 — the public places catalog (airports, stations) pinned on the live map, with the backend ON
+// (none when OFF). Each marker is the taxi pickup point; map.remove() takes the markers with it.
+function pinPublicPlaces(mapboxgl, map, lifecycle) {
+  listPublicPlaces().then((places) => {
+    if (lifecycle.disposed || lifecycle.mapInstance !== map) return;
+    for (const place of places) {
+      // A button: the name opens on a tap, a click or Enter/Space (a bare dot tells a passenger
+      // nothing, and `title` never shows on touch). The 44px hit area centres the 14px dot.
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'map-place-marker';
+      el.dataset.placeId = place.id;
+      el.setAttribute('aria-label', place.name);
+      el.setAttribute('aria-expanded', 'false');
+      const label = document.createElement('span');
+      label.className = 'map-place-marker__label';
+      label.textContent = place.name;
+      label.hidden = true;
+      el.append(label);
+      el.addEventListener('click', (event) => {
+        event.stopPropagation();
+        label.hidden = !label.hidden;
+        el.setAttribute('aria-expanded', String(!label.hidden));
+      });
+      try {
+        new mapboxgl.Marker({ element: el }).setLngLat([place.lng, place.lat]).addTo(map);
+      } catch { /* the map was torn down meanwhile */ }
+    }
+  }, () => { /* no catalog — the map works without the pins */ });
 }
 
 // Rebuild the DEFAULT-state placeholder shell after a failed Map construction (Codex #812):
