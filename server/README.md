@@ -40,6 +40,18 @@ The decision logic lives in `src/services/driver-enrollment/decisions.js`
 (`decideDriverEnrollment`). The command is only its CLI adapter, so a later bot or admin
 route can call the same function.
 
+The @BazarDriveBot webhook is registered by the owner with `npm run ops:telegram`
+(BD-TG-BOT-01, #1128), and `set` only once a public tunnel is up. A token has exactly one
+update receiver, so run `info` first. It reads `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_WEBHOOK_SECRET` from `.env` and prints neither. Exit codes: 0 ok, 2 usage,
+3 configuration or Telegram error.
+
+```bash
+npm run ops:telegram -- info                          # current webhook, pending updates, last error
+npm run ops:telegram -- set https://<public base URL> # <base>/api/v1/webhooks/telegram, message updates only
+npm run ops:telegram -- delete                        # remove the webhook (pending updates are kept)
+```
+
 ## Current route baseline
 
 `LIVE` means registered and implemented, with database I/O where the route contract
@@ -58,6 +70,7 @@ delivery, operations or activation gap still prevents pilot use.
 | `/api/v1/history` | LIVE | Authenticated reads; completed-ride receipt write is driver-only and write-once, with server-derived amounts (interim fare basis = the price fixed at `/select`, commission from `RECEIPT_COMMISSION_PERCENT`, tip 0; client amounts ignored — `docs/ride-state-receipt-authority-contract.md` §3). |
 | `/api/v1/drivers/enrollment` | LIVE / PILOT-BLOCKED | Driver application: a live session with a verified phone applies (`POST`) and reads its status (`GET`). Approval, rejection and revocation are operator decisions (`npm run ops:driver`), which add or remove the `driver` grant in the same transaction. The approved grant is not line readiness (documents, shift and vehicle remain #830). See `docs/driver-role-grant-contract.md` §1. |
 | `/api/v1/chat` | LIVE | Authorized by ride participation (BD-CHAT-AUTH-01 #825). Only the `trip-<tripId>` thread of a real ride is served, to its passenger and driver. The sender role comes from the session, not the request. No session gets 401; another person's or an unknown thread gets the same 404 `CHAT_NOT_FOUND`. Writing is closed with 409 `CHAT_CLOSED` once the ride is terminal. Senders are limited to 30 messages a minute per thread (429 `CHAT_RATE_LIMITED` with `Retry-After`). |
+| `POST /api/v1/webhooks/telegram` | LIVE / PILOT-BLOCKED | The @BazarDriveBot webhook (BD-TG-BOT-01 #1128). No session: a wrong or missing `X-Telegram-Bot-Api-Secret-Token` is 401 `WEBHOOK_UNAUTHORIZED`; with the right one every update is 200, so Telegram does not redeliver it. Only a private-chat message from a person is answered. `/start` without a confirmed number sends the consent text (ADR BD-DOCS-052 R9, link to `/#/rules` until #1154) with the «Поделиться номером» contact keyboard; with a number it removes the keyboard, then shows the Mini App button. The sender's own contact, after the consent text, goes to the M4 intake `linkTelegramContact`. Replayed `update_id`s and the consent marks are kept in memory, bounded. Until `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_MINIAPP_URL` are all set it answers 503 `TELEGRAM_BOT_DISABLED`. The webhook is not registered until the public tunnel exists. |
 | Availability, route price, notifications, safety | DARK | No pilot contract or activation. |
 | Metrics | DARK | Observability policy is not frozen. |
 

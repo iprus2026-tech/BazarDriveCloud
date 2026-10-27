@@ -97,6 +97,12 @@ export function loadConfig(env = process.env) {
       initDataMaxAgeSeconds: Number.parseInt(env.TELEGRAM_INITDATA_MAX_AGE_SECONDS ?? '600', 10),
       // R7 — a Telegram session's lifetime, independent of SESSION_TTL_SECONDS.
       sessionTtlSeconds: Number.parseInt(env.TELEGRAM_SESSION_TTL_SECONDS ?? '604800', 10),
+      // BD-TG-BOT-01 (#1128) — the bot webhook: the secret Telegram echoes in
+      // X-Telegram-Bot-Api-Secret-Token (never logged or echoed), the Mini App URL for the bot's
+      // button, and the support @username for refusals (empty = «the person who invited you»).
+      webhookSecret: env.TELEGRAM_WEBHOOK_SECRET || '',
+      miniAppUrl: env.TELEGRAM_MINIAPP_URL || '',
+      supportContact: env.TELEGRAM_SUPPORT_CONTACT || '',
     },
     // --- RECEIPTS (BD-RIDE-AUTHORITY-01B-C) — server-derived receipt amounts ---
     receipts: {
@@ -185,6 +191,16 @@ export function loadConfig(env = process.env) {
       || config.telegram.sessionTtlSeconds < 300 || config.telegram.sessionTtlSeconds > 31_536_000) {
     throw new Error(`Invalid TELEGRAM_SESSION_TTL_SECONDS: ${env.TELEGRAM_SESSION_TTL_SECONDS} — must be an integer 300..31536000 (seconds)`);
   }
+  // BD-TG-BOT-01 (#1128): Telegram's own secret_token alphabet and length; the value is never echoed.
+  if (config.telegram.webhookSecret && !/^[A-Za-z0-9_-]{32,256}$/.test(config.telegram.webhookSecret)) {
+    throw new Error('Invalid TELEGRAM_WEBHOOK_SECRET: expected 32..256 characters of A-Z, a-z, 0-9, _ and -');
+  }
+  if (config.telegram.miniAppUrl && !isHttpsUrl(config.telegram.miniAppUrl)) {
+    throw new Error(`Invalid TELEGRAM_MINIAPP_URL: ${env.TELEGRAM_MINIAPP_URL} — must be an https:// URL without credentials`);
+  }
+  if (config.telegram.supportContact && !/^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(config.telegram.supportContact)) {
+    throw new Error(`Invalid TELEGRAM_SUPPORT_CONTACT: ${env.TELEGRAM_SUPPORT_CONTACT} — must be a Telegram @username`);
+  }
   const commissionPercent = config.receipts.commissionPercent;
   if (!Number.isFinite(commissionPercent) || commissionPercent < 0 || commissionPercent > 100) {
     throw new Error(`Invalid RECEIPT_COMMISSION_PERCENT: ${env.RECEIPT_COMMISSION_PERCENT} — must be a number 0..100`);
@@ -247,4 +263,16 @@ function isExactOrigin(value) {
     return false;
   }
   return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === value;
+}
+
+// TELEGRAM_MINIAPP_URL (BD-TG-BOT-01 #1128): Telegram opens web_app buttons only over https, and a
+// URL with credentials would put them into every bot message.
+function isHttpsUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.protocol === 'https:' && !url.username && !url.password && Boolean(url.hostname);
 }
