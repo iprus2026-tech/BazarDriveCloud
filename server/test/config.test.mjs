@@ -371,7 +371,10 @@ test('.env.example: only flipping PUBLIC_EXPOSURE is refused; the documented ove
 // and an error never echoes it.
 test('TELEGRAM_*: defaults, a well-formed token, and bounded knobs', () => {
   const off = loadConfig(base);
-  assert.deepEqual(off.telegram, { botToken: '', initDataMaxAgeSeconds: 600, sessionTtlSeconds: 604800 });
+  assert.deepEqual(off.telegram, {
+    botToken: '', initDataMaxAgeSeconds: 600, sessionTtlSeconds: 604800,
+    webhookSecret: '', miniAppUrl: '', supportContact: '',
+  });
   const token = '1234567890:TEST_fake_token_for_unit_tests_only_x';
   assert.equal(loadConfig({ ...base, TELEGRAM_BOT_TOKEN: token }).telegram.botToken, token);
   for (const [name, value] of [
@@ -400,4 +403,38 @@ test('.env.example: TELEGRAM_BOT_TOKEN is present and EMPTY (the real one lives 
   assert.match(text, /^TELEGRAM_BOT_TOKEN=$/m);
   assert.match(text, /^TELEGRAM_INITDATA_MAX_AGE_SECONDS=600$/m);
   assert.match(text, /^TELEGRAM_SESSION_TTL_SECONDS=604800$/m);
+  assert.match(text, /^TELEGRAM_WEBHOOK_SECRET=$/m);
+  assert.match(text, /^TELEGRAM_MINIAPP_URL=$/m);
+  assert.match(text, /^TELEGRAM_SUPPORT_CONTACT=$/m);
+});
+
+// BD-TG-BOT-01 (#1128): the bot webhook's secret, Mini App URL and support contact.
+test('TELEGRAM_WEBHOOK_SECRET / TELEGRAM_MINIAPP_URL / TELEGRAM_SUPPORT_CONTACT: accepted shapes', () => {
+  const secret = 'Abc_def-0123456789_abcdefghijklmnopq';
+  const t = loadConfig({
+    ...base, TELEGRAM_WEBHOOK_SECRET: secret,
+    TELEGRAM_MINIAPP_URL: 'https://iprus2026-tech.github.io/BazarDriveCloud/', TELEGRAM_SUPPORT_CONTACT: '@bazar_help',
+  }).telegram;
+  assert.equal(t.webhookSecret, secret);
+  assert.equal(t.miniAppUrl, 'https://iprus2026-tech.github.io/BazarDriveCloud/');
+  assert.equal(t.supportContact, '@bazar_help');
+  assert.equal(loadConfig({ ...base, TELEGRAM_WEBHOOK_SECRET: 'x'.repeat(256) }).telegram.webhookSecret.length, 256);
+});
+
+test('TELEGRAM_WEBHOOK_SECRET: a malformed secret is refused without echoing it', () => {
+  for (const bad of ['short_secret', 'x'.repeat(31), 'x'.repeat(257), `${'a'.repeat(32)} space`, `${'a'.repeat(32)}!`]) {
+    let message = '';
+    try { loadConfig({ ...base, TELEGRAM_WEBHOOK_SECRET: bad }); } catch (err) { message = err.message; }
+    assert.match(message, /^Invalid TELEGRAM_WEBHOOK_SECRET:/, bad);
+    assert.equal(message.includes(bad), false, 'the value is never in the message');
+  }
+});
+
+test('TELEGRAM_MINIAPP_URL must be https without credentials; TELEGRAM_SUPPORT_CONTACT must be an @username', () => {
+  for (const bad of ['http://example.test/', 'https://u:p@example.test/', 'example.test', 'javascript:alert(1)']) {
+    assert.throws(() => loadConfig({ ...base, TELEGRAM_MINIAPP_URL: bad }), /Invalid TELEGRAM_MINIAPP_URL/, bad);
+  }
+  for (const bad of ['bazar_help', '@abc', '@1bazar', '@bazar-help', 'https://t.me/bazar_help', `@${'a'.repeat(33)}`]) {
+    assert.throws(() => loadConfig({ ...base, TELEGRAM_SUPPORT_CONTACT: bad }), /Invalid TELEGRAM_SUPPORT_CONTACT/, bad);
+  }
 });
