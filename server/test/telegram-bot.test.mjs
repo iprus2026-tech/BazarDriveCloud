@@ -165,14 +165,12 @@ test('webhook: a foreign contact is refused with the contact keyboard and stores
   assert.ok(isContactKeyboard(api.sent[0].markup));
 });
 
-test('webhook: a contact before the consent text was shown gets the consent message, not the intake', async (t) => {
+test('webhook: a contact before the consent text was shown gets «Нажмите /start ещё раз.», not the intake', async (t) => {
   const { app, api } = await hermetic(t);
   const id = nextTgId();
   const res = await post(app, contactUpdate(id, phone()));
   assert.equal(res.statusCode, 200); // the unreachable database was never touched
-  assert.equal(api.sent.length, 1);
-  assert.equal(api.sent[0].text, T.startText(MINIAPP));
-  assert.ok(isContactKeyboard(api.sent[0].markup));
+  assert.deepEqual(api.sent, [{ chatId: id, text: 'Нажмите /start ещё раз.', markup: { remove_keyboard: true } }]);
 });
 
 test('webhook: a database failure on /start is a 5xx and the same update is handled again on redelivery', async (t) => {
@@ -337,6 +335,26 @@ test('DB: /start, then the own contact, links the number; the reply removes the 
   await post(app, contactUpdate(id, p));
   assert.deepEqual(api.sent.map((m) => m.text), [T.TEXT.alreadyLinked, T.TEXT.openApp]);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM telegram_identities WHERE user_id = $1', [user.id])).rows[0].n, 1);
+});
+
+test('DB: /start, a server restart, then the contact: «Нажмите /start ещё раз.», nothing stored; /start again links', { skip: SKIP }, async (t) => {
+  const { app: before, track } = await withDb(t);
+  const id = track.id(nextTgId());
+  const p = track.phone(phone());
+  await post(before, startUpdate(id));
+  await before.close(); // the restart: the in-memory consent marks are gone
+
+  const { app, api, db } = await withDb(t);
+  const res = await post(app, contactUpdate(id, p));
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(api.sent, [{ chatId: id, text: T.TEXT.startAgain, markup: { remove_keyboard: true } }]);
+  assert.equal(await identityRow(db, id), null);
+
+  await post(app, startUpdate(id));
+  assert.equal(api.sent.at(-1).text, T.startText(MINIAPP));
+  await post(app, contactUpdate(id, p));
+  assert.deepEqual(api.sent.slice(-2).map((m) => m.text), [T.TEXT.linked, T.TEXT.linkedOpenApp]);
+  assert.equal((await identityRow(db, id)).consent_version, CONSENT_VERSION);
 });
 
 test('DB: /start with a confirmed number sends remove_keyboard: true BEFORE the Mini App button', { skip: SKIP }, async (t) => {

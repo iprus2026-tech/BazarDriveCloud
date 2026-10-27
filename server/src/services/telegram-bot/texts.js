@@ -37,6 +37,8 @@ export const TEXT = Object.freeze({
   conflict: 'Этот номер уже связан с другим Telegram.',
   revoked: 'Доступ для этого Telegram отключён.',
   other: 'Чтобы войти, отправьте /start.',
+  // A contact with no consent mark in memory (a restart since /start, or a day passed).
+  startAgain: 'Нажмите /start ещё раз.',
   saveFailed: 'Не получилось сохранить номер. Попробуйте ещё раз через минуту.',
 });
 

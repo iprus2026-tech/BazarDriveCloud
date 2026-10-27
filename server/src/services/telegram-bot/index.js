@@ -10,7 +10,8 @@
 //
 // Two bounded in-memory stores, no table (owner decision, #1128): the update_ids already handled
 // (Telegram redelivers after a timeout), and the chats that were shown the consent text. After a
-// restart the bot shows the consent text again before it accepts a contact.
+// restart a contact gets «Нажмите /start ещё раз.» and is not stored; /start shows the consent
+// text again.
 // Nothing here logs a phone, the token, the webhook secret or an update body (R10).
 import { createPrivateActorVerifier, isPrivateActor } from './actor.js';
 import { botIdFromToken } from './bot-api.js';
@@ -96,7 +97,8 @@ export function createTelegramBot({ db, telegram, api, log = null, nodeEnv = 'de
   async function onContact(chatId, fromId, contact) {
     // R4: the sender's own contact, and only after the consent text (R9) was shown in this chat.
     if (contact?.user_id !== fromId) return send(chatId, T.TEXT.foreignContact, T.contactKeyboard());
-    if (!consent.has(chatId)) return askForContact(chatId);
+    // No consent mark (a restart since /start): ask for /start again and drop the stale button.
+    if (!consent.has(chatId)) return send(chatId, T.TEXT.startAgain, T.removeKeyboard());
     let result;
     try {
       result = await linkTelegramContact(db, { fromId, chatType: 'private', contact, log });
