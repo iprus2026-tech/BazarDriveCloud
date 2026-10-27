@@ -18,14 +18,18 @@ function readPlace(raw) {
   return Object.freeze({ id: raw.id, name, kind: typeof raw.kind === 'string' ? raw.kind : '', lng: raw.lng, lat: raw.lat });
 }
 
-// The catalog, read once per page load. A failed read is not cached, so the next caller retries.
+// The catalog, read once per page load. A failed read is not cached, so the next caller retries;
+// a 2xx without an `items` array is a failed read too (an explicit `{ items: [] }` is a valid
+// empty catalog).
 export function listPublicPlaces() {
   if (!isBackendEnabled()) return Promise.resolve([]);
   if (!pending) {
-    pending = apiFetch('/places').then(
-      (body) => (Array.isArray(body?.items) ? body.items.map(readPlace).filter(Boolean) : []),
-      (err) => { pending = null; throw err; },
-    );
+    pending = apiFetch('/places')
+      .then((body) => {
+        if (!Array.isArray(body?.items)) throw new Error('Malformed /places response');
+        return body.items.map(readPlace).filter(Boolean);
+      })
+      .catch((err) => { pending = null; throw err; });
   }
   return pending;
 }

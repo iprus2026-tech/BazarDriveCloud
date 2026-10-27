@@ -254,12 +254,24 @@ function pinPublicPlaces(mapboxgl, map, lifecycle) {
   listPublicPlaces().then((places) => {
     if (lifecycle.disposed || lifecycle.mapInstance !== map) return;
     for (const place of places) {
-      const el = document.createElement('div');
+      // A button: the name opens on a tap, a click or Enter/Space (a bare dot tells a passenger
+      // nothing, and `title` never shows on touch). The 44px hit area centres the 14px dot.
+      const el = document.createElement('button');
+      el.type = 'button';
       el.className = 'map-place-marker';
       el.dataset.placeId = place.id;
-      el.setAttribute('role', 'img');
       el.setAttribute('aria-label', place.name);
-      el.title = place.name;
+      el.setAttribute('aria-expanded', 'false');
+      const label = document.createElement('span');
+      label.className = 'map-place-marker__label';
+      label.textContent = place.name;
+      label.hidden = true;
+      el.append(label);
+      el.addEventListener('click', (event) => {
+        event.stopPropagation();
+        label.hidden = !label.hidden;
+        el.setAttribute('aria-expanded', String(!label.hidden));
+      });
       try {
         new mapboxgl.Marker({ element: el }).setLngLat([place.lng, place.lat]).addTo(map);
       } catch { /* the map was torn down meanwhile */ }

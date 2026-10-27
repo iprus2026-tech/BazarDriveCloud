@@ -17096,6 +17096,18 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .rp-public-place:hover, .rp-public-place:focus-visible { border-color: var(--accent); }
 .map-place-marker {
-  width: 14px; height: 14px; border-radius: 50%;
+  position: relative; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; cursor: pointer;
+}
+.map-place-marker::before {
+  content: ''; position: absolute; left: 15px; top: 15px; width: 14px; height: 14px; border-radius: 50%;
   background: var(--accent); border: 2px solid var(--text-1); box-shadow: 0 1px 4px rgba(0,0,0,.45);
 }
+.map-place-marker:focus-visible { outline: 2px solid var(--accent); outline-offset: -8px; }
+.map-place-marker__label {
+  position: absolute; left: 50%; bottom: 38px; transform: translateX(-50%);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 4px 8px; border-radius: var(--radius-sm); background: var(--bg-2); color: var(--text-1);
+  border: 1px solid var(--line-strong); font-size: 12px; line-height: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.45);
+}
+.map-place-marker__label[hidden] { display: none; }

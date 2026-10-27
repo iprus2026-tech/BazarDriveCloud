@@ -249,7 +249,12 @@ if (pinSource) {
       setLngLat(lngLat) { this.lngLat = lngLat; return this; }
       addTo(target) { this.map = target; return this; }
     }
-    const el = () => ({ dataset: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } });
+    const el = (tag) => ({
+      tag, dataset: {}, attrs: {}, children: [], listeners: {},
+      setAttribute(k, v) { this.attrs[k] = String(v); },
+      append(...c) { this.children.push(...c); },
+      addEventListener(type, fn) { this.listeners[type] = fn; },
+    });
     const pin = runInNewContext(`${pinSource}\npinPublicPlaces;`, {
       listPublicPlaces: places, document: { createElement: el },
     });
@@ -265,11 +270,24 @@ if (pinSource) {
     live.markers.length === 2
     && live.markers[0].lngLat[0] === 37.416908 && live.markers[0].lngLat[1] === 55.980107
     && live.markers.every((m) => m.map === live.map));
-  expect('a marker is labelled by the place name and carries its id',
-    live.markers[1].element.attrs['aria-label'] === 'Казанский вокзал'
-    && live.markers[1].element.title === 'Казанский вокзал'
-    && live.markers[1].element.dataset.placeId === 'station-kazansky'
-    && live.markers[1].element.className === 'map-place-marker');
+  const marker = live.markers[1].element;
+  const label = marker.children[0];
+  expect('a marker is a button labelled by the place name and carries its id',
+    marker.tag === 'button' && marker.type === 'button'
+    && marker.attrs['aria-label'] === 'Казанский вокзал'
+    && marker.dataset.placeId === 'station-kazansky'
+    && marker.className === 'map-place-marker');
+  // CodeRabbit #1162: the name must be reachable by tap and keyboard, not only by `title`.
+  expect('the place name is a hidden label until the marker is tapped',
+    label?.tag === 'span' && label.className === 'map-place-marker__label'
+    && label.textContent === 'Казанский вокзал' && label.hidden === true
+    && marker.attrs['aria-expanded'] === 'false');
+  let stopped = 0;
+  marker.listeners.click?.({ stopPropagation() { stopped += 1; } });
+  const opened = label?.hidden === false && marker.attrs['aria-expanded'] === 'true';
+  marker.listeners.click?.({ stopPropagation() { stopped += 1; } });
+  expect('a tap (or Enter/Space on the button) toggles the name and aria-expanded, without reaching the map',
+    opened && label.hidden === true && marker.attrs['aria-expanded'] === 'false' && stopped === 2);
   expect('a disposed screen or a replaced map gets no markers',
     (await runPins({ places: () => Promise.resolve(CATALOG), disposed: true })).markers.length === 0
     && (await runPins({ places: () => Promise.resolve(CATALOG), swap: true })).markers.length === 0);

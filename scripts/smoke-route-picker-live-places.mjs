@@ -280,5 +280,30 @@ await check('OFF: the demo saved / recent rows, «Моё место» and mock s
   assert.ok(f.$$('[data-suggestion]').length >= 3);
 });
 
+// CodeRabbit #1162: a 2xx /places without an `items` array is a failed read, not a cached empty
+// catalog; the next caller reads again. An explicit empty catalog is cached.
+await check('listPublicPlaces: a malformed 2xx is not cached; an explicit empty catalog is', async () => {
+  const source = read('../public/src/public_places.js');
+  const fn = source.match(/^export function listPublicPlaces\(\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(fn, 'listPublicPlaces is defined');
+  const run = (responses) => {
+    let calls = 0;
+    const ctx = {
+      isBackendEnabled: () => true, readPlace: (p) => p, pending: null,
+      apiFetch: async () => responses[Math.min(calls++, responses.length - 1)],
+    };
+    const list = vm.runInNewContext(`let pending = null;\n${fn.replace('export ', '')}\nlistPublicPlaces;`, ctx);
+    return { list, calls: () => calls };
+  };
+  const malformed = run([{ places: [] }, { items: [{ id: 'svo-b' }] }]);
+  await assert.rejects(malformed.list());
+  assert.deepEqual(await malformed.list(), [{ id: 'svo-b' }]);
+  assert.equal(malformed.calls(), 2);
+  const empty = run([{ items: [] }, { items: [{ id: 'svo-b' }] }]);
+  assert.deepEqual(await empty.list(), []);
+  assert.deepEqual(await empty.list(), []);
+  assert.equal(empty.calls(), 1);
+});
+
 console.log(`\n${passed} passed; ${failures.length} failed`);
 if (failures.length) process.exitCode = 1;
