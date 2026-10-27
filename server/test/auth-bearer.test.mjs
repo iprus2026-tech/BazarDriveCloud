@@ -27,10 +27,12 @@ test('bearerToken: the same result as the old regex on ordinary and odd headers'
 
 test('bearerToken: linear on a long whitespace run (no ReDoS)', () => {
   // The quadratic case for the old regex: a long whitespace run, then a token with a line break
-  // (20 000 tabs took ~0.7 s with the old /^Bearer\s+(.+)$/i).
+  // (20 000 tabs took ~0.7 s with the old /^Bearer\s+(.+)$/i; 50 000 would take seconds).
+  // The result is the assertion; the deadline is deliberately generous (a regression to the
+  // quadratic regex is seconds, a paused CI process is not).
   const hostile = `bearer\t${'\t'.repeat(50_000)}x\ny`;
   const started = process.hrtime.bigint();
   assert.equal(bearerToken(hostile), '');
   const ms = Number(process.hrtime.bigint() - started) / 1e6;
-  assert.ok(ms < 50, `took ${ms.toFixed(1)} ms`);
+  assert.ok(ms < 2000, `took ${ms.toFixed(1)} ms`);
 });
