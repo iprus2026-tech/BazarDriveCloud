@@ -55,6 +55,13 @@ const rowsFor = (prefix) => rows.filter((r) => (prefix.startsWith('/')
   ? r.route === prefix
   : r.route.startsWith(`/api/v1/${prefix}`)));
 
+// The export must carry the Design State column at all; otherwise every phase would look
+// "empty" and the Shipped rule could never fire. gh prints custom fields only when asked
+// (`--field "Design State"` in the workflow) — refuse a snapshot without it.
+if (!items.some((i) => Object.keys(i).some((k) => /^design\s*state$/i.test(k)))) {
+  fail('no item carries a Design State field — export the board with --field "Design State"');
+}
+
 let violations = 0;
 let warnings = 0;
 for (const [issue, prefixes] of Object.entries(PHASE_ROUTES)) {
@@ -62,6 +69,10 @@ for (const [issue, prefixes] of Object.entries(PHASE_ROUTES)) {
   if (!item) { console.warn(`WARN  #${issue} is not on the board`); warnings += 1; continue; }
   const state = item[designKey(item)] || '';
   const label = `#${issue} ${item.title || item.content.title || ''}`.trim();
+  // Every mapped prefix must resolve to at least one matrix row (checked before any
+  // early-continue); an unmatched prefix would silently turn the Shipped rule into a no-op.
+  const missing = prefixes.filter((p) => rowsFor(p).length === 0);
+  if (missing.length) fail(`${label}: no BD-DOCS-042 matrix row for ${missing.join(', ')} — PHASE_ROUTES or the matrix changed`);
   if (!state) { console.warn(`WARN  ${label}: Design State is empty`); warnings += 1; continue; }
   const matrix = prefixes.flatMap(rowsFor);
   const dark = matrix.filter((r) => /DARK/.test(r.state));

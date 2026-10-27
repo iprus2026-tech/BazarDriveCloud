@@ -53,11 +53,18 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_READ_TOKEN }}
         run: |
           mkdir -p snapshot
-          gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 > snapshot/project-board.json
+          # --field makes the custom columns explicit in the JSON (gh ≥ 2.80 only adds them on request).
+          gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 \
+            --field "Design State" --field Status --field Priority > snapshot/project-board.json
           gh project field-list "$PROJECT" --owner "$OWNER" --format json > snapshot/project-fields.json
           node -e '
             const b = JSON.parse(require("fs").readFileSync("snapshot/project-board.json","utf8"));
             const items = b.items || [];
+            // A truncated export must never be published as the board.
+            if (typeof b.totalCount === "number" && b.totalCount !== items.length) {
+              console.error(`::error::board export truncated: ${items.length} of ${b.totalCount} items (raise --limit)`);
+              process.exit(1);
+            }
             const dk = (i) => Object.keys(i).find((k) => /^design\s*state$/i.test(k)) || "designState";
             const rows = items.map((i) => {
               const n = i.content && i.content.number ? "#" + i.content.number : "(draft)";
