@@ -5,6 +5,12 @@ description: Use in a BazarDriveCloud Claude Code session before opening, review
 
 # Срез BazarDrive: от задачи до мержа
 
+## Порядок задач
+1. Порядок — только критический путь BD-STATUS (#1145), сверху вниз. Задачу вне списка не брать без «да» владельца.
+2. Код — только в одной задаче. Следующую не начинать, пока текущая не смержена и её issue не закрыт.
+3. Пока текущая ждёт ревью — только подготовка следующей: аудит (read-only) и вопросы Р1…Рn. Без веток и кода.
+4. В шапке BD-STATUS всегда строка «Сейчас в работе: #… — этап»; обновлять при каждой смене этапа.
+
 ## Порядок среза
 Аудит → контракт/решения владельца → код → смоук + негатив-контроль на main (тест падает на старом коде) → живая проба main | ветка → bump sw.js VERSION (если public/ и precache) → node scripts/check.mjs, node scripts/check-precache-drift.mjs, node scripts/dispatcher.mjs (READY_CLEAN) → PR → ревью → мерж squash с --match-head-commit.
 
