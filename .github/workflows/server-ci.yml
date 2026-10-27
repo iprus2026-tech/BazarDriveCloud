@@ -277,6 +277,17 @@ jobs:
             "select exists (select 1 from pg_class ci join pg_namespace ni on ni.oid=ci.relnamespace join pg_index pi on pi.indexrelid=ci.oid where ni.nspname='public' and ci.relname='driver_enrollments_one_open_per_user_uq' and ci.relkind='i' and pi.indisunique and pg_get_indexdef(ci.oid,1,true)='user_id' and pg_get_expr(pi.indpred,pi.indrelid) like '%PENDING%' and pg_get_expr(pi.indpred,pi.indrelid) like '%APPROVED%')" | grep -qx t
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_enrollments' and t.tgname='trg_driver_enrollments_updated_at' and not t.tgisinternal" | grep -qx 1
+          # BD-AUTH-TELEGRAM-01 (0015, ADR BD-DOCS-052) — the session method and the two Telegram tables.
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='auth_session' and pc.conname='auth_session_auth_method_check'" | grep -qx c
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('telegram_identities','auth_telegram_attempts')" | grep -qx 2
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='telegram_identities' and pc.conname='telegram_identities_user_id_uq'" | grep -qx u
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select exists (select 1 from pg_class ci join pg_index pi on pi.indexrelid=ci.oid where ci.relname='auth_telegram_attempts_init_data_hash_uq' and pi.indisunique)" | grep -qx t
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid where c.relname='telegram_identities' and t.tgname='trg_telegram_identities_guard_immutability' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"
 
   app:
@@ -339,6 +350,27 @@ jobs:
       - name: Apply 0009 without 0010 and assert readiness is incomplete
         run: |
           psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f migrations/0009_merchant_identity_contact_authority.sql
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { buildApp } from './src/server.js';
+
+          const app = await buildApp();
+          try {
+            const response = await app.inject({ method: 'GET', url: '/api/v1/readyz' });
+            assert.equal(response.statusCode, 503);
+            assert.deepEqual(response.json(), { status: 'degraded', db: 'schema-incomplete' });
+          } finally {
+            await app.close();
+          }
+          NODE
+      # 0015 (BD-AUTH-TELEGRAM-01, ADR BD-DOCS-052): every sign-in reads auth_session.auth_method and
+      # /api/v1/auth/telegram writes the 0015 tables, so with 0001-0014 but not 0015 readiness must
+      # still fail closed.
+      - name: Apply 0010-0014 without 0015 and assert readiness is incomplete
+        run: |
+          for f in migrations/0010_*.sql migrations/0011_*.sql migrations/0012_*.sql migrations/0013_*.sql migrations/0014_*.sql; do
+            psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
+          done
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import { buildApp } from './src/server.js';

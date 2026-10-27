@@ -88,6 +88,16 @@ export function loadConfig(env = process.env) {
       // deferred per BD-DOCS-032. A positive value is the issuer-supplied TTL (R02 reads it).
       ttlSeconds: Number.parseInt(env.SESSION_TTL_SECONDS ?? '0', 10),
     },
+    // --- TELEGRAM (BD-AUTH-TELEGRAM-01, ADR BD-DOCS-052) — sign-in with Mini App initData ---
+    // The bot token is read only from here (R10): never logged, echoed or returned. Empty = the
+    // sign-in route answers 503 TELEGRAM_DISABLED and the rest of the server is unchanged (R11).
+    telegram: {
+      botToken: env.TELEGRAM_BOT_TOKEN || '',
+      // R6 — how old an initData auth_date may be.
+      initDataMaxAgeSeconds: Number.parseInt(env.TELEGRAM_INITDATA_MAX_AGE_SECONDS ?? '600', 10),
+      // R7 — a Telegram session's lifetime, independent of SESSION_TTL_SECONDS.
+      sessionTtlSeconds: Number.parseInt(env.TELEGRAM_SESSION_TTL_SECONDS ?? '604800', 10),
+    },
     // --- RECEIPTS (BD-RIDE-AUTHORITY-01B-C) — server-derived receipt amounts ---
     receipts: {
       commissionPercent: parseCommissionPercent(env.RECEIPT_COMMISSION_PERCENT),
@@ -162,6 +172,18 @@ export function loadConfig(env = process.env) {
   }
   if (!Number.isInteger(config.session.ttlSeconds) || config.session.ttlSeconds < 0 || config.session.ttlSeconds > 315_360_000) {
     throw new Error(`Invalid SESSION_TTL_SECONDS: ${env.SESSION_TTL_SECONDS} — must be an integer 0..315360000 (seconds; 0 = no expiry)`);
+  }
+  // R10: the shape only (`<bot id>:<secret>`), and the message never contains the value.
+  if (config.telegram.botToken && !/^\d{5,20}:[A-Za-z0-9_-]{30,64}$/.test(config.telegram.botToken)) {
+    throw new Error('Invalid TELEGRAM_BOT_TOKEN: unexpected format (expected <bot id>:<secret>)');
+  }
+  if (!Number.isInteger(config.telegram.initDataMaxAgeSeconds)
+      || config.telegram.initDataMaxAgeSeconds < 60 || config.telegram.initDataMaxAgeSeconds > 86_400) {
+    throw new Error(`Invalid TELEGRAM_INITDATA_MAX_AGE_SECONDS: ${env.TELEGRAM_INITDATA_MAX_AGE_SECONDS} — must be an integer 60..86400 (seconds)`);
+  }
+  if (!Number.isInteger(config.telegram.sessionTtlSeconds)
+      || config.telegram.sessionTtlSeconds < 300 || config.telegram.sessionTtlSeconds > 31_536_000) {
+    throw new Error(`Invalid TELEGRAM_SESSION_TTL_SECONDS: ${env.TELEGRAM_SESSION_TTL_SECONDS} — must be an integer 300..31536000 (seconds)`);
   }
   const commissionPercent = config.receipts.commissionPercent;
   if (!Number.isFinite(commissionPercent) || commissionPercent < 0 || commissionPercent > 100) {

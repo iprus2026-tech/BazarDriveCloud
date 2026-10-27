@@ -19,6 +19,19 @@ export async function findUserByPhone(db, phone) {
   return rows[0] ?? null;
 }
 
+// The login row of an account by id — what a session is minted from (Telegram sign-in, ADR
+// BD-DOCS-052): the same columns findUserByPhone returns.
+export async function findLoginUserById(db, userId) {
+  const { rows } = await db.query(
+    `SELECT id, role, active_role, roles, phone, phone_verified
+       FROM users
+      WHERE id = $1
+      LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function findUserAuthorityById(db, userId) {
   const { rows } = await db.query(
     `SELECT id, roles, phone_verified
@@ -85,6 +98,17 @@ export async function resolveVerifiedLoginUser(db, { phone }) {
     [phone],
   );
   return rows[0];
+}
+
+// BD-AUTH-TELEGRAM-01 R2 (ADR BD-DOCS-052): the first name from Telegram initData fills
+// users.first_name only when it is empty — it never overwrites what the account already has.
+export async function fillUserFirstName(db, userId, firstName) {
+  if (!firstName) return;
+  await db.query(
+    `UPDATE users SET first_name = $2
+      WHERE id = $1 AND (first_name IS NULL OR btrim(first_name) = '')`,
+    [userId, firstName],
+  );
 }
 
 // --- Role grants (BD-AUTH-POLICY-01B-A, docs/driver-role-grant-contract.md §1) ---

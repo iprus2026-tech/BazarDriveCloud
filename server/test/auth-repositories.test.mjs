@@ -53,7 +53,7 @@ test('revokeSessionById atomically preserves the first stamp and selects only th
     calls += 1;
     assert.equal(sql.replace(/\s+/g, ' ').trim(),
       'UPDATE auth_session SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 '
-      + 'RETURNING id, user_id, active_role, phone_verified, issued_at, expires_at, revoked_at');
+      + 'RETURNING id, user_id, active_role, phone_verified, auth_method, issued_at, expires_at, revoked_at');
     assert.deepEqual(params, [row.id]);
     return { rows: [row] };
   } };
