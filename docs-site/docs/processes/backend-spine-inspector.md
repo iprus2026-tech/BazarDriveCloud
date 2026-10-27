@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-10-09
+revision: 2026-10-27
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -23,9 +23,19 @@ related:
   issues:
     - 820
     - 821
+    - 825
     - 931
+    - 947
+    - 948
+    - 949
   prs:
+    - 934
+    - 936
+    - 938
+    - 940
+    - 944
     - 981
+    - 1151
 tags: [process, mini-yonder, backend, database, docs-site]
 slug: /processes/mini-yonder-backend-spine
 ---
@@ -48,16 +58,29 @@ _Historical concept mock: labels inside this image predate the implemented serve
 
 ## Live baseline — 24 July 2026
 
+> **Reconciliation log.** 2026-10-27 (#949): chat is now participant-authorized
+> (#825 → #1151, #1155); the select-ACK server gates #934/#936/#938/#940 are
+> recorded as shipped with #947 as the open remainder; the transactional
+> notification outbox source (#944) is recorded while `notifications/*` stays
+> DARK; routes added since the 2026-10-09 revision (`auth/telegram`,
+> `auth/session/active-role`, `drivers/enrollment`, `orders/:id/cancel`,
+> `places`) and the OTP limits / public-stand profile are in the matrix.
+
 | Module / route | State | Auth and role boundary | Database writes / reads | PWA consumer or activation seam | Verification owner |
 |---|---|---|---|---|---|
 | `GET /api/v1/health` | LIVE | Operational endpoint; no user session | No product tables; no I/O | Deployment liveness probe only | health route smoke |
 | `GET /api/v1/readyz` | LIVE | Operational endpoint; no user session | Reads PostgreSQL connectivity and migration state | Deployment readiness probe only | readiness + migration CI |
 | `GET /api/v1/auth/session` | LIVE / PILOT-BLOCKED | Resolves an optional bearer session; expiry/revocation policy remains a pilot gate | Reads `auth_session` only; the session row mirrors identity and verification fields, with no `users` join | `api_client.getSession()`; API base remains guarded/off by default | auth route/repository tests |
 | `POST /api/v1/auth/logout` | LIVE / PILOT-BLOCKED | Optional bearer; current session is server-resolved. No request body/query; clients cannot select `sessionId`, `userId` or `token` | Live bearer lookup reads `auth_session`; live logout updates only the resolved row's `revoked_at`. No sibling/global revocation | B2-A explicit Profile/Settings and B2-B1 already-owned Guest/actual full-onboarding root abandon use `api_client.logoutSession()` through the shared server-first coordinator. B2-B2 R1 uses `api_client.revokeUnacceptedSession()` only for a client-observed late OTP bearer; lost-response/failed-cleanup guarantees and account switch remain deferred | auth HTTP/repository tests; client logout/API/bootstrap/Profile/Settings smokes |
-| `POST /api/v1/auth/otp/request` | LIVE / PILOT-BLOCKED | Public request; unthrottled and without a production delivery provider | Writes hashed codes to `auth_otp` | guarded auth cutover; dev response may include `devCode` only in dev mode | OTP request tests + auth hardening issue owner |
+| `POST /api/v1/auth/otp/request` | LIVE / PILOT-BLOCKED | Public request; per-phone resend pause and hourly caps per phone and per source address (`429 OTP_RATE_LIMITED` + `Retry-After`, BD-AUTH-HARDEN-01 #824 / #1144); on a public stand (`PUBLIC_EXPOSURE=true`, BD-STAND-PUBLIC-01 #1124 / #1134) both OTP routes answer `403 OTP_DISABLED`; still no production delivery provider | Writes hashed codes to `auth_otp` | guarded auth cutover; dev response may include `devCode` only in dev mode | OTP request tests + auth hardening issue owner |
 | `POST /api/v1/auth/otp/verify` | LIVE / PILOT-BLOCKED | Public verification; attempt cap enforced; final session lifecycle remains a pilot gate | Reads the latest live `auth_otp` and commits its attempt increment before the success transaction. On a correct code, one transaction consumes the OTP, upserts/verifies `users` and inserts `auth_session`; the separate attempt count therefore persists on failed verification | guarded auth/token cutover | OTP concurrency + session tests |
+| `POST /api/v1/auth/telegram` | LIVE / PILOT-BLOCKED | Public; body is the raw Mini App `initData` — signature and `auth_date` window verified, per-IP and per-Telegram-id limits, one-time exchange; mints a session only for an account already linked by a contact shared in the bot (no account creation, no role grant) — BD-AUTH-TELEGRAM-01 M4 (#1127, ADR BD-DOCS-052, #1163) | Writes `telegram_attempts`, reads `telegram_identities`, `users`; inserts `sessions` | Telegram Mini App client (#1126); bot contact intake (M6) is a separate slice | `server/test/auth-telegram.test.mjs`, `telegram-init-data.test.mjs` |
+| `PUT /api/v1/auth/session/active-role` | LIVE | Authenticated; switches THIS session to one of the account's current grants, no token rotation (BD-AUTH-POLICY-01B-B, #1077) | Updates `sessions.active_role` and `users.active_role` in one transaction | profile role switch (#1080) | auth active-role tests |
+| `POST /api/v1/drivers/enrollment`, `GET /api/v1/drivers/enrollment` | LIVE | Authenticated applicant; body must be absent or `{}`; approve/reject/revoke are not HTTP routes (operator `npm run ops:driver`) — BD-AUTH-POLICY-01B-A (#1074) | Reads/inserts `driver_enrollments` | onboarding driver-application step (#1079) | `server/test/driver-enrollment-flow.test.mjs` |
 | `GET /api/v1/orders` | LIVE | Public created-order read; optional viewer session only affects ownership projection | Reads `orders` | guarded `mock_api.listFeedPosts()` seam; API base off by default | orders route + API client smoke |
 | `POST /api/v1/orders` | LIVE / PILOT-BLOCKED | Requires a live authenticated session; `phone_verified` and passenger-role enforcement remain pilot gates | Writes `orders` | guarded order-create seam; local fallback remains active while API base is off | orders route/validation tests |
+| `POST /api/v1/orders/:orderId/cancel` | LIVE | Authenticated order owner, before any driver is selected (#1049 / #1101); an accepted order is canceled through its ride (`PATCH /ride-state/…/status`), which moves the order too (#1051) | Locks the order; updates `orders` and its open `offers` in one transaction | `/responses` order cancel (#1102) | order-lifecycle tests |
+| `GET /api/v1/places` | LIVE | Public catalog, no session, no DB read (BD-ORDERS-PUBLIC-PLACES-01, #1160 / #1161) | None (static domain list) | route picker quick buttons / map markers | `server/test/public-places.test.mjs` |
 | `POST /api/v1/matching/offers` | LIVE / PILOT-BLOCKED | Requires a live authenticated session and blocks self-offers; `phone_verified`, granted driver role and readiness are not enforced yet | Locks `orders`; upserts `offers` transactionally | guarded driver-offer seam | matching transaction/concurrency tests |
 | `GET /api/v1/matching/offers?orderId=…` | LIVE | Authenticated order owner only | Reads `orders`, `offers` | guarded passenger responses seam | matching ownership tests |
 | `POST /api/v1/matching/select` | LIVE / PILOT-BLOCKED | Authenticated order owner only; rejects self-selection; body identity is `{orderId, driverId}` where `driverId` is the server driver UUID returned by the selected offer | Locks/writes `orders`, `offers`, `assignment`, `rides` in one transaction | guarded select/handoff seam; `responseId` / `offer.id` are not select inputs | matching race + ride-bootstrap tests |
@@ -66,11 +89,11 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `GET /api/v1/realtime/poll?tripId=…&since=…` | LIVE (polling) | Authenticated ride participant only | Reads `rides`, cursor-ordered `ride_events` | guarded self-clearing poll seam; WebSocket/SSE push remains dark | realtime cursor/participant tests + client smoke |
 | `GET /api/v1/history` | LIVE | Authenticated viewer; query is scoped to viewer identity | Reads `ride_history` view | guarded history seam; local history fallback remains while API base is off | history viewer-scope tests |
 | `POST /api/v1/history/receipts` | LIVE | Authenticated ride driver only; completed ride only; write-once | Reads `rides`; inserts/reads `receipts` | guarded receipt seam | completed/driver/write-once tests |
-| `GET /api/v1/chat/messages?chatId=…` | LIVE persistence / PILOT-BLOCKED | No authenticated participant check | Reads `messages` | guarded chat seam must stay off for pilot until authorization lands | chat route tests + chat-auth issue owner |
-| `POST /api/v1/chat/messages` | LIVE persistence / PILOT-BLOCKED | No authenticated participant check; `senderRole` is request-supplied | Inserts/deduplicates `messages` | guarded chat seam must stay off for pilot until authorization lands | chat idempotency tests + chat-auth issue owner |
+| `GET /api/v1/chat/messages?chatId=…` | LIVE | Authenticated ride participant only (BD-CHAT-AUTH-01, #825 / #1151): `chatId` must be `trip-<tripId>` of a real `rides` row; no session → `401`; unknown thread and someone else's thread → the same `404 CHAT_NOT_FOUND` | Reads `rides`, `messages` | PWA chat seam: on a live backend only a ride's thread is a server chat (#1155); `response-…`/`demo` threads stay local | `server/test/chat-flow.test.mjs` + client smoke |
+| `POST /api/v1/chat/messages` | LIVE | Authenticated ride participant only; sender role is derived from the session's place in the ride (`senderRole` in the body is accepted and ignored); writes refused once the ride is terminal (`409 CHAT_CLOSED`); 30 messages/min per sender per thread (`429 CHAT_RATE_LIMITED` + `Retry-After`) | Locks the ride status and the thread-sender pair; inserts/deduplicates `messages` by `clientMsgId` | same seam as the read route | `server/test/chat-flow.test.mjs` (participant, terminal, rate-limit, idempotent re-send) |
 | `ALL /api/v1/availability/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future availability track (outside #820 pilot) |
 | `ALL /api/v1/route-price/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future route-price track (outside #820 pilot) |
-| `ALL /api/v1/notifications/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future notifications track (outside #820 pilot) |
+| `ALL /api/v1/notifications/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED`. Orthogonal source ledger: migration `0004_notification_outbox.sql` (#944) — every accepted non-idempotent Ride transition writes `ride_events` and one `notification_outbox` row in the same transaction (`repositories/notification_outbox.js`); no worker, Inbox projection, delivery route or channel is active | no activation; #948 (`BD-NOTIF-OUTBOX-WORKER-01C-A`) is the next contract-first worker claim/lease/retry slice | `server/test/notification-outbox-flow.test.mjs` |
 | `ALL /api/v1/safety/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future safety track (outside #820 pilot) |
 | `GET /metrics` | DARK | Operational policy not frozen | None; returns `501 NOT_IMPLEMENTED` | no activation | observability follow-up |
 
@@ -220,11 +243,24 @@ change the live route.
 
 ### Matching select ACK handoff authority
 
-**Status: Contract-only target (BD-RIDE-SELECT-ACK-AUTHORITY-01A, #931);
-current PWA runtime gap; no route, server, schema, activation, or deployment
-change.** The preceding identity gate remains shipped. This newer contract
-defines how a later, separately authorized PWA slice must consume the already
-live select acknowledgement instead of reconstructing a second local Ride.
+**Status (reconciled 2026-10-27, #949): the server-side gates of this contract
+are shipped; the Passenger select-consumption follow-up (#947) is the remaining
+gap.** BD-RIDE-SELECT-ACK-AUTHORITY-01A (#931) froze the contract; since then:
+
+- #934 shipped the complete direct conflict-Ride coherence gate under the
+  conflict-row lock (`domain/select-conflict-ride.js`, rolled back on failure);
+- #936 shipped PostgreSQL timestamp-precision preservation for that gate;
+- #938 shipped the authoritative recovery acceptance/linkage invariant on every
+  recovery path (`domain/select-recovery-linkage.js`);
+- #940 shipped the authoritative-first Passenger Ride read/hydration and
+  terminal reconciliation;
+- #947 (`BD-RIDE-SELECT-ACK-AUTHORITY-01B-B`) remains open: the select-side PWA
+  ACK / `409` / `5xx` / transport-ambiguity reconciliation in `responses.js`
+  (outcome, revisit, stable negative board).
+
+The paragraphs below are the frozen contract; where they describe a server
+gate as "required" or "not implemented", read them as the acceptance criteria
+that #934/#936/#938 now satisfy.
 
 - **Exact success envelope:** `POST /api/v1/matching/select` returns
   `{ order, offer, assignment, ride }`. A coherent 2xx ACK requires non-array
@@ -433,16 +469,17 @@ live select acknowledgement instead of reconstructing a second local Ride.
 - **Backend-off preservation:** the local prototype keeps its exact-response ->
   local order accept -> pure Ride seed -> local Ride persistence chain. This
   contract does not make those stores server authority or remove the fallback.
-- **Runtime status:** `public/src/screens/responses.js` currently discards the
-  successful envelope, reconstructs a same-device local Ride, and lets a
-  post-API local pin mismatch block navigation. Without that local success
+- **Runtime status (2026-10-27):** the server gates are live (#934, #936,
+  #938) and the passenger Ride read is authoritative-first (#940). What is
+  still open is the select seam itself (#947): `public/src/screens/responses.js`
+  still discards the successful envelope, reconstructs a same-device local Ride,
+  and lets a post-API local pin mismatch block navigation. Without that local success
   chain, a later `/responses` visit currently rereads a stale local `CREATED`
   order, filters the accepted server offer out of the selectable board, and has
-  no local Ride handoff, so it can render a false empty state. In addition,
-  `active_ride_passenger.js` chooses terminal renderers before starting the
-  participant read, and its merge path preserves demo vehicle/payment/chat
-  sections that the focused Ride serializer omits. These are explicitly
-  recorded gates for the separately authorized
+  no local Ride handoff, so it can render a false empty state. (The
+  `active_ride_passenger.js` terminal-renderer-before-read and demo-section
+  merge gaps named in the original contract were closed by #940.) These are the
+  explicitly recorded gates for the separately authorized
   `BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`;
   01B must also wait for two separately authorized server-side gates: the
   complete direct conflict-Ride invariant (persisted
@@ -469,8 +506,10 @@ live select acknowledgement instead of reconstructing a second local Ride.
   participant GET cannot resurrect a neutralized ACK value. Recovery cases must
   include an authoritative owner order
   still in `CREATED` and coherent linkage/lifecycle with stale
-  passenger/driver/route/fare snapshots. None of these runtime/backend changes
-  is implemented or activated by this documentation change.
+  passenger/driver/route/fare snapshots. Of these, the two server gates and
+  their focused coverage are merged (#934, #936, #938); the `/responses`
+  revisit, HTTP 5xx reconciliation and pre-commit negative-read race coverage
+  belong to #947 and are not yet implemented.
 
 ### Ride transition authority - NO_SHOW
 
@@ -499,7 +538,7 @@ This is a contract-only staging-pilot rule. It does not activate the PWA backend
 | **BD-AUTH-HARDEN-01** (#824) | Baseline + staging | OTP delivery, per-phone/IP throttling and no-code-echo policy are tested. |
 | **BD-AUTH-SESSION-01** (#829) | Auth hardening | Session transport, expiry, rotation and revocation are frozen and tested. |
 | **BD-AUTH-POLICY-01** (#830) | Session lifecycle | Granted roles and minimum driver readiness are server-enforced. |
-| **BD-CHAT-AUTH-01** (#825) | Session + role policy | Sender identity is session-derived and limited to order/ride participants. |
+| **BD-CHAT-AUTH-01** (#825) — **done** (#1151, #1155) | Session + role policy | Sender identity is session-derived and limited to ride participants; terminal rides are read-only; per-sender rate limit. |
 | **BD-API-IDEMPOTENCY-01** (#826) | Frozen endpoint contracts | Mutation retries and concurrency preserve exactly-once/write-once invariants. |
 | **BD-E2E-MULTIDEVICE-01** (#831) | Auth, policy, chat and idempotency | Two sessions complete the PostgreSQL 16 vertical slice. |
 | **BD-OBS-PILOT-01** (#827) | Staging + vertical slice | Redacted logs, metrics, alerts, backup/restore and rollback are rehearsed. |
@@ -524,12 +563,12 @@ The route-owned machine-code inventory below is descriptive of the existing rout
 | Boundary | Current success envelope(s) | Current machine codes |
 |---|---|---|
 | Operational health/readiness | `{ status, service }`, `{ status, db }` (including readiness HTTP 503) | None; `/readyz` failure intentionally bypasses the product problem object |
-| Auth/session | `{ user }`, `{ ok, expiresInSeconds, devCode? }`, `{ token, user }`, `{ ok: true }` | `SESSION_LOOKUP_FAILED`, `SESSION_REVOKE_FAILED`, `INVALID_PHONE`, `OTP_INVALID`, `OTP_LOCKED`, plus uniform `VALIDATION` |
+| Auth/session | `{ user }`, `{ ok, expiresInSeconds, devCode? }`, `{ token, user }`, `{ ok: true }` | `SESSION_LOOKUP_FAILED`, `SESSION_REVOKE_FAILED`, `INVALID_PHONE`, `OTP_INVALID`, `OTP_LOCKED`, `OTP_RATE_LIMITED` (with `Retry-After` and `retryAfterSeconds`), `OTP_DISABLED` (public stand), plus uniform `VALIDATION` |
 | Orders | `{ items }`, `{ order }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, plus uniform `VALIDATION` |
 | Matching/offers/select | `{ offer }`, `{ items }`, `{ order, offer, assignment, ride }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `ORDER_NOT_FOUND`, `CANNOT_OFFER_OWN_ORDER`, `ORDER_NOT_OPEN`, `FORBIDDEN`, `CANNOT_SELECT_SELF`, `OFFER_NOT_FOUND`, plus uniform `VALIDATION` |
 | Ride state | `{ ride }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `RIDE_NOT_FOUND`, `FORBIDDEN`, `INVALID_STATUS`, `RIDE_TERMINAL`, plus uniform `VALIDATION` |
 | Realtime poll | `{ tripId, status, events, cursor }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `RIDE_NOT_FOUND`, `FORBIDDEN`, `VALIDATION` |
-| Chat | `{ items }`, `{ message }` | `INTERNAL`, plus uniform `VALIDATION`; authentication/participant errors do not exist yet and are a pilot blocker |
+| Chat | `{ items }`, `{ message }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `CHAT_NOT_FOUND`, `CHAT_CLOSED`, `CHAT_RATE_LIMITED` (with `Retry-After`), `INTERNAL`, plus uniform `VALIDATION` |
 | History/receipts | `{ items }`, `{ receipt }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `RIDE_NOT_FOUND`, `FORBIDDEN`, `RIDE_NOT_COMPLETED`, plus uniform `VALIDATION` |
 | Dark routes | problem object | `NOT_IMPLEMENTED` |
 | Uniform server fallback | problem object | `VALIDATION`, `NOT_FOUND`, `INTERNAL`, `BAD_REQUEST`; other non-validation 4xx preserve Fastify `err.code`, including `FST_ERR_CTP_EMPTY_JSON_BODY` and `FST_ERR_CTP_INVALID_JSON_BODY` |
