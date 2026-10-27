@@ -1,0 +1,100 @@
+name: project-board
+
+# Exports GitHub Project #1 «BazarDrive — Mini-Yonder Growth Path» (Projects v2) to a JSON
+# snapshot and checks it against BD-DOCS-042, so the board stays a readable, auditable
+# artefact for agents that cannot reach the Projects GraphQL API and so a phase whose
+# routes are still DARK can never sit at Design State «Shipped» unnoticed.
+#
+# The snapshot is committed to the dedicated `project-board` branch (NOT main — main is
+# PR-only under the ruleset): docs/project-board.json + docs/project-board.md. Read it at
+#   https://github.com/iprus2026-tech/BazarDriveCloud/blob/project-board/docs/project-board.json
+#
+# Needs the repository secret PROJECT_READ_TOKEN: a classic PAT with scope `read:project`
+# (GITHUB_TOKEN cannot read Projects v2). Without it the job fails early and explains why.
+on:
+  schedule:
+    - cron: '23 5 * * 1'   # Mondays 05:23 UTC (08:23 Minsk), after the weekly server-ci
+  workflow_dispatch:
+
+permissions:
+  contents: write          # push the snapshot to the `project-board` branch only
+
+concurrency:
+  group: project-board
+  cancel-in-progress: false
+
+jobs:
+  export:
+    name: export + check Project #1
+    runs-on: ubuntu-latest
+    env:
+      OWNER: iprus2026-tech
+      PROJECT: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true   # the final step pushes to `project-board`
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Require PROJECT_READ_TOKEN
+        env:
+          TOKEN: ${{ secrets.PROJECT_READ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::secret PROJECT_READ_TOKEN is not set — a classic PAT with scope read:project (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - name: Export board (gh project item-list)
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_READ_TOKEN }}
+        run: |
+          mkdir -p snapshot
+          gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 > snapshot/project-board.json
+          gh project field-list "$PROJECT" --owner "$OWNER" --format json > snapshot/project-fields.json
+          node -e '
+            const b = JSON.parse(require("fs").readFileSync("snapshot/project-board.json","utf8"));
+            const items = b.items || [];
+            const dk = (i) => Object.keys(i).find((k) => /^design\s*state$/i.test(k)) || "designState";
+            const rows = items.map((i) => {
+              const n = i.content && i.content.number ? "#" + i.content.number : "(draft)";
+              const t = (i.title || (i.content && i.content.title) || "").replace(/\|/g, "\\|");
+              return `| ${n} | ${t} | ${i[dk(i)] || ""} | ${i.status || ""} | ${(i.content && i.content.state) || ""} |`;
+            });
+            const md = [
+              "# Project #1 — BazarDrive — Mini-Yonder Growth Path (snapshot)", "",
+              `Generated ${new Date().toISOString()} by .github/workflows/project-board.yml — ${items.length} items. Read-only mirror; the board is the live view.`, "",
+              "| Issue | Title | Design State | Status | Issue state |", "|---|---|---|---|---|", ...rows, "",
+            ].join("\n");
+            require("fs").writeFileSync("snapshot/project-board.md", md);
+            console.log(`exported ${items.length} items`);
+          '
+
+      - name: Check Design State against BD-DOCS-042
+        run: node scripts/check-project-board.mjs snapshot/project-board.json
+
+      - name: Commit snapshot to the project-board branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin project-board >/dev/null; then
+            git fetch --depth 1 origin project-board
+            git checkout -B project-board origin/project-board
+          else
+            git checkout --orphan project-board
+            git rm -rfq --cached . && git clean -fdq -e snapshot
+          fi
+          mkdir -p docs
+          cp snapshot/project-board.json docs/project-board.json
+          cp snapshot/project-board.md docs/project-board.md
+          git add docs/project-board.json docs/project-board.md
+          if git diff --cached --quiet; then
+            echo "snapshot unchanged — nothing to commit"
+          else
+            git commit -q -m "chore(project-board): snapshot $(date -u +%F)"
+            git push origin project-board
+          fi
