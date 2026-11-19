@@ -1405,7 +1405,9 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Publish payload | Published order points include `pickup.lat/lng` and `dropoff.lat/lng` from the route draft point coords. |
 | Main states | Valid route form, missing route, validation feedback, publishing, success. |
 | Actions | Publish order, edit route, set now/later, set price/comment, go to my order/feed. |
-| Acceptance | Publish CTA always gives visible feedback and never silently fails. |
+| Publish gate (#1179) | Publishing needs a registered profile (`user.onboarded`), like the composer and the FAB. A guest or a first-run user may build the route and see the form; at the publish tap, after validation, an unregistered profile is sent to `/onboarding` with this form as the pending action, and no order is created. The route draft and the form are persisted, so the form is restored on return (backend OFF; on a backend a sign-in that crosses an account boundary clears user-scoped storage, and the form reopens in the missing-route state). |
+| Phone row | Shows the profile phone masked (`maskPassengerPhone`: 10 national digits, with or without the country digit). With no phone it reads «Телефон не указан» with a hint and «Добавить» — never a placeholder number. The published order's `passenger.phoneMasked` is the real masked phone or empty. |
+| Acceptance | Publish CTA always gives visible feedback and never silently fails. Pinned by `scripts/smoke-order-route-honest-metrics.mjs`. |
 
 ### BD-DRIVER-01 / BD-DRIVER-02 - DriverMap
 

@@ -77,9 +77,11 @@ export function shortRideNumber(id) {
   return text.split('-').slice(-1)[0].slice(-6);
 }
 
+// A full number is 10 national digits, with or without the country digit in front: the local
+// profile stores «9001234567», a server login «+79001234567». Anything shorter is not a number.
 export function maskPassengerPhone(phone, fallback = '') {
   const digits = String(phone || '').replace(/\D+/g, '');
-  if (digits.length < 11) return fallback;
+  if (digits.length < 10) return fallback;
   const last4 = digits.slice(-4);
   return `+7 (${digits.slice(-10, -7)}) ··· ${last4.slice(0, 2)}-${last4.slice(2)}`;
 }

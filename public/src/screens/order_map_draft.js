@@ -5,7 +5,7 @@
 // localStorage and the success state confirms it visually.
 
 import { escapeHtml } from '../util.js';
-import { go } from '../router.js';
+import { go, setPendingAction } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { user } from '../state.js';
 import { createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
@@ -22,7 +22,9 @@ const STATE = {
   MISSING: 'missing',
 };
 
-const PHONE_FALLBACK = '+7 (905) ··· 12-34';
+// #1179 — no placeholder number: a profile without a phone says so. The old fallback
+// «+7 (905) ··· 12-34» was shown as the user's own and stored on the order.
+const NO_PHONE_LABEL = 'Телефон не указан';
 const COMMENT_LIMIT = 200;
 const PRICE_STEP = 50;
 const PRICE_MIN = 0;
@@ -523,7 +525,11 @@ function renderCommentField() {
 
 function renderPhoneRow() {
   const u = user.get();
-  const phone = maskPassengerPhone(u.phone, PHONE_FALLBACK);
+  const masked = maskPassengerPhone(u.phone, '');
+  const phone = masked || NO_PHONE_LABEL;
+  const hint = masked ? 'Телефон из профиля будет показан водителю'
+    : (u.onboarded ? 'Добавьте номер в профиле, чтобы водитель мог связаться с вами'
+      : 'Номер появится после регистрации — она понадобится для публикации');
   return `
     <div class="omd-phone">
       <div class="omd-phone__icon" aria-hidden="true">
@@ -534,9 +540,9 @@ function renderPhoneRow() {
       </div>
       <div class="omd-phone__body">
         <div class="omd-phone__value">${escapeHtml(phone)}</div>
-        <div class="omd-phone__hint">Телефон из профиля будет показан водителю</div>
+        <div class="omd-phone__hint">${escapeHtml(hint)}</div>
       </div>
-      <button class="omd-phone__edit" type="button" data-action="edit-phone">Изменить</button>
+      <button class="omd-phone__edit" type="button" data-action="edit-phone">${masked ? 'Изменить' : 'Добавить'}</button>
     </div>
   `;
 }
@@ -843,7 +849,7 @@ function buildPassengerSnapshotFromUser(u, commentText) {
   return {
     name,
     initials,
-    phoneMasked: maskPassengerPhone(u.phone, PHONE_FALLBACK),
+    phoneMasked: maskPassengerPhone(u.phone, ''),
     comment: commentText,
     authorId: LOCAL_USER_ID,
     isCurrentUser: true,
@@ -895,6 +901,14 @@ function handlePublish(root, draft) {
     publishFeedback(root, 'warn', hasPriceError
       ? 'Проверьте цену заказа.'
       : 'Проверьте поля заказа.', draft);
+    return;
+  }
+  // #1179 — publishing needs a registered profile, like the composer and the FAB. A guest or a
+  // first-run user may build the route and see the price; the gate is here, at the publish tap,
+  // and brings them back to this form afterwards (the route and the form are persisted).
+  if (!user.get().onboarded) {
+    setPendingAction(() => go('/order-map-draft'));
+    go('/onboarding');
     return;
   }
   publishFeedback(root, 'info', 'Публикуем заказ…', draft, { publishing: true });
