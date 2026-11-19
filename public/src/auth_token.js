@@ -159,6 +159,13 @@ export function detachRejectedAuth() {
 }
 
 // Persist the minted session (called by the onboarding otp-verify success path).
+// The phone this tab's own session was verified with, or null. Same ownership rules as the
+// token (loadForTab): another tab's or a detached record yields null.
+export function getAuthPhone() {
+  const phone = loadForTab().phone;
+  return typeof phone === 'string' && phone ? phone : null;
+}
+
 export function setAuth({ token, userId, phone } = {}) {
   const previousMarker = markerMatches() ? marker : { state: 'rejected' };
   blocked = true;

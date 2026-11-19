@@ -563,6 +563,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   // continuing as passenger (when that grant exists) and logging out. Backend-ON only.
   // { attempt, roles, model, busy, error }
   let access = null;
+  // #1177 — true while a reloaded, already verified login is being confirmed with the server.
+  let resuming = false;
 
   const ownsScreen = () => renderContext.isCurrent();
   const expectedAuthRole = () => (verifyPhoneOnly && !rebuildProfileAfterVerify)
@@ -855,6 +857,63 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     });
   }
 
+  // #1177 — a reload during full onboarding loses the in-memory handoff, but the server session
+  // is still valid. After the role is chosen again, the stored login is confirmed through the
+  // server (auth.adoptRole: role switch + session read — the K4 path) and the flow continues at
+  // the profile step with no second OTP. A role that is not granted opens the «Вход выполнен»
+  // card (driver application / continue as passenger / exit). Any other failure falls back to
+  // the ordinary phone -> code flow. The role is always the user's explicit choice on this
+  // screen: nothing is resumed automatically.
+  let resumeTried = false;
+  function reloadedLoginResumable() {
+    if (resumeTried || !isBackendEnabled() || recoveredLogin || verifyPhoneOnly || startAtPhone
+        || currentUser.onboarded === true || otpAttempt || confirmedAttempt) return null;
+    return auth?.resumableLogin?.() ?? null;
+  }
+  async function resumeReloadedLogin(role) {
+    const resumable = reloadedLoginResumable();
+    if (!resumable || !['passenger', 'driver'].includes(role)) { next(); return; }
+    resumeTried = true;
+    const previousPhone = draft.phone;
+    draft.phone = String(resumable.phone).replace(/\D/g, '');
+    const otpIdx = steps().indexOf('otp');
+    // The stored phone must be exactly what this screen would verify, or the attempt is not ours.
+    if (normalizedPhone() !== resumable.phone || otpIdx < 0) {
+      draft.phone = previousPhone;
+      next();
+      return;
+    }
+    const attempt = { generation: otpGeneration, phone: resumable.phone, requested: true };
+    otpAttempt = attempt;
+    step = otpIdx;
+    resuming = true;
+    render();
+    let result;
+    try { result = await auth.adoptRole(role); } catch { result = { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
+    if (!ownsAttempt(attempt)) return;
+    resuming = false;
+    if (result?.ok === true || result?.code === 'ROLE_NOT_GRANTED') {
+      // This attempt stands on an installed, already verified login — exactly the state a fresh
+      // verify leaves behind. If the user steps Back onto the code step, continuing must
+      // re-confirm it (auth.resumeLogin), never POST /auth/otp/verify for a code nobody
+      // requested (Codex P2 on #1194).
+      verifiedResponseReceived = true;
+    }
+    if (result?.ok === true) {
+      completeVerifiedLogin(result, attempt);
+      return;
+    }
+    if (result?.code === 'ROLE_NOT_GRANTED') {
+      enterAccess(attempt, result.roles || []);
+      return;
+    }
+    invalidateOtpAttempt();
+    const phoneIdx = steps().indexOf('phone');
+    step = phoneIdx >= 0 ? phoneIdx : 0;
+    render();
+    setStepError('Не удалось продолжить вход без кода. Подтвердите номер ещё раз.');
+  }
+
   function advanceFromOtpOnce() {
     if (!ownsScreen()) return;
     if (otpSubmitting) return;
@@ -1045,6 +1104,13 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       attachAccessListeners();
       return;
     }
+    if (resuming) {
+      root.innerHTML = `<div class="ob-state" data-ob-step="loading">
+        <p class="ob-loading-message" role="status" aria-live="polite">Проверяем вход…</p>
+      </div>`;
+      root.dataset.step = 'resuming';
+      return;
+    }
     const name = currentStep();
     const total = totalSteps();
 
@@ -1114,6 +1180,11 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
               user.set({ welcomeSeen: true, role: 'guest' });
               consumePendingAction();
               go('/feed');
+              return;
+            }
+            // #1177 — a reloaded, already verified login skips phone and code.
+            if (reloadedLoginResumable()) {
+              void resumeReloadedLogin(draft.role);
               return;
             }
             next();

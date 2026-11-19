@@ -3908,6 +3908,82 @@ if (process.argv[2] === '--onboarding-detach-case') {
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
 
+  // #1177 — a reload-reconstructed owner is cleanup-only until the SERVER confirms it again.
+  await check('#1177: a reloaded incomplete login resumes only through the server role switch + session read', async () => {
+    let record = { token: 'token-b', userId: 'b' }, phone = '+79000000001', role = 'passenger', switches = [];
+    let live = true;
+    const make = (extra = {}) => create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      readPhone: () => phone,
+      dropAuth: () => { record = null; return true; },
+      requestSession: async () => sessionFor('b', role),
+      switchActiveRole: async (next) => {
+        switches.push(next);
+        if (next === 'driver') throw Object.assign(new Error('not granted'), { code: 'ROLE_NOT_GRANTED', status: 403 });
+        role = next;
+        return { userId: 'b', activeRole: next };
+      },
+      ...extra });
+    const c = make();
+    assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    assert.equal(c.resumableLogin(), null, 'nothing to resume before the owner is retained');
+    assert.equal(c.retainAuthenticatedCleanupOwner(() => live), true);
+    assert.deepEqual({ ...c.resumableLogin() }, { phone: '+79000000001', activeRole: 'passenger' });
+    // Retaining grants nothing: no role is confirmed and the login cannot be finished.
+    assert.equal(c.roleConfirmed('passenger'), false);
+    assert.equal(c.finishLogin(), false);
+    assert.equal(switches.length, 0, 'the projection asks the server nothing');
+    // A role the account does not hold is refused by the server and stays unconfirmed.
+    const refused = await c.adoptRole('driver');
+    assert.equal(refused.ok, false); assert.equal(refused.code, 'ROLE_NOT_GRANTED');
+    assert.equal(c.roleConfirmed('driver'), false); assert.equal(c.finishLogin(), false);
+    assert.equal(c.hasUncommittedLogin(), true, 'the cleanup owner survives a refusal');
+    // The granted role: server switch, then the session read confirms it.
+    const adopted = await c.adoptRole('passenger');
+    assert.equal(adopted.ok, true); assert.equal(adopted.user.activeRole, 'passenger');
+    assert.deepEqual(switches, ['driver', 'passenger']);
+    assert.equal(c.roleConfirmed('passenger'), true);
+    assert.equal(c.finishLogin(), true);
+    assert.equal(c.hasUncommittedLogin(), false);
+    assert.equal(c.resumableLogin(), null, 'a finished login is not resumable');
+
+    // Not resumable: no transport, no stored phone, a stale UI owner, a changed bearer.
+    switches = [];
+    const noTransport = make({ switchActiveRole: null });
+    await noTransport.reconcile(); noTransport.retainAuthenticatedCleanupOwner(() => true);
+    assert.equal(noTransport.resumableLogin(), null);
+    assert.equal((await noTransport.adoptRole('passenger')).code, 'AUTH_STALE', 'without a transport the owner stays cleanup-only');
+    phone = null;
+    const noPhone = make(); await noPhone.reconcile(); noPhone.retainAuthenticatedCleanupOwner(() => true);
+    assert.equal(noPhone.resumableLogin(), null);
+    phone = '+79000000001';
+    const stale = make(); await stale.reconcile(); stale.retainAuthenticatedCleanupOwner(() => live);
+    live = false;
+    assert.equal(stale.resumableLogin(), null);
+    assert.equal((await stale.adoptRole('passenger')).code, 'AUTH_STALE');
+    live = true;
+    const swapped = make(); await swapped.reconcile(); swapped.retainAuthenticatedCleanupOwner(() => true);
+    record = { token: 'token-c', userId: 'c' };
+    assert.equal(swapped.resumableLogin(), null);
+    assert.equal((await swapped.adoptRole('passenger')).code, 'AUTH_STALE');
+    assert.equal(switches.length, 0, 'none of the refused cases reached the server');
+  });
+  await check('#1177: onboarding resumes a reloaded login only after the explicit role choice', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    const app = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(app, /switchActiveRole: role => putSessionActiveRole\(role\)/);
+    assert.match(app, /resumableLogin: \(\) => bootSession\.resumableLogin\(\)/);
+    assert.match(source, /if \(reloadedLoginResumable\(\)\) \{\s*void resumeReloadedLogin\(draft\.role\);/);
+    assert.match(source, /result = await auth\.adoptRole\(role\)/);
+    assert.match(source, /if \(result\?\.code === 'ROLE_NOT_GRANTED'\) \{\s*enterAccess\(attempt, result\.roles \|\| \[\]\);/);
+    // A resumed attempt is marked verified, so Back onto the code step re-confirms through
+    // auth.resumeLogin() instead of verifying a code nobody requested (Codex P2 on #1194).
+    assert.match(source, /if \(result\?\.ok === true \|\| result\?\.code === 'ROLE_NOT_GRANTED'\) \{[\s\S]{0,420}verifiedResponseReceived = true;/);
+    assert.match(source, /if \(verifiedResponseReceived\) \{\s*result = await auth\.resumeLogin\(\);/);
+    // Never automatic: the resume has exactly one caller, the role step's «Продолжить».
+    assert.equal(source.match(/resumeReloadedLogin\(/g).length, 2, 'one definition, one call');
+  });
+
   await check('app registers rebound and reloaded onboarding contexts as handoff owners', async () => {
     const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
     assert.match(source, /if \(recoveredLogin\) \{[\s\S]*onboardingHandoffOwner = context/);

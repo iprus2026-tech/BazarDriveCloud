@@ -280,6 +280,13 @@ abandonment uses the same cleanup ordering, retains pending action and enters
 Welcome. Ordinary step Back and verify-phone-only Back do not revoke.
 Revoke failures retain exact actor/handoff/caches/pending intent for Retry.
 Post-revoke local failures retain a repair lease without repeating revoke.
+
+Reload resume (#1177): a reload during full onboarding leaves a cleanup-only
+owner. After the role is chosen again, a resumable login (own bearer, stored
+phone, AUTHENTICATED session with a verified phone) is confirmed through the
+server role switch plus a session read instead of a second OTP, and the flow
+continues at the profile step. A role that is not granted opens the «Вход
+выполнен» card; any other failure falls back to phone -> code.
 Disposed/stale intents cannot project Guest, consume pending action or navigate;
 foreign/newer credentials (including same-user rotation) survive. Already-foreign
 Guest admission uses cache-only projection without wiping shared account state.

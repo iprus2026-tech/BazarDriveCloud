@@ -1,6 +1,6 @@
 // Boot identity, verified-login handoff and detach leases. Transport stays external.
 import { isBackendEnabled } from './api_config.js';
-import { getAuthToken, getAuthUserId, setAuth, clearAuth, pinAuthTabUser,
+import { getAuthToken, getAuthUserId, getAuthPhone, setAuth, clearAuth, pinAuthTabUser,
   detachRejectedAuth, isAuthTabRejected, getAuthOwnerVersion, isAuthCandidate, commitAuthCandidate,
   AUTH_CLEAR_FOREIGN } from './auth_token.js';
 import { getSession } from './api_client.js';
@@ -21,6 +21,7 @@ export function createAuthSessionBootstrap({
   backendEnabled = isBackendEnabled,
   readToken = getAuthToken,
   readUserId = getAuthUserId,
+  readPhone = getAuthPhone,
   writeAuth = setAuth,
   dropAuth = clearAuth,
   detachAuth = detachRejectedAuth,
@@ -31,6 +32,9 @@ export function createAuthSessionBootstrap({
   requestSession = getSession,
   pinTabUser = pinAuthTabUser,
   onRejectedSession = () => {},
+  // #1177 — the host's PUT /auth/session/active-role transport for a reload-reconstructed owner
+  // (retainAuthenticatedCleanupOwner). Null keeps that owner cleanup-only, as before.
+  switchActiveRole = null,
   timeoutMs = 10000,
 } = {}) {
   let sequence = 0;
@@ -303,6 +307,10 @@ export function createAuthSessionBootstrap({
     return projection;
   }
 
+  // #1177 — with the host's `switchActiveRole` transport the reload-reconstructed owner can be
+  // CONFIRMED again through adoptRole(): the server switch (403 when the role is not granted)
+  // and then the session read decide — the same K4 path an installed but unconfirmed login
+  // takes. Retaining grants nothing by itself.
   function retainAuthenticatedCleanupOwner(isCurrent) {
     if (handoff || typeof isCurrent !== 'function') return false;
     if (snapshot.state !== 'AUTHENTICATED' || !snapshot.user?.userId) return false;
@@ -313,16 +321,39 @@ export function createAuthSessionBootstrap({
     handoff = {
       token,
       userId,
-      phone: null,
+      // The phone this tab's session was verified with (the stored auth record), if readable.
+      phone: readPhone() || null,
       ownerVersion: readOwnerVersion(),
       generation,
       ownsUI: isCurrent,
       expectedRole: snapshot.user.activeRole,
-      // Reload reconstruction exists only so Back/Guest can clean the bearer.
+      // Reload reconstruction starts as cleanup ownership only (Back/Guest can clean the
+      // bearer). It gains authority solely through adoptRole() -> resumeLogin(): a server
+      // role switch plus a confirming session read.
       authority: false,
+      roles: Object.freeze([]),
+      switchRole: typeof switchActiveRole === 'function' ? switchActiveRole : null,
+      pendingSwitch: null,
+      reloadRetained: true,
     };
     handoffRemovalPending = false;
     return true;
+  }
+
+  // #1177 — what a reloaded, verified but not yet onboarded login can resume from: the phone the
+  // session was verified with and the server's current role. Null unless this is the
+  // reload-reconstructed owner, its UI is current, the session read is AUTHENTICATED with a
+  // verified phone for the same bearer, the phone is known and a switch transport exists.
+  // A projection only: adoptRole() is what asks the server.
+  function resumableLogin() {
+    const expected = handoff;
+    if (logoutContinuationsBlocked || !expected || expected.reloadRetained !== true || !expected.ownsUI()
+        || typeof expected.switchRole !== 'function' || !expected.phone
+        || readToken() !== expected.token || readUserId() !== expected.userId
+        || (expected.ownerVersion || null) !== readOwnerVersion()
+        || snapshot.state !== 'AUTHENTICATED' || snapshot.user?.userId !== expected.userId
+        || snapshot.user.phoneVerified !== true) return null;
+    return Object.freeze({ phone: expected.phone, activeRole: snapshot.user.activeRole });
   }
 
   function finishRecovery(commit) {
@@ -595,7 +626,7 @@ export function createAuthSessionBootstrap({
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin, adoptRole,
     isLoginDetached, recoveryConfirmed, recoveryProjection, rebindRecoveryOwner,
-    retainAuthenticatedCleanupOwner, finishRecovery,
+    retainAuthenticatedCleanupOwner, resumableLogin, finishRecovery,
     markLoginStale, abandonLogin, enterGuest, adoptAnonymousAfterExternalLogout,
     beginExplicitLogout, failExplicitLogout,
     beginOnboardingDetach, commitOnboardingDetach,
