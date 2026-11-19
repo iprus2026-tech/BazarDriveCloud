@@ -222,16 +222,20 @@ await check('preview OFF: a draft saved with no estimate shows the local estimat
 });
 
 // ── D. order draft ────────────────────────────────────────────────────────────
-function draftHarness({ backend, route, form = null }) {
+function draftHarness({ backend, route, form = null, profile = { name: 'Пассажир', phone: '+79000001005', onboarded: true } }) {
   const routeEstimateFor = estimateRule(backend);
   const storage = new Map([['bazardrive.route_draft.v1', routeDraft(route)]]);
   if (form) storage.set('bazardrive.order_form.v1', JSON.stringify(form));
   const navigation = [];
   const created = [];
   const timers = [];
+  const pending = [];
   const context = baseContext({ backend, storage, navigation, extra: {
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
-    user: { get: () => ({ name: 'Пассажир', phone: '+79000001005' }) },
+    // #1179 — publishing needs a registered profile; these cases are a signed-up passenger
+    // unless a case passes its own profile.
+    user: { get: () => profile },
+    setPendingAction: (fn) => { pending.push(fn); },
     createRideOrder: async (input) => { created.push(input); return { id: 'order-1', ...input }; },
     LOCAL_USER_ID: 'u_local',
     roleGateCode: () => null, ROLE_GATE_TEXT: {}, PROFILE_CTA_LABEL: '', PASSENGER_ROLE_REQUIRED: 'PASSENGER_ROLE_REQUIRED',
@@ -257,8 +261,33 @@ function draftHarness({ backend, route, form = null }) {
     while (timers.length) await timers.shift()();
     await flush();
   }
-  return { f, price, typePrice, publish, created, storage };
+  return { f, price, typePrice, publish, created, storage, navigation, pending };
 }
+
+// #1179 — no order from an unregistered profile, and no placeholder phone presented as the user's.
+await check('#1179: an unregistered profile is sent to onboarding at the publish tap; nothing is created', async () => {
+  for (const backend of [true, false]) {
+    const h = draftHarness({ backend, route: OFF_ROUTE, profile: { name: '', phone: null, onboarded: false } });
+    assert.match(h.f.text(), /Телефон не указан/, `no number is shown as one (backend ${backend})`);
+    assert.doesNotMatch(h.f.text(), /905/, 'the old placeholder number is gone');
+    await h.typePrice('500', true);
+    await h.publish();
+    assert.equal(h.created.length, 0, `no order from an unregistered profile (backend ${backend})`);
+    assert.deepEqual(h.navigation.slice(-1), ['/onboarding']);
+    assert.equal(h.pending.length, 1, 'the form is the pending action');
+    h.pending[0]();
+    assert.deepEqual(h.navigation.slice(-1), ['/order-map-draft'], 'registration returns to this form');
+  }
+});
+await check('#1179: a registered profile publishes; the order carries the real masked phone or none', async () => {
+  for (const [phone, masked] of [['+79000001005', '+7 (900) ··· 10-05'], ['9000001005', '+7 (900) ··· 10-05'], [null, ''], ['12', '']]) {
+    const h = draftHarness({ backend: false, route: OFF_ROUTE, profile: { name: 'Пассажир', phone, onboarded: true } });
+    await h.publish();
+    assert.equal(h.created.length, 1, `registered profile publishes (phone ${phone})`);
+    assert.equal(h.created[0].passenger.phoneMasked, masked, `phone ${phone}`);
+    assert.equal(h.navigation.includes('/onboarding'), false);
+  }
+});
 
 await check('#1058: the price field carries no step grid and no native min / max, in both modes', () => {
   for (const backend of [true, false]) {
