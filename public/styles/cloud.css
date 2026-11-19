@@ -1312,6 +1312,9 @@ body {
 }
 .feed-post-actions__share { margin-left: auto; }
 
+/* #1176 — «Вы уже откликнулись» notice above the respond form. */
+.respond__existing { margin-bottom: 12px; }
+
 /* ── Feed search + share toast (BD-FEED-SEARCH-01 / BD-FEED-SHARE-01) ── */
 .feed-search { margin: 0 var(--pad) 10px; }
 .feed-search[hidden] { display: none; }

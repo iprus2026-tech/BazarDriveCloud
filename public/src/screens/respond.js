@@ -6,6 +6,7 @@ import { isBackendEnabled } from '../api_config.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, DRIVER_ROLE_REQUIRED } from '../role_gate.js';
 import { loadResource } from '../data_layer.js';
 import { resolveActiveGarageVehicle } from '../garage.js';
+import { findOwnOfferForPost } from '../response_store.js';
 
 const RESPOND_KEY    = 'bazardrive.respond.v1';
 const RESPONSES_KEY  = 'bazardrive.responses.v1';
@@ -75,6 +76,12 @@ function saveResponseToMap(data) {
     next[data.id] = data;
     localStorage.setItem(RESPONSES_KEY, JSON.stringify(next));
   } catch {}
+}
+
+function formatOfferPrice(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 'без цены';
+  try { return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n)} ₽`; } catch { return `${n} ₽`; }
 }
 
 function getDefaultMessage(vehicle) {
@@ -396,7 +403,16 @@ function renderPassengerRide(root, post) {
   const liveOffer = isBackendEnabled() && post.canonical === 'ride_order' && Boolean(post.orderId);
   const scheduled = post.scheduledMode === 'later';
   const realColor = liveOffer ? realVehicleColor(u) : '';
-  const defaultMessage = liveOffer ? '' : getDefaultMessage(vehicle);
+  // #1176 — the driver's own offer already sent for this post from this device. The form then
+  // opens as an EDIT of it (its price, timing and text), and says so, instead of a blank form
+  // that silently replaced or — on a backend — was silently ignored.
+  const existingOffer = findOwnOfferForPost(post.id);
+  const existingText = existingOffer
+    ? (typeof existingOffer.messageText === 'string' ? existingOffer.messageText
+      : (liveOffer ? '' : existingOffer.message || ''))
+    : null;
+  const defaultMessage = existingText ?? (liveOffer ? '' : getDefaultMessage(vehicle));
+  const submitText = existingOffer ? 'Изменить предложение' : 'Отправить отклик';
 
   const passengerName = post.author || 'Пассажир';
   const passengerInitials = initial(passengerName);
@@ -416,10 +432,13 @@ function renderPassengerRide(root, post) {
   // decimal separator (763.5 ₽ → 7635). Backend OFF keeps the label parse.
   const numericPrice = liveOffer && Number.isFinite(post.priceValue) ? post.priceValue : parsedPrice;
   const orderPrice = Number.isFinite(numericPrice) && numericPrice > 0 ? numericPrice : null;
-  const initialPrice = orderPrice ?? (liveOffer ? '' : DEFAULT_PASSENGER_PRICE);
+  const initialPrice = existingOffer ? existingOffer.driverPrice
+    : (orderPrice ?? (liveOffer ? '' : DEFAULT_PASSENGER_PRICE));
   const priceChips = liveOffer ? livePriceChips(orderPrice) : PRICE_CHIPS;
   const timingOptions = liveOffer ? LIVE_TIMING_OPTIONS : TIMING_OPTIONS;
   const showTiming = !liveOffer || scheduled;
+  const initialTiming = existingOffer && timingOptions.some((t) => t.key === existingOffer.pickupTiming)
+    ? existingOffer.pickupTiming : timingOptions[0].key;
   const vehicleMeta = liveOffer
     ? escapeHtml(realColor)
     : (vehicle ? `${escapeHtml(vehicle.color)} · ${vehicle.seats} места · ${escapeHtml(vehicle.features)}` : '');
@@ -429,9 +448,17 @@ function renderPassengerRide(root, post) {
     : '';
 
   root.innerHTML = `
-    ${renderTopbar('Ответ на заявку')}
+    ${renderTopbar(existingOffer ? 'Ваше предложение' : 'Ответ на заявку')}
 
     <div class="bd-scroll respond__body" id="respond-body">
+
+      ${existingOffer ? `
+      <div class="bd-alert info respond__existing" id="respond-existing" role="status">
+        ${INFO_SVG}
+        <p class="respond__info-text">
+          Вы уже откликнулись: ${escapeHtml(formatOfferPrice(existingOffer.driverPrice))}. Измените цену или сообщение и отправьте — пассажир увидит новое предложение вместо прежнего.
+        </p>
+      </div>` : ''}
 
       <div class="bd-card respond__passenger-card">
         <div class="respond__passenger-header">
@@ -481,7 +508,7 @@ function renderPassengerRide(root, post) {
           <div class="respond__chips" role="group" aria-label="Время подачи" id="timing-chips">
             ${timingOptions.map((t, i) => `
               <button type="button"
-                      class="respond-chip${i === 0 ? ' active' : ''}"
+                      class="respond-chip${t.key === initialTiming ? ' active' : ''}"
                       data-timing="${escapeHtml(t.key)}">${escapeHtml(t.label)}</button>
             `).join('')}
           </div>
@@ -551,16 +578,16 @@ function renderPassengerRide(root, post) {
               class="bd-btn primary respond__btn-submit" id="respond-submit"
               ${hasVehicle ? '' : 'disabled aria-disabled="true"'}>
         ${SEND_SVG}
-        <span class="respond__submit-label">${hasVehicle ? 'Отправить отклик' : 'Добавьте авто'}</span>
+        <span class="respond__submit-label">${hasVehicle ? submitText : 'Добавьте авто'}</span>
       </button>
     </div>
 
     <div class="respond__success" id="respond-success" hidden>
       <div class="respond__success-inner">
         <div class="respond__success-icon">${CHECK_SVG}</div>
-        <h2 class="respond__success-title">Отклик отправлен</h2>
+        <h2 class="respond__success-title">${existingOffer ? 'Предложение обновлено' : 'Отклик отправлен'}</h2>
         <p class="respond__success-body">
-          Пассажир увидит ваше предложение. Если он подтвердит, поездка появится в активных.
+          ${existingOffer ? 'Пассажир увидит новое предложение вместо прежнего.' : 'Пассажир увидит ваше предложение.'} Если он подтвердит, поездка появится в активных.
         </p>
         <div class="respond__success-actions">
           <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-chat">
@@ -588,7 +615,7 @@ function renderPassengerRide(root, post) {
   const successEl  = root.querySelector('#respond-success');
   const backBtn    = root.querySelector('#respond-back');
 
-  let selectedTiming = 'at_time';
+  let selectedTiming = initialTiming;
 
   msgArea.addEventListener('input', () => {
     counter.textContent = `${msgArea.value.length} / ${MAX_MSG}`;
@@ -627,7 +654,7 @@ function renderPassengerRide(root, post) {
   function setLoading(on) {
     submitBtn.disabled = on;
     submitBtn.classList.toggle('loading', on);
-    submitLabel.textContent = on ? 'Отправляем…' : 'Отправить отклик';
+    submitLabel.textContent = on ? 'Отправляем…' : submitText;
   }
 
   // #784 driver handoff — after a LIVE offer (backend on + canonical ride order), the driver WAITS on
@@ -639,7 +666,7 @@ function renderPassengerRide(root, post) {
   function startOfferHandoffPoll(orderId) {
     const titleEl    = root.querySelector('.respond__success-title');
     const bodyTextEl = root.querySelector('.respond__success-body');
-    if (titleEl)    titleEl.textContent = 'Предложение отправлено';
+    if (titleEl)    titleEl.textContent = existingOffer ? 'Предложение обновлено' : 'Предложение отправлено';
     if (bodyTextEl) bodyTextEl.textContent = 'Ждём выбор пассажира…';
     if (offerPollId) return;
     offerPollId = setInterval(async () => {
@@ -787,6 +814,9 @@ function renderPassengerRide(root, post) {
       driverPrice:  priceNum,
       pickupTiming: selectedTiming,
       message,
+      // The text as typed (a live offer's `message` also carries the timing line), so reopening
+      // the form to revise the offer does not double that line (#1176).
+      messageText:  msgArea.value.trim(),
       vehicleId:    vehicle.id,
       driverSnapshot,
       status:       'SENT',

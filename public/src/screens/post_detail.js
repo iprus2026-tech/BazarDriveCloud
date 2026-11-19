@@ -9,7 +9,9 @@ import {
   canManageOwnOrder,
   acceptPassengerRequestFromPost,
   acceptCanonicalRideOrder,
+  isDriverMode,
 } from '../ride_actions.js';
+import { ownOfferLabel } from '../response_store.js';
 import { applySmokeRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
 import { busyDriverRide } from '../driver_current_trip.js';
@@ -342,7 +344,13 @@ function renderPost(root, post, guestReadOnly = false) {
   const u = applySmokeRole(user.get());
   const onboarded = !guestReadOnly && !!u.onboarded;
   const detailsHref = `/post?id=${encodeURIComponent(post.id || '')}`;
-  const ctaSpec = guestReadOnly ? { kind: 'none' } : pickCtaSpec(post, u);
+  const pickedCta = guestReadOnly ? { kind: 'none' } : pickCtaSpec(post, u);
+  // #1176 — a driver who already responded to this passenger request from this device sees
+  // their offer on the button; the same action opens it for editing. Applied here, outside the
+  // pure resolver: it reads the device-local response store.
+  const ownOffer = pickedCta.kind === 'respond' && post.type === 'trip' && post.passenger === true && isDriverMode(u)
+    ? ownOfferLabel(post.id) : '';
+  const ctaSpec = ownOffer ? { ...pickedCta, label: ownOffer } : pickedCta;
 
   const metaLine = [
     post.role ? escapeHtml(post.role) : '',

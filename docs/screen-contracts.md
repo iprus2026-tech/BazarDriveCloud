@@ -429,8 +429,8 @@ automatic navigation after passenger selection.
 | Route | `/respond?postId=...` |
 | File | `public/src/screens/respond.js` |
 | Storage | Writes `bazardrive.respond.v1`; some chat/response flows can also write `bazardrive.responses.v1`. |
-| Main states | Offer form, vehicle card if available, validation, submitted state. |
-| Actions | Send offer, cancel/back, open profile/feed/chat where supported. |
+| Main states | Offer form, vehicle card if available, validation, submitted state. **Edit state (#1176):** when this device already holds the driver's open offer for the post (`findOwnOfferForPost` — the exact `resp_<post.id>` entry, status `SENT`, a real price), the form opens as an edit of it: title «Ваше предложение», a notice «Вы уже откликнулись: N ₽…» (`#respond-existing`), the stored price, timing and the text as typed (`messageText`), submit label «Изменить предложение», success title «Предложение обновлено». |
+| Actions | Send offer, cancel/back, open profile/feed/chat where supported. Sending from the edit state replaces the offer: backend ON it is the same `POST /matching/offers` (the server keeps one offer per order and driver and stores the revised details); backend OFF it overwrites the local entry. The Feed card and Post Detail show «Вы откликнулись · N ₽» on the respond CTA for a driver with such an offer; the action is unchanged (`/respond?postId=…`). Device-local: an offer sent from another device is not shown. |
 | Acceptance | Respond data is local mock data. The passenger_response is keyed by `resp_<post.id>` and, for canonical ride-order posts, additively pins `orderId` + `canonical:'ride_order'` (BD-RESPOND-ORDER-LINK-01 / #368). `/responses` reads those back read-side by `orderId` (BD-RESPOND-ORDER-LINK-02 / #369); the respond → chat link stays `responseId`-only. |
 
 ### BD-RESPONSES-01 - Responses inbox

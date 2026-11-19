@@ -45,3 +45,27 @@ export function resolveResponseById(responseId) {
   const r = map[id];
   return (r && typeof r === 'object' && r.kind === 'passenger_response') ? r : null;
 }
+
+// «Вы откликнулись · 950 ₽» for a CTA, or '' when the post has no own offer.
+export function ownOfferLabel(postId) {
+  const offer = findOwnOfferForPost(postId);
+  if (!offer) return '';
+  const n = Number(offer.driverPrice);
+  let price;
+  try { price = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n); } catch { price = String(n); }
+  return `Вы откликнулись · ${price} ₽`;
+}
+
+// #1176 — the local user's own driver offer for a feed post, if one was sent from this device
+// and is still an open offer: the exact `resp_<postId>` entry, status SENT, with a real price.
+// The store is user-scoped (cleared at the auth boundary), so an entry belongs to the current
+// account. Device-local on purpose: it answers "did I respond here?" for the feed, the post
+// screen and the respond form; it is not a server read.
+export function findOwnOfferForPost(postId) {
+  const id = typeof postId === 'string' || typeof postId === 'number' ? String(postId).trim() : '';
+  if (!id) return null;
+  const r = resolveResponseById(`resp_${id}`);
+  if (!r || r.status !== 'SENT' || String(r.requestId) !== id) return null;
+  const price = Number(r.driverPrice);
+  return Number.isFinite(price) && price > 0 ? r : null;
+}
