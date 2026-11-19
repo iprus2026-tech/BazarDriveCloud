@@ -14,7 +14,7 @@ import { authorizeForwardTransition, authorizeCancel } from '../../domain/ride-t
 import { serializeRide, serializeRecoveredRide } from '../../serialize.js';
 import {
   findRideByTripId, lockRideByTripId, patchRideStatus, patchRideCanceled,
-  patchRideNoShow, findRecoveryBundleByTripId,
+  patchRideNoShow, findRecoveryBundleByTripId, listOpenRidesForParticipant,
 } from '../../repositories/rides.js';
 import { insertStatusChangeEvent } from '../../repositories/ride_events.js';
 import { insertRideStatusNotificationOutbox } from '../../repositories/notification_outbox.js';
@@ -112,6 +112,19 @@ export default async function rideStateService(app) {
   // derivation), fail-closed rather than serving the Ride's raw, unvalidated cache (#938 Codex
   // finding C, validateStandaloneCandidate); 1 candidate = gate runs; 2+ = ambiguous,
   // fail-closed without ever guessing which order is "right".
+  // GET /api/v1/ride-state/active — the caller's own rides that are not over yet (#1174).
+  // Discovery only: trip id, status and the caller's side, newest first, at most 5. It lets a
+  // participant who lost the trip id (new device, cleared storage, a driver who left the offer
+  // overlay before the passenger chose) find the ride; the ride body still comes from the
+  // gated GET below, so nothing here bypasses the recovery-linkage check.
+  app.get('/active', async (req, reply) => {
+    const viewer = await req.resolveUser();
+    if (req.authError) return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
+    if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
+    const rows = await listOpenRidesForParticipant(app.db, viewer.userId, { limit: 5 });
+    return { items: rows.map((row) => ({ tripId: row.trip_id, status: row.status, role: row.participant_role })) };
+  });
+
   app.get('/rides/:tripId', async (req, reply) => {
     const viewer = await req.resolveUser();
     if (req.authError) return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);

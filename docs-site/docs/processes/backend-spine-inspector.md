@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-10-09
+revision: 2026-11-19
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -61,6 +61,7 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `POST /api/v1/matching/offers` | LIVE / PILOT-BLOCKED | Requires a live authenticated session and blocks self-offers; `phone_verified`, granted driver role and readiness are not enforced yet | Locks `orders`; upserts `offers` transactionally | guarded driver-offer seam | matching transaction/concurrency tests |
 | `GET /api/v1/matching/offers?orderId=…` | LIVE | Authenticated order owner only | Reads `orders`, `offers` | guarded passenger responses seam | matching ownership tests |
 | `POST /api/v1/matching/select` | LIVE / PILOT-BLOCKED | Authenticated order owner only; rejects self-selection; body identity is `{orderId, driverId}` where `driverId` is the server driver UUID returned by the selected offer | Locks/writes `orders`, `offers`, `assignment`, `rides` in one transaction | guarded select/handoff seam; `responseId` / `offer.id` are not select inputs | matching race + ride-bootstrap tests |
+| `GET /api/v1/ride-state/active` | LIVE | Authenticated; inherently scoped to the caller | Reads `rides`: the caller's own non-terminal rides as `{ tripId, status, role }`, newest first, at most 5. Discovery only — the ride body stays behind the gated read below | driver resume seam (`driver_current_trip.js`, when the device holds no record of the ride — #1174) | own/other/anonymous, terminal exclusion |
 | `GET /api/v1/ride-state/rides/:tripId` | LIVE | Authenticated ride participant only | Reads `rides` | guarded active-ride read seam | ride participant tests + enum parity |
 | `PATCH /api/v1/ride-state/rides/:tripId/status` | LIVE | Authenticated ride participant only | Locks/updates `rides`; appends `ride_events` in one transaction | guarded active-ride write seam | terminal-freeze/idempotency + enum parity tests |
 | `GET /api/v1/realtime/poll?tripId=…&since=…` | LIVE (polling) | Authenticated ride participant only | Reads `rides`, cursor-ordered `ride_events` | guarded self-clearing poll seam; WebSocket/SSE push remains dark | realtime cursor/participant tests + client smoke |

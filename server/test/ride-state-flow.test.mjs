@@ -375,3 +375,56 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
     'rejected COMPLETED -> NO_SHOW writes zero additional events and outbox sources',
   );
 });
+
+// #1174 — GET /ride-state/active: a participant who lost the trip id finds their open ride.
+test('ride-state: /active lists only the caller\'s own unfinished rides, with their side', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const drv = `+1611${String(process.pid).padStart(7, '0')}`;
+  const pax = `+1612${String(process.pid).padStart(7, '0')}`;
+  const other = `+1613${String(process.pid).padStart(7, '0')}`;
+  const openTrip = `trip-active-open-${process.pid}`;
+  const doneTrip = `trip-active-done-${process.pid}`;
+  const db = new pg.Client({ connectionString: DATABASE_URL });
+  await db.connect();
+  t.after(async () => {
+    await db.query("SET session_replication_role = 'replica'").catch(() => {});
+    for (const id of [openTrip, doneTrip]) await db.query('DELETE FROM rides WHERE trip_id = $1', [id]).catch(() => {});
+    await db.query("SET session_replication_role = 'origin'").catch(() => {});
+    for (const p of [drv, pax, other]) {
+      await db.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
+      await db.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});
+    }
+    await db.end();
+    await app.close();
+  });
+  const drvS = await mintSession(app, drv);
+  const paxS = await mintSession(app, pax);
+  const otherS = await mintSession(app, other);
+  const active = (s) => get(app, '/api/v1/ride-state/active', s ? bearer(s) : undefined);
+
+  assert.equal((await active()).statusCode, 401, 'anon cannot list');
+  assert.deepEqual((await active(drvS)).json(), { items: [] }, 'no rides yet');
+
+  for (const [tripId, status] of [[openTrip, 'DRIVER_EN_ROUTE'], [doneTrip, 'COMPLETED']]) {
+    await db.query(
+      `INSERT INTO rides (trip_id, status, role, driver_user_id, passenger_user_id, route_pickup_label, route_dropoff_label, completed_at)
+         VALUES ($1, $2, 'passenger', $3, $4, 'Дом', 'Центр', CASE WHEN $2 = 'COMPLETED' THEN now() END)`,
+      [tripId, status, drvS.user.userId, paxS.user.userId],
+    );
+  }
+
+  const asDriver = await active(drvS);
+  assert.equal(asDriver.statusCode, 200);
+  assert.deepEqual(asDriver.json(), { items: [{ tripId: openTrip, status: 'DRIVER_EN_ROUTE', role: 'driver' }] },
+    'the open ride only, as driver — whatever the stored row role says; the finished ride is not listed');
+  assert.deepEqual((await active(paxS)).json(), { items: [{ tripId: openTrip, status: 'DRIVER_EN_ROUTE', role: 'passenger' }] });
+  assert.deepEqual((await active(otherS)).json(), { items: [] }, 'someone else sees nothing');
+
+  // The listed id is exactly what the gated ride read accepts.
+  assert.equal((await get(app, `/api/v1/ride-state/rides/${openTrip}`, bearer(drvS))).statusCode, 200);
+
+  const cancel = await patch(app, `/api/v1/ride-state/rides/${openTrip}/status`,
+    { status: 'CANCELED', cancel: { reason: 'changed_mind' } }, bearer(paxS));
+  assert.equal(cancel.statusCode, 200, cancel.body);
+  assert.deepEqual((await active(drvS)).json(), { items: [] }, 'a canceled ride leaves the list');
+});
