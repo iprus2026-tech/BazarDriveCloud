@@ -3976,6 +3976,10 @@ if (process.argv[2] === '--onboarding-detach-case') {
     assert.match(source, /if \(reloadedLoginResumable\(\)\) \{\s*void resumeReloadedLogin\(draft\.role\);/);
     assert.match(source, /result = await auth\.adoptRole\(role\)/);
     assert.match(source, /if \(result\?\.code === 'ROLE_NOT_GRANTED'\) \{\s*enterAccess\(attempt, result\.roles \|\| \[\]\);/);
+    // A resumed attempt is marked verified, so Back onto the code step re-confirms through
+    // auth.resumeLogin() instead of verifying a code nobody requested (Codex P2 on #1194).
+    assert.match(source, /if \(result\?\.ok === true \|\| result\?\.code === 'ROLE_NOT_GRANTED'\) \{[\s\S]{0,420}verifiedResponseReceived = true;/);
+    assert.match(source, /if \(verifiedResponseReceived\) \{\s*result = await auth\.resumeLogin\(\);/);
     // Never automatic: the resume has exactly one caller, the role step's «Продолжить».
     assert.equal(source.match(/resumeReloadedLogin\(/g).length, 2, 'one definition, one call');
   });

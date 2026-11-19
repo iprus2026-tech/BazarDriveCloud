@@ -892,6 +892,13 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     try { result = await auth.adoptRole(role); } catch { result = { ok: false, code: 'ROLE_SWITCH_FAILED' }; }
     if (!ownsAttempt(attempt)) return;
     resuming = false;
+    if (result?.ok === true || result?.code === 'ROLE_NOT_GRANTED') {
+      // This attempt stands on an installed, already verified login — exactly the state a fresh
+      // verify leaves behind. If the user steps Back onto the code step, continuing must
+      // re-confirm it (auth.resumeLogin), never POST /auth/otp/verify for a code nobody
+      // requested (Codex P2 on #1194).
+      verifiedResponseReceived = true;
+    }
     if (result?.ok === true) {
       completeVerifiedLogin(result, attempt);
       return;
