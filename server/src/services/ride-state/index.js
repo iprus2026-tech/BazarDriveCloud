@@ -116,12 +116,22 @@ export default async function rideStateService(app) {
   // Discovery only: trip id, status and the caller's side, newest first, at most 5. It lets a
   // participant who lost the trip id (new device, cleared storage, a driver who left the offer
   // overlay before the passenger chose) find the ride; the ride body still comes from the
-  // gated GET below, so nothing here bypasses the recovery-linkage check.
-  app.get('/active', async (req, reply) => {
+  // gated GET below, so nothing here bypasses the recovery-linkage check. `?role=driver|passenger`
+  // narrows to the caller's side BEFORE the limit, so one side is never hidden behind newer
+  // rides of the other.
+  app.get('/active', {
+    schema: {
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { role: { type: 'string', enum: ['driver', 'passenger'] } },
+      },
+    },
+  }, async (req, reply) => {
     const viewer = await req.resolveUser();
     if (req.authError) return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
     if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
-    const rows = await listOpenRidesForParticipant(app.db, viewer.userId, { limit: 5 });
+    const rows = await listOpenRidesForParticipant(app.db, viewer.userId, { limit: 5, role: req.query.role ?? null });
     return { items: rows.map((row) => ({ tripId: row.trip_id, status: row.status, role: row.participant_role })) };
   });
 

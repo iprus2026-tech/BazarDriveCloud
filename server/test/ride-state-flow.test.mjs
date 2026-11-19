@@ -384,11 +384,12 @@ test('ride-state: /active lists only the caller\'s own unfinished rides, with th
   const other = `+1613${String(process.pid).padStart(7, '0')}`;
   const openTrip = `trip-active-open-${process.pid}`;
   const doneTrip = `trip-active-done-${process.pid}`;
+  const extraTrips = [];
   const db = new pg.Client({ connectionString: DATABASE_URL });
   await db.connect();
   t.after(async () => {
     await db.query("SET session_replication_role = 'replica'").catch(() => {});
-    for (const id of [openTrip, doneTrip]) await db.query('DELETE FROM rides WHERE trip_id = $1', [id]).catch(() => {});
+    for (const id of [openTrip, doneTrip, ...extraTrips]) await db.query('DELETE FROM rides WHERE trip_id = $1', [id]).catch(() => {});
     await db.query("SET session_replication_role = 'origin'").catch(() => {});
     for (const p of [drv, pax, other]) {
       await db.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
@@ -423,8 +424,28 @@ test('ride-state: /active lists only the caller\'s own unfinished rides, with th
   // The listed id is exactly what the gated ride read accepts.
   assert.equal((await get(app, `/api/v1/ride-state/rides/${openTrip}`, bearer(drvS))).statusCode, 200);
 
+  // ?role= filters BEFORE the limit (Codex P2 on #1193): five NEWER rides the driver takes as a
+  // passenger must not hide the one they drive.
+  for (let i = 0; i < 5; i += 1) {
+    extraTrips.push(`trip-active-pax-${process.pid}-${i}`);
+    await db.query(
+      `INSERT INTO rides (trip_id, status, role, driver_user_id, passenger_user_id, route_pickup_label, route_dropoff_label, created_at)
+         VALUES ($1, 'DRIVER_EN_ROUTE', 'passenger', $2, $3, 'Дом', 'Центр', now() + ($4::int * interval '1 second'))`,
+      [extraTrips[i], otherS.user.userId, drvS.user.userId, i + 1],
+    );
+  }
+  const mixed = (await active(drvS)).json().items;
+  assert.equal(mixed.length, 5);
+  assert.ok(mixed.every((item) => item.role === 'passenger'), 'unfiltered, the five newer passenger rides fill the page');
+  const role = (s, value) => get(app, `/api/v1/ride-state/active?role=${value}`, bearer(s));
+  assert.deepEqual((await role(drvS, 'driver')).json(), { items: [{ tripId: openTrip, status: 'DRIVER_EN_ROUTE', role: 'driver' }] },
+    'asked for the driver side, the driven ride is found');
+  assert.equal((await role(drvS, 'passenger')).json().items.length, 5);
+  assert.deepEqual((await role(paxS, 'driver')).json(), { items: [] }, 'the passenger drives nothing');
+  assert.equal((await role(drvS, 'admin')).statusCode, 400, 'an unknown role is refused');
+
   const cancel = await patch(app, `/api/v1/ride-state/rides/${openTrip}/status`,
     { status: 'CANCELED', cancel: { reason: 'changed_mind' } }, bearer(paxS));
   assert.equal(cancel.statusCode, 200, cancel.body);
-  assert.deepEqual((await active(drvS)).json(), { items: [] }, 'a canceled ride leaves the list');
+  assert.deepEqual((await role(drvS, 'driver')).json(), { items: [] }, 'a canceled ride leaves the list');
 });

@@ -126,7 +126,7 @@ await check('server-hydrated records without local markers remain backend discov
     // ids-only GET /ride-state/active that runs when this device holds no usable record.
     let calls = 0, discoveries = 0;
     globalThis.fetch = async (url) => {
-      if (String(url).endsWith('/ride-state/active')) { discoveries++; return response({ items: [] }); }
+      if (String(url).endsWith('/ride-state/active?role=driver')) { discoveries++; return response({ items: [] }); }
       calls++; return response({ ride: serverRide });
     };
     const value = await loadDriverTrip();
@@ -157,7 +157,7 @@ await check('#1174: with no local record the driver\'s open server ride is disco
   const serve = (items, log = []) => async (url, options) => {
     log.push(String(url));
     assert.equal(options.headers.Authorization, 'Bearer fixture-token');
-    if (String(url).endsWith('/ride-state/active')) return response({ items });
+    if (String(url).endsWith('/ride-state/active?role=driver')) return response({ items });
     assert.equal(url, 'https://fixture.invalid/api/v1/ride-state/rides/' + id);
     return response({ ride: serverRide });
   };
@@ -165,8 +165,8 @@ await check('#1174: with no local record the driver\'s open server ride is disco
   globalThis.fetch = serve([{ tripId: id, status: 'IN_PROGRESS', role: 'driver' }], log);
   const value = await loadDriverTrip();
   assert.equal(value.state, 'ready');
-  assert.deepEqual(log, ['https://fixture.invalid/api/v1/ride-state/active', 'https://fixture.invalid/api/v1/ride-state/rides/' + id],
-    'ids from discovery, the ride from the gated read');
+  assert.deepEqual(log, ['https://fixture.invalid/api/v1/ride-state/active?role=driver', 'https://fixture.invalid/api/v1/ride-state/rides/' + id],
+    'ids from discovery — asked for the driver side, so the server filters before its limit — the ride from the gated read');
   assert.equal(driverTripRoute(value), '/active-ride?role=driver&tripId=' + id);
   assert.equal(value.trip.from, 'Серверная подача');
   assert.equal(store.has(key), false, 'discovery writes nothing locally');

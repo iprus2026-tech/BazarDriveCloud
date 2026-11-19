@@ -683,9 +683,12 @@ export async function getRideFromBackend(tripId, { signal } = {}) {
 // (GET /ride-state/active). Ids only — the ride itself still comes from getRideFromBackend. Used
 // when this device holds no record of the ride (the driver left the offer overlay, reloaded, or
 // signed in on another device). Backend OFF: [] — every local ride is already in the local store.
-export async function listMyOpenRidesFromBackend({ signal } = {}) {
+// `role` ('driver' | 'passenger') is filtered on the server BEFORE its limit of 5, so the side
+// asked for is never hidden behind newer rides of the other side.
+export async function listMyOpenRidesFromBackend({ signal, role } = {}) {
   if (isBackendEnabled()) {
-    const r = await apiFetch('/ride-state/active', { signal });
+    const query = role === 'driver' || role === 'passenger' ? `?role=${role}` : '';
+    const r = await apiFetch(`/ride-state/active${query}`, { signal });
     if (!r || !Array.isArray(r.items)) {
       throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed /ride-state/active response' });
     }

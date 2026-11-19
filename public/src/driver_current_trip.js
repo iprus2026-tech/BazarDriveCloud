@@ -83,7 +83,7 @@ export async function loadDriverTrip({ tripId = null, signal } = {}) {
     // rides this account DRIVES (never the ones it rides as a passenger), keeping a pinned id
     // pinned. Ids only; the gated ride read below still confirms the ride itself.
     if (!candidate) {
-      const open = (await listMyOpenRidesFromBackend({ signal })).filter(item => item.role === 'driver');
+      const open = (await listMyOpenRidesFromBackend({ signal, role: 'driver' })).filter(item => item.role === 'driver');
       if (signal?.aborted || driverTripScope() !== scope) return { state: 'empty', trip: null };
       const found = tripId ? open.find(item => item.tripId === tripId) : open[0];
       if (!found) return { state: 'empty', trip: null };
