@@ -78,7 +78,8 @@ register('/onboarding', (context) => {
       && !bootSession.hasUncommittedLogin()
       && bootSession.retainAuthenticatedCleanupOwner(() => context.isCurrent())) {
     // Reload loses the volatile handoff, but the authenticated incomplete actor
-    // still needs an explicit Back/Guest cleanup owner.
+    // still needs an explicit Back/Guest cleanup owner. With the switch transport the
+    // onboarding screen can also resume it through the server (#1177, resumableLogin).
     onboardingHandoffOwner = context;
   }
   return onboarding(context, {
@@ -99,6 +100,7 @@ register('/onboarding', (context) => {
     return onboardingDetach.logout(options);
   },
   hasUncommittedLogin: () => bootSession.hasUncommittedLogin(),
+  resumableLogin: () => bootSession.resumableLogin(),
   recoveredLogin,
   });
 });
@@ -267,6 +269,8 @@ document.getElementById('fab').addEventListener('click', () => {
 if (isBackendEnabled() && isAuthTabRejected()
     && user.get().role !== 'guest') user.resetCacheOnly();
 const bootSession = createAuthSessionBootstrap({
+  // #1177 — lets a reload-reconstructed onboarding owner be confirmed again through the server.
+  switchActiveRole: role => putSessionActiveRole(role),
   onRejectedSession: () => {
     if (user.get().role !== 'guest') user.resetCacheOnly();
   },

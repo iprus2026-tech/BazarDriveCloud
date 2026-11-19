@@ -101,6 +101,10 @@ not repeat the successful revoke. Guest follows durable detach, account cleanup
 and ANONYMOUS, then consumes (never executes) pending action and enters Feed.
 Actual abandonment retains pending action and enters Welcome. Ordinary step Back
 and verify-phone-only Back retain their existing navigation without revoke.
+A reload during full onboarding (#1177) keeps a cleanup-only owner; after the
+role is chosen again it is confirmed through `PUT /auth/session/active-role`
+plus a session read instead of a second OTP (403 `ROLE_NOT_GRANTED` opens the
+driver-application card; other failures fall back to phone -> code).
 Foreign replacement/same-user rotation cannot be revoked, cleared or overwritten;
 an already-foreign Guest detach uses only this tab's cached projection.
 Backend-OFF Guest/Back remain unchanged. B2-B2 R1 now revokes a successful,
