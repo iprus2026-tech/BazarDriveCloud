@@ -12,6 +12,7 @@ import {
 } from '../ride_actions.js';
 import { applySmokeRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
+import { busyDriverRide } from '../driver_current_trip.js';
 
 const TYPE_LABELS = {
   trip:          'Поездка',
@@ -246,6 +247,8 @@ function pickCtaSpec(post, u) {
     return { kind: 'respond', label: 'Откликнуться' };
   }
   if (post.type === 'trip') {
+    // The author of a trip offer has nobody to write to: no «Написать водителю» to oneself.
+    if (canManageOwnOrder(post, u)) return { kind: 'none' };
     return { kind: 'chat', label: 'Написать водителю' };
   }
   if (post.type === 'marketplace') {
@@ -312,6 +315,12 @@ function runCtaAction(spec, post, detailsHref) {
   }
   if (spec.kind === 'accept') {
     if (!canAcceptPassengerRequest(fresh, post)) return;
+    // One ride at a time: an unfinished ride is reopened instead of accepting another.
+    const busy = busyDriverRide();
+    if (busy) {
+      go(`/active-ride?role=driver&tripId=${encodeURIComponent(busy.tripId)}`);
+      return;
+    }
     if (post.canonical === 'ride_order' && post.orderId) {
       // BD-LIFE-06 — accurate accept-source label so the seeded ride
       // does not claim it came from /driver-map.

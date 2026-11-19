@@ -12,6 +12,7 @@ import {
 } from '../ride_actions.js';
 import { applySmokeRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
+import { busyDriverRide } from '../driver_current_trip.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -287,6 +288,12 @@ export default function feed(renderContext) {
         const u = applySmokeRole(user.get());
         const post = posts.find((p) => String(p.id) === String(postId));
         if (!canAcceptPassengerRequest(u, post)) return;
+        // One ride at a time: an unfinished ride is reopened instead of accepting another.
+        const busy = busyDriverRide();
+        if (busy) {
+          go(`/active-ride?role=driver&tripId=${encodeURIComponent(busy.tripId)}`);
+          return;
+        }
 
         // BD-RIDE-ORDER-UNIFY-01 PR3 — Canonical ride-order projections
         // accept through the shared store so the underlying order flips
@@ -485,6 +492,9 @@ function renderTripCard(p, guestReadOnly = false) {
   } else if (p.passenger) {
     ctaAttrs = `data-action="respond" data-post-id="${postId}" aria-label="Откликнуться на заявку попутчика"`;
     ctaLabel = 'Откликнуться';
+  } else if (!guestReadOnly && canManageOwnOrder(p, u)) {
+    // The author's own trip offer: nobody to write to, so no CTA (the card still opens).
+    ctaAttrs = null;
   } else {
     ctaAttrs = `data-action="chat" data-post-id="${postId}" aria-label="Написать водителю"`;
     ctaLabel = 'Написать водителю';
@@ -513,9 +523,9 @@ function renderTripCard(p, guestReadOnly = false) {
         ${p.price ? `<div class="feed-trip-price">${escapeHtml(p.price)}</div>` : ''}
       </div>
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
-      <button class="bd-btn primary feed-card-cta" type="button" ${ctaAttrs}>
+      ${ctaAttrs ? `<button class="bd-btn primary feed-card-cta" type="button" ${ctaAttrs}>
         ${ctaLabel}
-      </button>
+      </button>` : ''}
       ${renderPostActions(p)}
     </article>
   `;

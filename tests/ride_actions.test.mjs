@@ -89,13 +89,16 @@ test('canManageOwnOrder: true for any own-order marker, false otherwise', async 
 // ── canAcceptOrder ────────────────────────────────────────────────────────────
 
 test('canAcceptOrder: ready driver can accept a foreign trip / passenger request', async () => {
-  assert.equal(canAcceptOrder({ type: 'trip', passenger: true }, READY_DRIVER), true);
+  assert.equal(canAcceptOrder({ type: 'trip', passenger: true, price: '1 500 ₽' }, READY_DRIVER), true);
+  // A plain post without a price has no fare to ride on: the driver answers through /respond.
+  assert.equal(canAcceptOrder({ type: 'trip', passenger: true }, READY_DRIVER), false);
+  assert.equal(canAcceptOrder({ type: 'trip', passenger: true, price: 'договорная' }, READY_DRIVER), false);
   assert.equal(canAcceptOrder({ canonical: 'ride_order', orderId: 'x', type: 'trip', passenger: true }, READY_DRIVER), true);
   assert.equal(canAcceptOrder({ type: 'passenger_request' }, READY_DRIVER), true);
 });
 
 test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order', async () => {
-  const post = { type: 'trip', passenger: true };
+  const post = { type: 'trip', passenger: true, price: '900 ₽' };
   assert.equal(canAcceptOrder(post, { ...READY_DRIVER, role: 'passenger' }), false);
   assert.equal(canAcceptOrder(post, { ...READY_DRIVER, waybillOpen: false }), false);
   assert.equal(canAcceptOrder({ ...post, createdByCurrentUser: true }, READY_DRIVER), false);

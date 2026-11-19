@@ -310,12 +310,30 @@ function buildRideOrderFromComposerDraft(d, u) {
 
 // ── Validate draft ─────────────────────────────────────────────────
 
+// A whole amount from 1 to 9 999 999, spaces allowed as thousands separators.
+function isPositiveAmount(value) {
+  const digits = String(value).replace(/\s+/g, '');
+  return /^[1-9]\d{0,6}$/.test(digits);
+}
+
 function validate(d) {
   if (d.type === 'trip' || d.type === 'passenger') {
     if (d.from.length < 2) return 'Укажите откуда (минимум 2 символа)';
     if (d.to.length < 2)   return 'Укажите куда (минимум 2 символа)';
     if (!d.when)            return 'Укажите время отправления';
+    if (d.from.trim().toLocaleLowerCase('ru-RU') === d.to.trim().toLocaleLowerCase('ru-RU')) {
+      return 'Откуда и куда совпадают — укажите разные места';
+    }
+    if (d.type === 'trip') {
+      if (d.seats && !/^[1-8]$/.test(d.seats)) return 'Мест: укажите число от 1 до 8';
+      if (d.price && !isPositiveAmount(d.price)) return 'Цена: укажите сумму в рублях, только цифры';
+    }
+    if (d.type === 'passenger' && d.budget && !isPositiveAmount(d.budget)) {
+      return 'Бюджет: укажите сумму в рублях, только цифры';
+    }
+    if (d.phone && d.phone.replace(/\D/g, '').length < 10) return 'Телефон: укажите номер полностью';
   } else {
+    if (d.listingPrice && !isPositiveAmount(d.listingPrice)) return 'Цена: укажите сумму, только цифры';
     if (d.title.length < 3) return 'Укажите название (минимум 3 символа)';
   }
   return null;
