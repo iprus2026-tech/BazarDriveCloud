@@ -9,10 +9,12 @@ import {
   canManageOwnOrder,
   acceptPassengerRequestFromPost,
   acceptCanonicalRideOrder,
+  isDriverMode,
 } from '../ride_actions.js';
 import { applySmokeRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
 import { busyDriverRide } from '../driver_current_trip.js';
+import { ownOfferLabel } from '../response_store.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -494,8 +496,11 @@ function renderTripCard(p, guestReadOnly = false) {
     ctaAttrs = `data-action="accept-order" data-post-id="${postId}" aria-label="Принять заказ"`;
     ctaLabel = 'Принять заказ';
   } else if (p.passenger) {
-    ctaAttrs = `data-action="respond" data-post-id="${postId}" aria-label="Откликнуться на заявку попутчика"`;
-    ctaLabel = 'Откликнуться';
+    // #1176 — a driver who already responded from this device sees their offer, and the same
+    // tap opens it for editing.
+    const mine = !guestReadOnly && isDriverMode(u) ? ownOfferLabel(p.id) : '';
+    ctaAttrs = `data-action="respond" data-post-id="${postId}" aria-label="${mine ? 'Изменить своё предложение' : 'Откликнуться на заявку попутчика'}"`;
+    ctaLabel = mine ? escapeHtml(mine) : 'Откликнуться';
   } else if (!guestReadOnly && canManageOwnOrder(p, u)) {
     // The author's own trip offer: nobody to write to, so no CTA (the card still opens).
     ctaAttrs = null;

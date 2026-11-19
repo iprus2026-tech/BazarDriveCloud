@@ -34,7 +34,7 @@ globalThis.localStorage = {
 };
 const mockApi = await import('../public/src/mock_api.js');
 
-function respondHarness({ backend = true, vehicle = { model: 'Kia Rio', color: 'Серый', plate: 'А 108 ОР 77' } } = {}) {
+function respondHarness({ backend = true, vehicle = { model: 'Kia Rio', color: 'Серый', plate: 'А 108 ОР 77' }, existingOffer = null } = {}) {
   const offers = [];
   const navigation = [];
   const driver = { role: 'driver', firstName: 'Иван', vehicleMake: 'Kia', vehicleModel: 'Rio', vehiclePlate: 'А 108 ОР 77' };
@@ -49,6 +49,9 @@ function respondHarness({ backend = true, vehicle = { model: 'Kia Rio', color: '
     roleGateCode: () => null, ROLE_GATE_TEXT: {}, PROFILE_CTA_LABEL: 'Перейти в профиль', DRIVER_ROLE_REQUIRED: 'DRIVER_ROLE_REQUIRED',
     loadResource: (fn) => fn(),
     resolveActiveGarageVehicle: () => (vehicle ? { ...vehicle } : null),
+    // #1176 — respond.js imports this from response_store.js: the driver's earlier offer for
+    // the post, if any (null in every case but the revision ones below).
+    findOwnOfferForPost: () => existingOffer,
     setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
     window: { location: { hash: '#/respond' } },
     document: { body: { contains: () => true }, createElement: (tag) => new FakeElement(tag) },
@@ -58,7 +61,8 @@ function respondHarness({ backend = true, vehicle = { model: 'Kia Rio', color: '
   // Tolerant of a source without the live helpers, so the OFF controls stay meaningful on `main`.
   vm.runInContext(`${source}\nglobalThis.api = { renderPassengerRide,
     livePriceChips: typeof livePriceChips === 'function' ? livePriceChips : null,
-    liveOfferMessage: typeof liveOfferMessage === 'function' ? liveOfferMessage : null };`, context,
+    liveOfferMessage: typeof liveOfferMessage === 'function' ? liveOfferMessage : null,
+    liveOfferText: typeof liveOfferText === 'function' ? liveOfferText : null };`, context,
     { filename: 'actual_respond.js' });
   return { api: context.api, offers, navigation };
 }
@@ -179,6 +183,60 @@ await check('backend OFF: the demo chips, timing, prefilled message and car meta
 await check('backend ON but a legacy post (no canonical order): the demo form', () => {
   const f = render(respondHarness(), livePost({ canonical: undefined, orderId: undefined }));
   assert.deepEqual(f.chips(), ['1300', '1500', '1800']);
+});
+
+await check('#1176: liveOfferText is the inverse of liveOfferMessage and leaves foreign text alone', () => {
+  const { api } = respondHarness();
+  for (const timing of ['at_time', 'earlier', 'negotiate']) {
+    for (const text of ['', 'Позвоню за 5 минут', 'две\nстроки']) {
+      assert.equal(api.liveOfferText(api.liveOfferMessage(timing, text, true)), text);
+      assert.equal(api.liveOfferText(api.liveOfferMessage(timing, text, false)), text);
+    }
+  }
+  assert.equal(api.liveOfferText('Подам машину к указанному времени, как договаривались'), 'Подам машину к указанному времени, как договаривались',
+    'a sentence that only begins like a timing line is the driver\'s own text');
+  for (const none of [null, undefined, 42, '   ']) assert.equal(api.liveOfferText(none), '');
+});
+
+// ── C2. #1176 — an offer already sent opens as an edit of it ──────────────────
+await check('#1176 ON: an earlier offer opens the form as an edit — its price, typed text and timing, and says so', async () => {
+  const existingOffer = { id: 'resp_order-x', kind: 'passenger_response', requestId: 'order-x', status: 'SENT',
+    driverPrice: 990, pickupTiming: 'negotiate', message: 'Время подачи обсудим. Буду вовремя', messageText: 'Буду вовремя' };
+  const h = respondHarness({ existingOffer });
+  const f = render(h, livePost({ scheduledMode: 'later', when: 'Завтра, 07:00' }));
+  assert.equal(f.$('#respond-price').getAttribute('value'), '990', 'the price is the offer already sent, not the order price');
+  assert.match(f.$('#respond-existing').textContent, /Вы уже откликнулись: 990/);
+  assert.match(f.$('.respond__submit-label').textContent, /Изменить предложение/);
+  assert.match(f.$('#respond-message').textContent, /^Буду вовремя$/, 'the text as typed — the timing line is not doubled');
+  const activeTiming = f.root.querySelectorAll('[data-timing]').filter((c) => /\bactive\b/.test(c.className));
+  assert.deepEqual(activeTiming.map((c) => c.getAttribute('data-timing')), ['negotiate']);
+  await f.submit({ price: '1100', message: 'Буду вовремя' });
+  assert.equal(h.offers.length, 1, 'a revision is sent to the server like any offer');
+  assert.equal(h.offers[0].price, 1100);
+  assert.match(f.$('.respond__success-title').textContent, /Предложение обновлено/);
+});
+await check('#1176 ON: an offer saved before messageText keeps the driver\'s text; a price-only revision does not erase it', async () => {
+  for (const [stored, typed] of [
+    ['Подам машину к указанному времени.\nПозвоню за 5 минут', 'Позвоню за 5 минут'],
+    ['Позвоню за 5 минут', 'Позвоню за 5 минут'],
+    ['Время подачи обсудим.', ''],
+  ]) {
+    const existingOffer = { id: 'resp_order-x', kind: 'passenger_response', requestId: 'order-x', status: 'SENT',
+      driverPrice: 800, pickupTiming: 'at_time', message: stored };
+    const h = respondHarness({ existingOffer });
+    const f = render(h, livePost({ scheduledMode: 'later', when: 'Завтра, 07:00' }));
+    assert.equal(f.$('#respond-message').textContent.trim(), typed, `typed text recovered from «${stored}»`);
+    // The driver changes only the price: the text in the field goes out again.
+    await f.submit({ price: '900', message: f.$('#respond-message').textContent.trim() });
+    assert.equal(h.offers[0].price, 900);
+    assert.equal(h.offers[0].message, ['Подам машину к указанному времени.', typed].filter(Boolean).join('\n'),
+      'one timing line, then the text — not erased and not doubled');
+  }
+});
+await check('#1176: with no earlier offer the form is a new offer (no banner, the usual label)', () => {
+  const f = render(respondHarness(), livePost());
+  assert.equal(f.$('#respond-existing'), null);
+  assert.match(f.$('.respond__submit-label').textContent, /Отправить отклик/);
 });
 
 // ── D. the feed post carries the order schedule ──────────────────────────────

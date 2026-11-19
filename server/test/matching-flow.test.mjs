@@ -123,10 +123,23 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
   assert.equal(off1.driverId, drvS.user.userId, 'offer is owned by the authenticated driver');
   assert.equal(off1.price, 850);
 
-  // idempotent: re-POST returns the SAME offer (one per order+driver), still sent.
+  // A retry of the SAME payload is idempotent: the same offer, nothing changed.
+  const retry = (await post(app, '/api/v1/matching/offers',
+    { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,9', etaMin: 5, price: 850, message: 'еду' }, bearer(drvS))).json().offer;
+  assert.equal(retry.id, off1.id);
+  assert.equal(retry.price, 850);
+  assert.equal(retry.expiresAt, off1.expiresAt, 'a retry does not extend the offer');
+
+  // #1176 — a REVISED bid replaces the first: still one offer per order+driver, with the new
+  // price. Details the request does not carry are kept.
   const off2 = (await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, price: 999 }, bearer(drvS))).json().offer;
   assert.equal(off2.id, off1.id, 'same (order,driver) => same offer');
   assert.equal(off2.status, 'sent');
+  assert.equal(off2.price, 999, 'the revised price is stored');
+  assert.equal(off2.driverName, 'Иван', 'details the revision did not send are kept');
+  assert.equal(off2.message, 'еду');
+  assert.equal(off2.etaMin, 5);
+  assert.equal(off2.expiresAt, off1.expiresAt, 'revising does not extend the offer');
 
   // owner lists offers (owner-only) -> exactly one.
   const listRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
@@ -134,6 +147,7 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
   const items = listRes.json().items;
   assert.equal(items.length, 1, 'one offer for the order');
   assert.equal(items[0].id, off1.id);
+  assert.equal(items[0].price, 999, 'the passenger sees the revised price');
 
   // a DIFFERENT authenticated user cannot list another passenger's offers.
   const otherS = await mintSession(app, other);
@@ -206,3 +220,56 @@ test('offer role gate: only a granted, active, verified driver may offer', { ski
   // refusals write nothing: the only offer is the one the granted driver made.
   assert.equal(await offerCount(order.id), 1);
 });
+
+// #1176 — the bid the passenger selects is the bid the driver last sent; nothing changes after /select.
+test('offer revision: the selected ride carries the revised price; a revision after select is refused', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const pax = `+1587${String(process.pid).padStart(7, '0')}`;
+  const drv = `+1588${String(process.pid).padStart(7, '0')}`;
+  const cleanup = new pg.Client({ connectionString: DATABASE_URL });
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    await cleanup.query("SET session_replication_role = 'replica'").catch(() => {});
+    for (const id of orderIds) {
+      const tripId = `trip_${id}`;
+      await cleanup.query("DELETE FROM notification_outbox WHERE immutable_envelope #>> '{aggregate,key}' = $1", [tripId]).catch(() => {});
+      await cleanup.query('DELETE FROM ride_events WHERE trip_id = $1', [tripId]).catch(() => {});
+      await cleanup.query('DELETE FROM rides WHERE trip_id = $1', [tripId]).catch(() => {});
+    }
+    await cleanup.query("SET session_replication_role = 'origin'").catch(() => {});
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    for (const p of [pax, drv]) {
+      await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
+      await cleanup.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+  const paxS = await mintSession(app, pax);
+  const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
+  orderIds.push(order.id);
+  const drvS = await grantDriverRole(cleanup, await mintSession(app, drv));
+  const bid = (price) => post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, price }, bearer(drvS));
+
+  assert.equal((await bid(800)).json().offer.price, 800);
+  assert.equal((await bid(950)).json().offer.price, 950, 'the revised bid is stored');
+  assert.equal(await offerCountFor(cleanup, order.id), 1, 'still one offer for the driver');
+
+  const select = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: drvS.user.userId }, bearer(paxS));
+  assert.equal(select.statusCode, 200, select.body);
+  const ride = (await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(`trip_${order.id}`)}`, bearer(paxS))).json().ride;
+  assert.match(String(ride.ride?.price ?? ride.order?.offerPrice ?? ''), /950/, 'the ride is priced at the revised bid');
+
+  const late = await bid(1200);
+  assert.equal(late.statusCode, 409, 'no revision once the passenger has chosen');
+  assert.equal(late.json().code, 'ORDER_NOT_OPEN');
+  const stored = (await cleanup.query(
+    'SELECT price::float8 AS price, status FROM offers WHERE order_id = (SELECT id FROM orders WHERE legacy_id = $1)', [order.id])).rows;
+  assert.deepEqual(stored, [{ price: 950, status: 'accepted' }], 'the accepted offer is untouched');
+});
+
+async function offerCountFor(db, orderLegacyId) {
+  return (await db.query(
+    'SELECT count(*)::int AS n FROM offers WHERE order_id = (SELECT id FROM orders WHERE legacy_id = $1)', [orderLegacyId])).rows[0].n;
+}

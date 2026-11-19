@@ -94,6 +94,8 @@ function respondHarness({ backend = true, submit } = {}) {
     roleGateCode: () => null, ROLE_GATE_TEXT: {}, PROFILE_CTA_LABEL: 'Перейти в профиль', DRIVER_ROLE_REQUIRED: 'DRIVER_ROLE_REQUIRED',
     loadResource: (fn) => fn(),
     resolveActiveGarageVehicle: () => ({ model: 'Kia Rio', color: 'Серый', plate: 'А 108 ОР 77' }),
+    // #1176 — respond.js imports this from response_store.js; these cases have no earlier offer.
+    findOwnOfferForPost: () => null,
     setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
     window: { location: { hash: '#/respond' } },
     document: { body: { contains: () => true }, createElement: (tag) => new FakeElement(tag) },
