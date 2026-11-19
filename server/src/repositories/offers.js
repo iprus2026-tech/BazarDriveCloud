@@ -4,12 +4,16 @@
 // for its owner. The accepted/rejected transitions are R05 (/select); the TTL→expired sweep is a
 // future job. NUMERIC `price` is passed as a JS number (or null).
 
-// Idempotent create: insert a fresh 'sent' offer; on the (order_id, driver_id) conflict, RE-SEND
-// only a previously 'withdrawn' offer (flip to 'sent', bump updated_at) — preserving its details
-// and original expires_at, mirroring the client sendDriverOffer. When the existing offer is
-// already 'sent' or terminal (accepted/rejected/expired) the conflict is a NO-OP and RETURNING is
-// empty (the caller reads the existing row back). Returns the upserted row, or undefined on a
-// no-op conflict.
+// One offer per (order_id, driver_id): insert a fresh 'sent' offer; on the conflict, a still-open
+// offer ('sent', or a 'withdrawn' one being re-sent) takes the details of THIS request (#1176).
+// A driver revising their bid must not get a success answer while the passenger keeps seeing —
+// and the ride keeps being priced at — the first one. Only the details the request carries are
+// replaced (COALESCE), so a retry of the same payload changes nothing and a partial re-send (just
+// a new price) keeps the name, car and message already stored. The original expires_at is kept:
+// revising is not a way to extend an offer's life. A terminal offer (accepted/rejected/expired)
+// is never touched: the conflict is a NO-OP and RETURNING is empty (the caller reads the existing
+// row back). The caller holds the order's FOR UPDATE lock and has checked it is still CREATED,
+// so a revision can never land after /select. Returns the row, or undefined on a no-op conflict.
 export async function upsertOffer(db, o) {
   const { rows } = await db.query(
     `INSERT INTO offers
@@ -17,8 +21,17 @@ export async function upsertOffer(db, o) {
         vehicle_model, vehicle_color, vehicle_plate)
      VALUES ($1, $2, $3, 'sent', $4, $5, $6, $7, $8, $9, now() + make_interval(mins => $10::int), $11, $12, $13)
      ON CONFLICT (order_id, driver_id) DO UPDATE
-       SET status = 'sent', updated_at = now()
-       WHERE offers.status = 'withdrawn'
+       SET status = 'sent', updated_at = now(),
+           driver_name   = COALESCE(EXCLUDED.driver_name, offers.driver_name),
+           car           = COALESCE(EXCLUDED.car, offers.car),
+           rating        = COALESCE(EXCLUDED.rating, offers.rating),
+           eta_min       = COALESCE(EXCLUDED.eta_min, offers.eta_min),
+           price         = COALESCE(EXCLUDED.price, offers.price),
+           message       = COALESCE(EXCLUDED.message, offers.message),
+           vehicle_model = COALESCE(EXCLUDED.vehicle_model, offers.vehicle_model),
+           vehicle_color = COALESCE(EXCLUDED.vehicle_color, offers.vehicle_color),
+           vehicle_plate = COALESCE(EXCLUDED.vehicle_plate, offers.vehicle_plate)
+       WHERE offers.status IN ('sent', 'withdrawn')
      RETURNING *`,
     [o.legacyId, o.orderId, o.driverId, o.driverName, o.car, o.rating, o.etaMin, o.price, o.message, o.ttlMin,
       o.vehicleModel ?? null, o.vehicleColor ?? null, o.vehiclePlate ?? null],

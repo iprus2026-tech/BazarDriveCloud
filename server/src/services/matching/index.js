@@ -134,8 +134,9 @@ export default async function matchingService(app) {
         return { err: [403, 'CANNOT_OFFER_OWN_ORDER', 'cannot offer on your own order'] };
       }
       if (order.status !== 'CREATED') return { err: [409, 'ORDER_NOT_OPEN', 'order is not open for offers'] };
-      // Idempotent: upsert creates a fresh 'sent' offer or re-sends a withdrawn one; a no-op
-      // conflict (already 'sent' or terminal) returns no row, so read the existing one back.
+      // One offer per driver: upsert creates a fresh 'sent' offer, or gives a still-open one the
+      // details of this request (#1176 — a revised bid replaces the first). A no-op conflict (a
+      // terminal offer) returns no row, so read the existing one back.
       let row = await upsertOffer(client, {
         legacyId: newOfferId(order.legacy_id, viewer.userId),
         orderId: order.id,
