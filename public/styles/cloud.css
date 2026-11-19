@@ -1315,6 +1315,7 @@ body {
 /* ── Feed search + share toast (BD-FEED-SEARCH-01 / BD-FEED-SHARE-01) ── */
 .feed-search { margin: 0 var(--pad) 10px; }
 .feed-search[hidden] { display: none; }
+#feed-search-toggle[hidden] { display: none; }
 .feed-search__reset { margin-top: 14px; }
 .screen--feed { position: relative; }
 .feed-toast {
@@ -17181,13 +17182,18 @@ button.pfp-menu-row:active { opacity: 0.7; }
 /* The accent is one step deeper in light: as text it needs more contrast on white. */
 :root[data-theme="light"] { --accent: #E8521C; }
 
-/* Dark islands — map canvases and the cards floating on them stay dark, so the
-   dark tokens are restored for everything inside. */
+/* Dark islands — map canvases, the cards floating on them and every other surface that
+   hard-codes a dark background stay dark, so the dark tokens are restored inside. A rule
+   that paints its own dark background must be listed here (siblings of the map shell are
+   not covered by .bd-map-shell). */
 :root[data-theme="light"] :is(
   .bd-map-shell, .map-home__banner, .map-home__watermark,
   .loc-perm__floating-card, .loc-perm__sheet,
   .rp-map__watermark, .omd-map__from, .omd-map__to, .omd-map__watermark,
-  .active-ride__icon-btn, .active-ride-passenger__trip-pill, .active-ride-passenger__top-card
+  .active-ride__icon-btn, .active-ride-passenger__trip-pill, .active-ride-passenger__top-card,
+  .active-ride__status-pill, .active-ride__stats, .active-ride__notice,
+  .active-ride-driver-sheet__panel, .driver-sheet__panel, .responses__toast,
+  .bd-error-banner.offline, .bd-error-banner.retrying, .bd-error-toast.recovered
 ) {
   color-scheme: dark;
   --accent: #FF6B35;

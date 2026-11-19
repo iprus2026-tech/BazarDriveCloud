@@ -100,6 +100,9 @@ export default function feed(renderContext) {
   // until then.
   const guestSignIn = guestReadOnly && isBackendEnabled();
   if (guestSignIn) chipRow.hidden = true;
+  // Nothing to search either: the list is the sign-in prompt, and a repaint from the search
+  // field would replace it with an empty-feed state.
+  if (guestSignIn) root.querySelector('#feed-search-toggle').hidden = true;
 
   function renderSignIn() {
     feedList.setAttribute('aria-busy', 'false');
@@ -138,6 +141,7 @@ export default function feed(renderContext) {
   }
 
   function renderList() {
+    if (guestSignIn) return renderSignIn();
     feedList.setAttribute('aria-busy', 'false');
     const q = normalizeQuery(query);
     const items = posts.filter((p) => {
