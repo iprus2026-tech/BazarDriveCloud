@@ -3,6 +3,7 @@
 import './telegram_launch.js';
 import { register, start, go, setPendingAction, consumePendingAction, setAdmissionGuard, isCurrentDevDocsRoute, setScreenChromeMount, getRenderedRoute, onRouteRendered } from './router.js';
 import { getTelegramLaunch } from './telegram_launch.js';
+import { applyTheme } from './theme.js';
 import { initTelegramBridge } from './telegram_bridge.js';
 import { isDriverMode } from './ride_actions.js';
 import { user } from './state.js';
@@ -43,6 +44,9 @@ import tripReceipt from './screens/trip_receipt.js';
 import orderDetail from './screens/order_detail.js';
 import settings    from './screens/settings.js';
 import opsScreens  from './screens/ops_screens.js';
+
+// BD-THEME-01 — paint the stored device theme before the first screen mounts.
+applyTheme();
 
 register('/welcome',     welcome);
 register('/feed',        feed);

@@ -1,6 +1,7 @@
 import { go } from '../router.js';
 import { isBackendEnabled } from '../api_config.js';
 import { createLogoutControl } from '../auth_logout.js';
+import { getThemePref, setThemePref } from '../theme.js';
 
 // BD-SETTINGS-01 — Settings screen. Net-new surface ported from the Cloud
 // Design render gate (st-*/bd-* prototype) into repo-native settings__*
@@ -43,6 +44,7 @@ function langOptionsHtml() {
   return LANGUAGES.map((label, i) => `
     <button type="button" class="settings__lang-opt${i === 0 ? ' settings__lang-opt--on' : ''}" data-lang="${i}">
       <span class="settings__lang-opt-label">${label}</span>
+      ${i === 0 ? '' : '<span class="settings__lang-opt-soon">Скоро</span>'}
       <span class="settings__lang-opt-check" aria-hidden="true">${svg(I_CHECK, 16, 2.4)}</span>
     </button>`).join('');
 }
@@ -76,9 +78,9 @@ export default function settings(renderContext, { logout } = {}) {
             <span class="settings__row-label">Тема</span>
           </div>
           <div class="settings__seg" role="group" aria-label="Тема оформления">
-            <button type="button" class="settings__seg-btn" data-theme="light">Светлая</button>
-            <button type="button" class="settings__seg-btn settings__seg-btn--on" data-theme="dark">Тёмная</button>
-            <button type="button" class="settings__seg-btn" data-theme="system">Системная</button>
+            <button type="button" class="settings__seg-btn" data-theme-pref="light" aria-pressed="false">Светлая</button>
+            <button type="button" class="settings__seg-btn" data-theme-pref="dark" aria-pressed="false">Тёмная</button>
+            <button type="button" class="settings__seg-btn" data-theme-pref="system" aria-pressed="false">Системная</button>
           </div>
         </div>
       </div>
@@ -179,8 +181,14 @@ export default function settings(renderContext, { logout } = {}) {
   });
   langList.querySelectorAll('.settings__lang-opt').forEach((opt) => {
     opt.addEventListener('click', () => {
-      langList.querySelectorAll('.settings__lang-opt').forEach((o) => o.classList.toggle('settings__lang-opt--on', o === opt));
       const label = opt.querySelector('.settings__lang-opt-label');
+      // Only Russian ships today: another language stays a labelled «Скоро» option and
+      // says so, instead of showing as selected while the interface stays Russian.
+      if (opt.dataset.lang !== '0') {
+        toast(`${label ? label.textContent : 'Этот язык'} — скоро. Пока интерфейс на русском`);
+        return;
+      }
+      langList.querySelectorAll('.settings__lang-opt').forEach((o) => o.classList.toggle('settings__lang-opt--on', o === opt));
       if (langValue && label) langValue.textContent = label.textContent;
       langList.hidden = true;
       langRow.setAttribute('aria-expanded', 'false');
@@ -188,11 +196,19 @@ export default function settings(renderContext, { logout } = {}) {
   });
 
   // ── Theme segmented control ──────────────────────────────
+  // BD-THEME-01 — a real device preference (theme.js): applied and stored on tap, so the
+  // control always shows the theme that is painted and that survives a reload.
   const segBtns = Array.from(root.querySelectorAll('.settings__seg-btn'));
-  segBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      segBtns.forEach((b) => b.classList.toggle('settings__seg-btn--on', b === btn));
+  function paintThemePref(pref) {
+    segBtns.forEach((b) => {
+      const on = b.dataset.themePref === pref;
+      b.classList.toggle('settings__seg-btn--on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+  }
+  paintThemePref(getThemePref());
+  segBtns.forEach((btn) => {
+    btn.addEventListener('click', () => paintThemePref(setThemePref(btn.dataset.themePref)));
   });
 
   // ── Push toggle reveals the Звук row; both are demo toggles ─
