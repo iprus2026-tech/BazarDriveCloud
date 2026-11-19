@@ -44,6 +44,18 @@ export function liveOfferMessage(timingKey, text, scheduled) {
   return [timing ? timing.line : '', typeof text === 'string' ? text.trim() : ''].filter(Boolean).join('\n');
 }
 
+// The inverse, for an offer stored before `messageText` existed: the driver's own text out of a
+// composed live message — the message minus a leading generated timing line, if it has one.
+// Exact lines only; anything else is the driver's text and is returned whole.
+export function liveOfferText(message) {
+  const full = typeof message === 'string' ? message.trim() : '';
+  for (const { line } of LIVE_TIMING_OPTIONS) {
+    if (full === line) return '';
+    if (full.startsWith(`${line}\n`)) return full.slice(line.length + 1).trim();
+  }
+  return full;
+}
+
 // The active garage vehicle's own colour ('' when unset), never a placeholder.
 function realVehicleColor(u) {
   const active = resolveActiveGarageVehicle(u);
@@ -407,9 +419,11 @@ function renderPassengerRide(root, post) {
   // opens as an EDIT of it (its price, timing and text), and says so, instead of a blank form
   // that silently replaced or — on a backend — was silently ignored.
   const existingOffer = findOwnOfferForPost(post.id);
+  // An offer saved before `messageText` existed has only the composed `message`: recover the
+  // driver's text from it, so a price-only revision cannot erase what they wrote (Codex P2 on #1195).
   const existingText = existingOffer
     ? (typeof existingOffer.messageText === 'string' ? existingOffer.messageText
-      : (liveOffer ? '' : existingOffer.message || ''))
+      : (liveOffer ? liveOfferText(existingOffer.message) : existingOffer.message || ''))
     : null;
   const defaultMessage = existingText ?? (liveOffer ? '' : getDefaultMessage(vehicle));
   const submitText = existingOffer ? 'Изменить предложение' : 'Отправить отклик';
