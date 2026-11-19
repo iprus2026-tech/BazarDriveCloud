@@ -317,6 +317,21 @@ await check('#1181: an own open order for the route reopens as the published car
   await again.publish();
   assert.equal(again.created.length, 1);
 });
+await check('#1181: a restored order shows its own time and price — a composer order keeps its free-text time', () => {
+  const base = { id: 'order-abc123', status: 'CREATED', pickup: { label: 'Лесная, 7' }, dropoff: { label: 'Озеро Сенеж' } };
+  const summary = (openOrder) => draftHarness({ backend: false, route: OFF_ROUTE, openOrder }).f.$('.omd-summary').textContent.replace(/\s+/g, ' ');
+  // «Новая публикация» stores the typed time in scheduledLabel and scheduledAt, and may have no price.
+  const composer = summary({ ...base, scheduledMode: 'later', scheduledLabel: 'Завтра утром', scheduledAt: 'Завтра утром', estimatedPrice: 0 });
+  assert.match(composer, /Завтра утром/);
+  assert.doesNotMatch(composer, /· м\b/, 'the free text is not sliced as a timestamp');
+  assert.match(composer, /По договорённости/);
+  assert.doesNotMatch(composer, /Цена\s*0 ₽/);
+  // This form's own orders are unchanged.
+  assert.match(summary({ ...base, scheduledMode: 'now', scheduledAt: '2026-11-19T10:00:00.000Z', estimatedPrice: 450 }), /Сейчас · подача 4–8 мин.*450 ₽/);
+  assert.match(summary({ ...base, scheduledMode: 'later', scheduledAt: '2026-11-20T07:30:00.000Z', estimatedPrice: 450 }), /20\.11\.2026 · 07:30/);
+  // A later order with no usable time, and a label-only price, do not crash or invent values.
+  assert.match(summary({ ...base, scheduledMode: 'later', scheduledAt: null, estimatedPrice: null, estimatedPriceLabel: '1 500 ₽' }), /Время не указано.*1 500 ₽/);
+});
 await check('#1181: with no open order for the route the form is the ordinary new-order form', () => {
   const h = draftHarness({ backend: false, route: OFF_ROUTE });
   assert.equal(h.f.root.dataset.state, 'valid');

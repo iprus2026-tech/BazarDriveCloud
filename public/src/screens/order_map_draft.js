@@ -732,12 +732,31 @@ function renderMissingBody() {
 }
 
 // ── Render: success state ─────────────────────────────────────
+// The card's time line. An order restored from the store (#1181) is not always one this form
+// made: a composer order («Новая публикация») keeps its free-text time in scheduledLabel, and
+// scheduledAt may be that same text or missing. The label wins, as on /responses; a timestamp is
+// formatted only when it really is one (Codex P2 on #1197).
+function successTimeCopy(order) {
+  const label = typeof order.scheduledLabel === 'string' ? order.scheduledLabel.trim() : '';
+  if (label) return label;
+  if (order.scheduledMode !== 'later') return 'Сейчас · подача 4–8 мин';
+  const at = typeof order.scheduledAt === 'string' ? order.scheduledAt.trim() : '';
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at)) return `${formatDate(at.slice(0, 10))} · ${at.slice(11, 16)}`;
+  return at || 'Время не указано';
+}
+
+// The card's price line: the numeric price, else the order's own label, else an honest «no price».
+function successPriceCopy(order) {
+  const price = Number(order.estimatedPrice);
+  if (Number.isFinite(price) && price > 0) return `${price} ₽`;
+  const label = typeof order.estimatedPriceLabel === 'string' ? order.estimatedPriceLabel.trim() : '';
+  return label || 'По договорённости';
+}
+
 function renderSuccessBody(order, { restored = false } = {}) {
   const card = document.createElement('div');
   card.className = 'omd-card omd-card--success';
-  const timeCopy = order.scheduledMode === 'now'
-    ? 'Сейчас · подача 4–8 мин'
-    : `${formatDate(order.scheduledAt.slice(0, 10))} · ${order.scheduledAt.slice(11, 16)}`;
+  const timeCopy = successTimeCopy(order);
   const shortId = shortRideNumber(order.id);
 
   card.innerHTML = `
@@ -771,7 +790,7 @@ function renderSuccessBody(order, { restored = false } = {}) {
       </div>
       <div class="omd-summary__row">
         <dt>Цена</dt>
-        <dd>${escapeHtml(String(order.estimatedPrice))} ₽</dd>
+        <dd>${escapeHtml(successPriceCopy(order))}</dd>
       </div>
       <div class="omd-summary__row">
         <dt>Статус</dt>
