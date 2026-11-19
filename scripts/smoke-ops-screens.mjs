@@ -1121,7 +1121,7 @@ expect('open-MEL badge + severity chips are defect-only (WAITING/OK excluded)',
 // family as BD-ONBOARDING-01 /welcome), so it carries no registry entry to declare a backendState on.
 const BACKEND_AWARE_HELPERS = [
   'listFeedPosts', 'createRideOrder', 'listNearbyOrders', 'submitOfferToBackend', 'listOrderOffers',
-  'selectOfferOnBackend', 'getRideFromBackend', 'patchRideStatus', 'pollRide', 'listHistoryFromBackend',
+  'selectOfferOnBackend', 'getRideFromBackend', 'listMyOpenRidesFromBackend', 'patchRideStatus', 'pollRide', 'listHistoryFromBackend',
   'submitReceiptToBackend', 'pollOfferOutcome', 'getReceiptFromBackend', 'getReceiptResolved',
   // #1059 — saveDriverReceipt is local-only now; the server receipt write is requestServerDriverReceipt.
   'requestServerDriverReceipt',

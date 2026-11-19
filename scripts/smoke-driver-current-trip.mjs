@@ -122,10 +122,16 @@ await check('server-hydrated records without local markers remain backend discov
     // active_ride keeps its driver-view role when merging a server fallback.
     const persisted = { ...serverRide, role: 'driver' };
     seed(persisted); const before = store.get(key), count = writes;
-    let calls = 0;
-    globalThis.fetch = async () => { calls++; return response({ ride: serverRide }); };
+    // #1174: two endpoints now. `calls` counts the gated ride read; `discoveries` counts the
+    // ids-only GET /ride-state/active that runs when this device holds no usable record.
+    let calls = 0, discoveries = 0;
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/ride-state/active?role=driver')) { discoveries++; return response({ items: [] }); }
+      calls++; return response({ ride: serverRide });
+    };
     const value = await loadDriverTrip();
     assert.equal(value.state, 'ready'); assert.equal(calls, 1, 'hint must receive participant-gated validation');
+    assert.equal(discoveries, 0, 'a usable local hint needs no discovery');
     assert.equal(driverTripRoute(value), '/active-ride?role=driver&tripId=' + id);
     assert.equal(store.get(key), before); assert.equal(writes, count);
     globalThis.__BD_API_BASE__ = '';
@@ -136,11 +142,56 @@ await check('server-hydrated records without local markers remain backend discov
       { ...persisted, tripId: 'trip_moscow_sheremetyevo_demo' },
       { ...persisted, status: 'COMPLETED' },
     ]) {
+      const asked = discoveries;
       seed(excluded); assert.equal((await loadDriverTrip()).state, 'empty');
-      assert.equal(calls, 1, 'demo/simulation/terminal hints never trigger a server lookup');
+      assert.equal(calls, 1, 'demo/simulation/terminal hints never reach the ride read by themselves');
+      assert.equal(discoveries, asked + 1, 'with no usable local record the server is asked which rides are open');
     }
   }
   seed({ ...serverViews()[0], role: 'driver' });
+});
+await check('#1174: with no local record the driver\'s open server ride is discovered, then validated', async () => {
+  const [serverRide] = serverViews();
+  const before = store.get(key), count = writes;
+  store.delete(key);
+  const serve = (items, log = []) => async (url, options) => {
+    log.push(String(url));
+    assert.equal(options.headers.Authorization, 'Bearer fixture-token');
+    if (String(url).endsWith('/ride-state/active?role=driver')) return response({ items });
+    assert.equal(url, 'https://fixture.invalid/api/v1/ride-state/rides/' + id);
+    return response({ ride: serverRide });
+  };
+  const log = [];
+  globalThis.fetch = serve([{ tripId: id, status: 'IN_PROGRESS', role: 'driver' }], log);
+  const value = await loadDriverTrip();
+  assert.equal(value.state, 'ready');
+  assert.deepEqual(log, ['https://fixture.invalid/api/v1/ride-state/active?role=driver', 'https://fixture.invalid/api/v1/ride-state/rides/' + id],
+    'ids from discovery — asked for the driver side, so the server filters before its limit — the ride from the gated read');
+  assert.equal(driverTripRoute(value), '/active-ride?role=driver&tripId=' + id);
+  assert.equal(value.trip.from, 'Серверная подача');
+  assert.equal(store.has(key), false, 'discovery writes nothing locally');
+  // A click revalidates the SHOWN trip: the pinned id must still be an open driver ride.
+  assert.equal((await loadDriverTrip({ tripId: id })).state, 'ready');
+  assert.equal((await loadDriverTrip({ tripId: 'trip_other' })).state, 'empty', 'never switches to another trip under a pinned card');
+  // A ride this account takes as a PASSENGER is not a driver return.
+  const asPassenger = [];
+  globalThis.fetch = serve([{ tripId: id, status: 'IN_PROGRESS', role: 'passenger' }], asPassenger);
+  assert.equal((await loadDriverTrip()).state, 'empty');
+  assert.equal(asPassenger.length, 1, 'no ride read for a passenger-side ride');
+  globalThis.fetch = serve([]);
+  assert.equal((await loadDriverTrip()).state, 'empty');
+  // Refusals are "nothing to resume"; a malformed or failed discovery is an error, not success.
+  for (const status of [401, 403, 404]) {
+    globalThis.fetch = async () => response({ code: 'FIXTURE' }, status);
+    assert.equal((await loadDriverTrip()).state, 'empty');
+  }
+  globalThis.fetch = async () => response({ ride: serverRide });
+  assert.equal((await loadDriverTrip()).state, 'error', 'a malformed discovery answer is not treated as a ride');
+  globalThis.__BD_API_BASE__ = '';
+  let offCalls = 0; globalThis.fetch = async () => { offCalls++; return response({ items: [] }); };
+  assert.equal((await loadDriverTrip()).state, 'empty'); assert.equal(offCalls, 0, 'backend OFF never asks the server');
+  globalThis.__BD_API_BASE__ = 'https://fixture.invalid';
+  store.set(key, before); writes = count;
 });
 await check('forbidden, missing, terminal or mismatched server rides never fall back to local success', async () => {
   for (const status of [401, 403, 404]) {

@@ -45,6 +45,34 @@ export async function findActiveRideForDriver(db, driverId) {
   return rows[0] ?? null;
 }
 
+// The caller's own rides that are not over yet, newest first (#1174). A discovery read for a
+// participant who has lost the trip id (a new device, cleared storage, a driver who left the
+// offer overlay before the passenger chose): it returns ONLY what the caller needs to ask for
+// the ride — trip id, status and which side they are. The ride itself is still served by the
+// participant-gated, recovery-validated GET /ride-state/rides/:tripId. Uses the existing
+// (driver_user_id, status) and (passenger_user_id, status) indexes.
+//
+// `role` ('driver' | 'passenger') narrows to that side BEFORE the limit: an account may hold
+// several unfinished rides as a passenger and one as a driver, and a caller that wants one
+// side must not lose it behind newer rides of the other (Codex P2 on #1193).
+export async function listOpenRidesForParticipant(db, userId, { limit = 5, role = null } = {}) {
+  const { rows } = await db.query(
+    `SELECT trip_id, status,
+            CASE WHEN driver_user_id = $1 THEN 'driver' ELSE 'passenger' END AS participant_role
+       FROM rides
+      WHERE CASE $4::text
+              WHEN 'driver' THEN driver_user_id = $1
+              WHEN 'passenger' THEN passenger_user_id = $1 AND driver_user_id IS DISTINCT FROM $1
+              ELSE (driver_user_id = $1 OR passenger_user_id = $1)
+            END
+        AND status <> ALL($2::text[])
+      ORDER BY created_at DESC, trip_id
+      LIMIT $3`,
+    [userId, [...TERMINAL_RIDE_STATUSES], limit, role],
+  );
+  return rows;
+}
+
 export async function findRideByTripId(db, tripId) {
   const { rows } = await db.query(`SELECT * FROM rides WHERE trip_id = $1 LIMIT 1`, [tripId]);
   return rows[0] ?? null;

@@ -679,6 +679,24 @@ export async function getRideFromBackend(tripId, { signal } = {}) {
   return null;
 }
 
+// #1174 — DISCOVER the caller's own unfinished rides: [{ tripId, status, role }], newest first
+// (GET /ride-state/active). Ids only — the ride itself still comes from getRideFromBackend. Used
+// when this device holds no record of the ride (the driver left the offer overlay, reloaded, or
+// signed in on another device). Backend OFF: [] — every local ride is already in the local store.
+// `role` ('driver' | 'passenger') is filtered on the server BEFORE its limit of 5, so the side
+// asked for is never hidden behind newer rides of the other side.
+export async function listMyOpenRidesFromBackend({ signal, role } = {}) {
+  if (isBackendEnabled()) {
+    const query = role === 'driver' || role === 'passenger' ? `?role=${role}` : '';
+    const r = await apiFetch(`/ride-state/active${query}`, { signal });
+    if (!r || !Array.isArray(r.items)) {
+      throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed /ride-state/active response' });
+    }
+    return r.items.filter((item) => item && typeof item.tripId === 'string' && item.tripId);
+  }
+  return [];
+}
+
 // #784 driver handoff — after the driver offers (POST /matching/offers) the ride's tripId is the
 // deterministic trip_<orderId>. Poll GET /ride-state/rides/:tripId (participant-gated): 404 = the
 // passenger has not selected yet (PENDING), 200 = this driver IS the ride participant (SELECTED/WON),
