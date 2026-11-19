@@ -691,6 +691,11 @@ function renderPassengerRide(root, post) {
       priceInput.focus();
       return;
     }
+    if (priceNum > 1000000) {
+      showError('Слишком большая цена — укажите до 1 000 000 ₽');
+      priceInput.focus();
+      return;
+    }
     if (!message && !liveOffer) {
       showError('Напишите сообщение пассажиру');
       msgArea.focus();

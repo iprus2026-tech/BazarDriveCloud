@@ -12,6 +12,7 @@ import {
 } from '../ride_actions.js';
 import { applySmokeRole } from '../smoke_role.js';
 import { isBackendEnabled } from '../api_config.js';
+import { busyDriverRide } from '../driver_current_trip.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -53,6 +54,7 @@ export default function feed(renderContext) {
   const onFeedRetry = () => { refreshList(true); };
   let posts = [];
   let activeKey = 'all';
+  let query = '';
   const subtitle = `${feedLocationLabel(user.get())} · ${feedDateLabel()}`;
 
   const root = document.createElement('section');
@@ -65,7 +67,7 @@ export default function feed(renderContext) {
         <p class="bd-topbar__sub">${escapeHtml(subtitle)}</p>
       </div>
       <div class="feed-topbar-actions">
-        <button class="bd-iconbtn" type="button" data-noop aria-label="Поиск">
+        <button class="bd-iconbtn" type="button" id="feed-search-toggle" aria-label="Поиск" aria-expanded="false" aria-controls="feed-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
             <circle cx="11" cy="11" r="8"/>
@@ -74,6 +76,12 @@ export default function feed(renderContext) {
         </button>
       </div>
     </div>
+    <div class="rules-v2-search feed-search" id="feed-search" hidden>
+      <span class="rules-v2-search__ic">${SEARCH_ICON}</span>
+      <input id="feed-search-input" class="rules-v2-search__input" type="text" autocomplete="off" enterkeyhint="search"
+        placeholder="Маршрут, автор или текст" aria-label="Поиск по ленте">
+      <button type="button" class="rules-v2-search__clear" id="feed-search-clear" aria-label="Очистить поиск">×</button>
+    </div>
     <div class="feed-chip-row" role="group" aria-label="Категории">
       ${CATS.map((c, i) =>
         `<button class="feed-chip${i === 0 ? ' active' : ''}" data-cat="${escapeHtml(c.key)}"
@@ -81,6 +89,7 @@ export default function feed(renderContext) {
       ).join('')}
     </div>
     <div class="bd-scroll feed-list" role="feed"></div>
+    <div class="feed-toast" id="feed-toast" role="status" aria-live="polite" hidden></div>
   `;
 
   const chipRow  = root.querySelector('.feed-chip-row');
@@ -91,6 +100,9 @@ export default function feed(renderContext) {
   // until then.
   const guestSignIn = guestReadOnly && isBackendEnabled();
   if (guestSignIn) chipRow.hidden = true;
+  // Nothing to search either: the list is the sign-in prompt, and a repaint from the search
+  // field would replace it with an empty-feed state.
+  if (guestSignIn) root.querySelector('#feed-search-toggle').hidden = true;
 
   function renderSignIn() {
     feedList.setAttribute('aria-busy', 'false');
@@ -129,8 +141,11 @@ export default function feed(renderContext) {
   }
 
   function renderList() {
+    if (guestSignIn) return renderSignIn();
     feedList.setAttribute('aria-busy', 'false');
+    const q = normalizeQuery(query);
     const items = posts.filter((p) => {
+      if (q && !postMatchesQuery(p, q)) return false;
       if (activeKey === 'all')       return true;
       if (activeKey === 'passenger') return p.type === 'trip' && p.passenger === true;
       if (activeKey === 'trip')      return p.type === 'trip' && !p.passenger;
@@ -148,10 +163,76 @@ export default function feed(renderContext) {
            <div class="bd-empty__title">Пока нет публикаций</div>
            <p>Здесь появятся поездки, попутчики и объявления.</p>
          </div>`
-      : `<div class="bd-empty">
-           <div class="bd-empty__title">Ничего не найдено</div>
-           <p>Попробуйте сменить фильтр.</p>
-         </div>`;
+      : q
+        ? `<div class="bd-empty">
+             <div class="bd-empty__title">Ничего не найдено</div>
+             <p>По запросу «${escapeHtml(query.trim())}» публикаций нет. Измените запрос или фильтр.</p>
+             <button type="button" class="bd-btn sm feed-search__reset" data-feed-search-reset>Сбросить поиск</button>
+           </div>`
+        : `<div class="bd-empty">
+             <div class="bd-empty__title">Ничего не найдено</div>
+             <p>Попробуйте сменить фильтр.</p>
+           </div>`;
+  }
+
+  // BD-FEED-SEARCH-01 — a real client-side filter over the loaded posts (route, author,
+  // title, text, tags, price). It composes with the category chips and has its own
+  // no-results state; closing the field clears the query.
+  const searchToggle = root.querySelector('#feed-search-toggle');
+  const searchWrap   = root.querySelector('#feed-search');
+  const searchInput  = root.querySelector('#feed-search-input');
+  function applyQuery(value) {
+    query = value;
+    searchWrap.classList.toggle('rules-v2-search--active', query.trim().length > 0);
+    renderList();
+  }
+  function setSearchOpen(open) {
+    searchWrap.hidden = !open;
+    searchToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    searchToggle.classList.toggle('active', open);
+    if (open) searchInput.focus();
+    else if (query) { searchInput.value = ''; applyQuery(''); }
+  }
+  searchToggle.addEventListener('click', () => setSearchOpen(searchWrap.hidden));
+  searchInput.addEventListener('input', () => applyQuery(searchInput.value));
+  function resetSearch() {
+    searchInput.value = '';
+    applyQuery('');
+    searchInput.focus();
+  }
+  root.querySelector('#feed-search-clear').addEventListener('click', resetSearch);
+
+  // BD-FEED-SHARE-01 — «Поделиться» hands the post link to the system share sheet, or
+  // copies it when the browser has none; the toast says which one happened.
+  const toastEl = root.querySelector('#feed-toast');
+  let toastTimer = null;
+  function toast(message) {
+    toastEl.textContent = message;
+    toastEl.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2600);
+  }
+  async function sharePost(postId) {
+    const post = posts.find((p) => String(p.id) === String(postId));
+    if (!post) return;
+    const url = postShareUrl(post.id);
+    const title = cardLabel(post).replace(/^Открыть: /, '');
+    try {
+      if (typeof navigator.share === 'function') {
+        await navigator.share({ title, url });
+        return;
+      }
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(url);
+        toast('Ссылка скопирована');
+        return;
+      }
+      toast('Не удалось поделиться: скопируйте ссылку из адресной строки публикации');
+    } catch (err) {
+      // A dismissed share sheet is the user's choice, not a failure.
+      if (err && err.name === 'AbortError') return;
+      toast('Не удалось поделиться. Попробуйте ещё раз');
+    }
   }
 
   chipRow.addEventListener('click', (e) => {
@@ -170,9 +251,18 @@ export default function feed(renderContext) {
   // and the role-aware getCreateEntryRoute, including passenger smoke intent.
 
   feedList.addEventListener('click', (e) => {
+    if (e.target.closest('[data-feed-search-reset]')) {
+      resetSearch();
+      return;
+    }
     const actionBtn = e.target.closest('[data-action]');
     if (actionBtn) {
       const postId = actionBtn.dataset.postId;
+
+      if (actionBtn.dataset.action === 'share') {
+        void sharePost(postId);
+        return;
+      }
 
       if (actionBtn.dataset.action === 'respond') {
         go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
@@ -202,6 +292,12 @@ export default function feed(renderContext) {
         const u = applySmokeRole(user.get());
         const post = posts.find((p) => String(p.id) === String(postId));
         if (!canAcceptPassengerRequest(u, post)) return;
+        // One ride at a time: an unfinished ride is reopened instead of accepting another.
+        const busy = busyDriverRide();
+        if (busy) {
+          go(`/active-ride?role=driver&tripId=${encodeURIComponent(busy.tripId)}`);
+          return;
+        }
 
         // BD-RIDE-ORDER-UNIFY-01 PR3 — Canonical ride-order projections
         // accept through the shared store so the underlying order flips
@@ -233,7 +329,7 @@ export default function feed(renderContext) {
     // action buttons need JS, handled above.
   });
 
-  // BD-FEED-01 — the search, post-menu (⋮), like, comment and share controls are
+  // BD-FEED-01 — the post-menu (⋮), like and comment controls are
   // intentional UI-only stubs (no backend / target screen yet). Mark them
   // data-noop and swallow their click so they are explicit no-ops, not mistaken
   // for broken wiring (mirrors the rules.js data-noop convention).
@@ -246,6 +342,29 @@ export default function feed(renderContext) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
+
+const SEARCH_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
+  <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>`;
+
+function normalizeQuery(value) {
+  return String(value || '').trim().toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
+}
+
+// A post matches when every word of the query occurs somewhere in its visible text.
+export function postMatchesQuery(p, normalizedQuery) {
+  if (!normalizedQuery) return true;
+  const haystack = normalizeQuery([
+    p.author, p.role, p.title, p.body, p.from, p.to, p.when, p.price,
+    ...(Array.isArray(p.tags) ? p.tags : []),
+  ].filter(Boolean).join(' '));
+  return normalizedQuery.split(/\s+/).every((word) => haystack.includes(word));
+}
+
+function postShareUrl(postId) {
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}#/post?id=${encodeURIComponent(postId)}`;
+}
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
@@ -322,7 +441,7 @@ function renderPostActions(p) {
         </svg>
         ${escapeHtml(String(p.comments || 0))}
       </button>
-      <button class="feed-post-actions__btn feed-post-actions__share" type="button" data-noop aria-label="Поделиться">
+      <button class="feed-post-actions__btn feed-post-actions__share" type="button" data-action="share" data-post-id="${escapeHtml(p.id || '')}" aria-label="Поделиться">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
           <circle cx="18" cy="5" r="3"/>
@@ -377,6 +496,9 @@ function renderTripCard(p, guestReadOnly = false) {
   } else if (p.passenger) {
     ctaAttrs = `data-action="respond" data-post-id="${postId}" aria-label="Откликнуться на заявку попутчика"`;
     ctaLabel = 'Откликнуться';
+  } else if (!guestReadOnly && canManageOwnOrder(p, u)) {
+    // The author's own trip offer: nobody to write to, so no CTA (the card still opens).
+    ctaAttrs = null;
   } else {
     ctaAttrs = `data-action="chat" data-post-id="${postId}" aria-label="Написать водителю"`;
     ctaLabel = 'Написать водителю';
@@ -405,9 +527,9 @@ function renderTripCard(p, guestReadOnly = false) {
         ${p.price ? `<div class="feed-trip-price">${escapeHtml(p.price)}</div>` : ''}
       </div>
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
-      <button class="bd-btn primary feed-card-cta" type="button" ${ctaAttrs}>
+      ${ctaAttrs ? `<button class="bd-btn primary feed-card-cta" type="button" ${ctaAttrs}>
         ${ctaLabel}
-      </button>
+      </button>` : ''}
       ${renderPostActions(p)}
     </article>
   `;

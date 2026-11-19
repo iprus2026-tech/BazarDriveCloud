@@ -70,6 +70,8 @@
 //                            seeded sample posts.
 //   bazardrive.map_prefs.v1 — device-level map preferences, identity
 //                             agnostic.
+//   bazardrive.theme.v1     — device-level colour theme (theme.js),
+//                             identity agnostic.
 //
 // Intentionally NOT cleared (dev/test artefacts, not user data):
 //   bazardrive.debug.publish — dev-only publish debug-trail toggle

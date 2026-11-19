@@ -1791,9 +1791,10 @@ function renderPassengerRideComplete(ride, deps) {
       );
     }
   }
-  submitBtn.addEventListener('click', () => {
-    if (currentRating === 0) return;
-    syncSubmittedStars(currentRating);
+  // Paints the thank-you state for a rating of `value`. Shared by the submit tap and by the
+  // restore below, so a reload of a rated trip does not ask for the rating again.
+  function showSubmitted(value) {
+    syncSubmittedStars(value);
     content.dataset.submitted = 'true';
     // Submitting the rating implies the auto-charge has completed
     // by the time we render the thank-you screen — the backend-OFF demo only.
@@ -1806,6 +1807,10 @@ function renderPassengerRideComplete(ride, deps) {
     tagButtons.forEach((b) => { b.disabled = true; });
     if (commentInput) commentInput.disabled = true;
     if (commentBtn) commentBtn.disabled = true;
+  }
+  submitBtn.addEventListener('click', () => {
+    if (currentRating === 0) return;
+    showSubmitted(currentRating);
     // Merge rating, tags and comment into the persisted history entry
     // alongside the baseline that was saved when the screen rendered.
     persistHistory({ withRating: true });
@@ -1891,6 +1896,15 @@ function renderPassengerRideComplete(ride, deps) {
     return Boolean(saved);
   }
   persistHistory();
+
+  // A rating given in an earlier visit lives in the history entry (kept by the baseline
+  // save above). Reopen the trip in the thank-you state instead of the blank rating form,
+  // which let the passenger rate the same trip again and overwrite the first rating.
+  const ratedEntry = loadRideHistory().find(
+    (e) => e && e.role === 'passenger' && e.tripId === ride.tripId,
+  );
+  const storedRating = ratedEntry && Number.isInteger(ratedEntry.rating) ? ratedEntry.rating : 0;
+  if (storedRating >= 1 && storedRating <= 5) showSubmitted(storedRating);
 
   const toHistoryBtn = content.querySelector('#arp-to-history');
   if (toHistoryBtn) {

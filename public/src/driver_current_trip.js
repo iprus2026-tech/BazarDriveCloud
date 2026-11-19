@@ -51,6 +51,14 @@ export function driverTripCandidates() {
     });
 }
 
+// The driver's own unfinished local ride, if any. Accept surfaces use it to refuse a second
+// accept: one driver carries one ride, and a second one would orphan the first. On a
+// backend the server owns that rule, so this local check stays out of the way.
+export function busyDriverRide() {
+  if (isBackendEnabled()) return null;
+  return driverTripCandidates().find(ride => ride.role === 'driver') || null;
+}
+
 function context(ride, id) {
   if (!resumable(ride) || ride.tripId !== id) return { state: 'empty', trip: null };
   return { state: 'ready', trip: {

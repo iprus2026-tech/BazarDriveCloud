@@ -517,21 +517,24 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         })
         .map((d) => d.id)
     : [];
+  const editingProfile = currentUser.onboarded === true && !verifyPhoneOnly && !recoveredLogin;
   const draft = {
     role: knownRole ?? (startAtPhone ? 'passenger' : (currentUser.role ?? null)),
     // Prefill the existing number for the verify flow so the user re-confirms
     // their own phone rather than typing it from scratch.
     phone: recoveredLogin?.phone
       ? String(recoveredLogin.phone).replace(/\D/g, '')
-      : (verifyPhoneOnly && currentUser.phone) ? String(currentUser.phone) : '',
-    firstName: '',
-    lastName: '',
-    vehicleMake: '',
-    vehicleModel: '',
-    vehicleYear: '',
-    vehiclePlate: '',
-    vehicleColor: '',
-    vehicleBody: 'Седан',
+      : ((verifyPhoneOnly || editingProfile) && currentUser.phone) ? String(currentUser.phone).replace(/\D/g, '') : '',
+    // An onboarded user who reopens the wizard («Изменить») edits what is stored, so the
+    // steps start from it — finish() writes the whole draft back.
+    firstName: editingProfile ? (currentUser.firstName || '') : '',
+    lastName: editingProfile ? (currentUser.lastName || '') : '',
+    vehicleMake: editingProfile ? (currentUser.vehicleMake || '') : '',
+    vehicleModel: editingProfile ? (currentUser.vehicleModel || '') : '',
+    vehicleYear: editingProfile ? (currentUser.vehicleYear || '') : '',
+    vehiclePlate: editingProfile ? (currentUser.vehiclePlate || '') : '',
+    vehicleColor: editingProfile ? (currentUser.vehicleColor || '') : '',
+    vehicleBody: (editingProfile && currentUser.vehicleBody) || 'Седан',
     docs: new Set(prefillDocs),
   };
 

@@ -1743,7 +1743,15 @@ export default function responses() {
         ? []
         : buildDriversForOrder(request, null, false));
   let readState = isAccepted ? 'loaded' : (fixture || (backendAuthoritative ? 'loading' : 'loaded'));
+  // A locally canceled order (backend OFF) is just as final: without this the board kept
+  // «Принимаем отклики» with select buttons that could do nothing.
+  const localOrderCanceled = !isBackendEnabled() && !fixture
+    && !!canonicalOrder && canonicalOrder.status === 'CANCELED';
   if (!isAccepted && orderCanceledOnEntry) {
+    readState = 'canceled';
+    effectiveState = 'canceled';
+  }
+  if (!isAccepted && localOrderCanceled) {
     readState = 'canceled';
     effectiveState = 'canceled';
   }

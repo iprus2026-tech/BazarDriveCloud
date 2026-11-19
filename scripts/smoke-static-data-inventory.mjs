@@ -72,6 +72,7 @@ const NOT_CLEARED = [
   { key: 'bazardrive.auth.rejected_projection.v1', documented: false, session: true }, // tab-local auth orchestration marker
   { key: 'bazardrive.posts.v1', documented: true },           // global cache, survives
   { key: 'bazardrive.map_prefs.v1', documented: true },       // device pref, survives
+  { key: 'bazardrive.theme.v1', documented: true },           // device pref (theme.js), survives
   { key: 'bazardrive.debug.publish', documented: true },      // dev flag, survives
   { key: 'bazardrive.ops.mel.v1', documented: false },        // dev tooling, out of boundary
   { key: 'bd-reloading', documented: false, session: true },  // transient SW reload flag (sw-update.js)

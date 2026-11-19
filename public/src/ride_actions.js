@@ -60,10 +60,16 @@ export function canAcceptOrder(order, u) {
   }
 
   if (order.type === 'trip') {
-    return order.passenger === true;
+    // A plain passenger post without a price cannot be accepted at once: the ride would
+    // have no fare, no receipt and no earnings. The driver names a price through /respond.
+    return order.passenger === true && hasPostPrice(order);
   }
 
   return order.type === 'ride_order' || order.type === 'passenger_request';
+}
+
+function hasPostPrice(post) {
+  return /\d/.test(typeof post?.price === 'string' || typeof post?.price === 'number' ? String(post.price) : '');
 }
 
 export function buildRideFromPost(post) {

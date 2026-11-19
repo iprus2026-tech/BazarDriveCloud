@@ -73,7 +73,7 @@ function buildHero() {
     <div class="loc-perm__floating-icon">${pinIcon()}</div>
     <div>
       <div class="loc-perm__floating-title">Моё место</div>
-      <div class="loc-perm__floating-sub">mock permission gate</div>
+      <div class="loc-perm__floating-sub">демо-режим</div>
     </div>
   `;
   hero.appendChild(badge);
@@ -109,7 +109,7 @@ export default function locationPermissionScreen() {
       </button>
       <div class="bd-topbar__titles">
         <h1 class="bd-topbar__title">Моё место</h1>
-        <p class="bd-topbar__sub loc-perm__sub">геолокация в безопасном mock-режиме</p>
+        <p class="bd-topbar__sub loc-perm__sub">геолокация в демо-режиме</p>
       </div>
     </div>
   `;
@@ -122,11 +122,11 @@ export default function locationPermissionScreen() {
     <div class="loc-perm__sheet-grip" aria-hidden="true"></div>
 
     <div class="loc-perm__intro">
-      <span class="loc-perm__eyebrow">BD-MAP-02</span>
+      <span class="loc-perm__eyebrow">Геолокация</span>
       <h2>Разрешите доступ к геолокации</h2>
       <p>
         BazarDrive покажет заказы, водителей и точку подачи рядом с вами.
-        Сейчас это только безопасная настройка в localStorage: браузерный запрос геолокации не вызывается.
+        Сейчас это демо-настройка на этом устройстве: браузер геолокацию не запрашивает.
       </p>
     </div>
 
@@ -135,8 +135,8 @@ export default function locationPermissionScreen() {
     </ul>
 
     <div class="loc-perm__notice" role="note">
-      <strong>Без настоящего Mapbox.</strong>
-      Нативный permission prompt и реальные координаты будут подключены отдельной задачей.
+      <strong>Демо-режим.</strong>
+      Настоящий запрос геолокации и реальные координаты появятся позже.
     </div>
 
     <div class="loc-perm__actions">

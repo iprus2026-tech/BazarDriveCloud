@@ -10,6 +10,7 @@ import {
 import { isBackendEnabled } from '../api_config.js';
 import { apiFetch } from '../api_client.js';
 import { getRideFromBackend } from '../mock_api.js';
+import { FEED_POSTS_V2, listMyPostsSync, listRideOrdersAsFeedPosts } from '../mock_api.js';
 
 const CHAT_KEY          = 'bazardrive.chat.v1';
 const RESPONSES_KEY     = 'bazardrive.responses.v1';
@@ -371,8 +372,10 @@ function hydrateFromRealRide(ride, viewerRole) {
     from:   ride.route && ride.route.pickupLabel  ? ride.route.pickupLabel  : MOCK_TRIP.from,
     to:     ride.route && ride.route.dropoffLabel ? ride.route.dropoffLabel : MOCK_TRIP.to,
     price:  (ride.ride && ride.ride.price) || (ride.order && ride.order.offerPrice) || MOCK_TRIP.price,
-    when:   MOCK_TRIP.when,
-    seats:  MOCK_TRIP.seats,
+    // A ride record carries no departure time or seat count: show none rather than the
+    // demo «Сегодня, 18:30 · 3 места».
+    when:   '',
+    seats:  null,
     status: ride.status || 'Принят',
   };
   return { counterpart, trip, counterpartRole };
@@ -385,6 +388,72 @@ function hydrateFromRealRide(ride, viewerRole) {
 // owns `driverPrice` and the originating `requestId`. We never throw — every
 // lookup degrades gracefully so a stale/unknown id renders the demo instead
 // of a blank screen.
+// BD-CHAT-POST-01 — the publication a chat was opened from. A feed chat (/chat?tripId=<post
+// id>) and a driver's offer chat (/chat?responseId=resp_<post id>) are about a specific post,
+// so the header names its author and its route instead of the demo «Рустам К. · Москва → Тула».
+// Synchronous sources only: seed posts, the user's own posts and locally known ride orders.
+function findPostSync(postId) {
+  if (!postId) return null;
+  const id = String(postId);
+  try {
+    const pool = [...listMyPostsSync(), ...listRideOrdersAsFeedPosts(), ...FEED_POSTS_V2];
+    return pool.find((post) => post && String(post.id) === id) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function hydrateFromPost(post, { price, response = null } = {}) {
+  const ratingMatch = typeof post.role === 'string' ? post.role.match(/★\s*([\d.,]+)/) : null;
+  const counterpartRole = post.passenger === true ? 'passenger' : 'driver';
+  const isRoute = !!(post.from || post.to);
+  return {
+    counterpart: {
+      name: post.author || (counterpartRole === 'passenger' ? 'Пассажир' : 'Автор публикации'),
+      initials: deriveInitials(post.author),
+      rating: ratingMatch ? ratingMatch[1] : '',
+      // Nobody tracks presence for a post author: no «в сети» claim.
+      presenceUnknown: true,
+    },
+    trip: {
+      from: isRoute ? (post.from || '—') : '',
+      to: isRoute ? (post.to || '—') : '',
+      title: isRoute ? '' : (post.title || 'Публикация'),
+      price: price || post.price || '',
+      when: post.when || '',
+      seats: post.seats || null,
+      status: 'Не подтверждено',
+    },
+    response,
+    counterpartRole,
+    confirmed: false,
+  };
+}
+
+// Header line under the name: presence only where a source states it, rating only if known.
+function counterpartMetaHtml(counterpart) {
+  const rating = counterpart.rating ? `★ ${escapeHtml(counterpart.rating)}` : '';
+  if (counterpart.presenceUnknown) return rating;
+  const presence = escapeHtml(counterpart.onlineLabel || counterpart.status || 'в сети');
+  return `<span class="chat__online-dot" aria-hidden="true"></span>
+          ${presence}${rating ? ` · ${rating}` : ''}`;
+}
+
+function seatsLabel(seats) {
+  const n = Number(seats);
+  if (!Number.isInteger(n) || n <= 0) return '';
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${n} место`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} места`;
+  return `${n} мест`;
+}
+
+// Trip-bar second line: only the facts the thread actually has.
+function tripMetaText(trip) {
+  return [trip.when || '', seatsLabel(trip.seats)].filter(Boolean).join(' · ');
+}
+
 function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExplicitRole }) {
   if (tripId) {
     const ride = findActiveRide(tripId);
@@ -465,6 +534,13 @@ function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExpl
       }
     }
     const response = loadResponse(responseId);
+    const responsePost = response && viewerRole === 'driver' ? findPostSync(response.requestId) : null;
+    if (responsePost) {
+      return hydrateFromPost(responsePost, {
+        price: response.driverPrice ? `${response.driverPrice} ₽` : '',
+        response,
+      });
+    }
     if (response) {
       // BD-CHAT-FALLBACK-01 — a stored response is a driver OFFER, not an
       // accepted ride: no `ride` record exists yet (the `if (tripId)` branch
@@ -487,6 +563,8 @@ function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExpl
   // thread (e.g. /chat?tripId=<feed-post-id> for a post that was never
   // ordered/accepted). confirmed:false keeps the header status and the
   // empty-thread system pill from falsely declaring the ride accepted (#891).
+  const feedPost = tripId && !responseId ? findPostSync(tripId) : null;
+  if (feedPost) return hydrateFromPost(feedPost);
   return {
     counterpart: MOCK_DRIVER,
     trip: { ...MOCK_TRIP, status: 'Не подтверждено' },
@@ -825,8 +903,7 @@ export default function chat() {
       <div class="chat__driver-info">
         <div class="chat__driver-name">${escapeHtml(counterpart.name || '')}</div>
         <div class="chat__driver-meta">
-          <span class="chat__online-dot" aria-hidden="true"></span>
-          ${escapeHtml(counterpart.onlineLabel || counterpart.status || 'в сети')} · ★ ${escapeHtml(counterpart.rating || '')}
+          ${counterpartMetaHtml(counterpart)}
         </div>
       </div>
       <button type="button" class="bd-iconbtn chat__call" id="chat-call" aria-label="Позвонить">
@@ -838,7 +915,7 @@ export default function chat() {
       <div class="chat__trip-left">
         <div class="chat__trip-route">
           <span class="chat__trip-emoji" aria-hidden="true">🚕</span>
-          <span class="chat__trip-route-text">${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}</span>
+          <span class="chat__trip-route-text">${trip.title ? escapeHtml(trip.title) : `${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}`}</span>
           ${(() => {
             const raw   = trip.status || '';
             const tone  = resolveRideStatusTone(raw);
@@ -847,7 +924,7 @@ export default function chat() {
                 aria-label="Статус поездки: ${escapeHtml(label)}">${escapeHtml(label)}</span>`;
           })()}
         </div>
-        <div class="chat__trip-meta">${escapeHtml(trip.when || '')} · ${trip.seats || ''} места</div>
+        <div class="chat__trip-meta"${tripMetaText(trip) ? '' : ' hidden'}>${escapeHtml(tripMetaText(trip))}</div>
       </div>
       <div class="chat__trip-price">${escapeHtml(String(trip.price || ''))}</div>
     </div>
@@ -1112,7 +1189,10 @@ export default function chat() {
     const priceEl = root.querySelector('.chat__trip-price');
     if (priceEl) priceEl.textContent = String(trip.price || '');
     const metaTripEl = root.querySelector('.chat__trip-meta');
-    if (metaTripEl) metaTripEl.textContent = `${trip.when || ''} · ${trip.seats || ''} места`;
+    if (metaTripEl) {
+      metaTripEl.textContent = tripMetaText(trip);
+      metaTripEl.hidden = !tripMetaText(trip);
+    }
     if (readState === CHAT_READ_STATE.EMPTY) {
       messagesEl.replaceChildren(renderEmptyThread(viewerRole, confirmed));
     }

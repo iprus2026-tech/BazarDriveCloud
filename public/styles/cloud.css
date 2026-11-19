@@ -1312,6 +1312,30 @@ body {
 }
 .feed-post-actions__share { margin-left: auto; }
 
+/* ── Feed search + share toast (BD-FEED-SEARCH-01 / BD-FEED-SHARE-01) ── */
+.feed-search { margin: 0 var(--pad) 10px; }
+.feed-search[hidden] { display: none; }
+#feed-search-toggle[hidden] { display: none; }
+.feed-search__reset { margin-top: 14px; }
+.screen--feed { position: relative; }
+.feed-toast {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-3);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.feed-toast[hidden] { display: none; }
+
 /* ── Feed list card spacing (prototype uses 12px) ───────── */
 .feed-list .bd-card { margin-bottom: 12px; }
 
@@ -8026,6 +8050,15 @@ body {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
 }
 .settings__toast[hidden] { display: none; }
+.settings__lang-opt-soon {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+}
 .settings__toast-ic {
   width: 24px;
   height: 24px;
@@ -16525,6 +16558,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .cf-party-chat,
 .chat__send,
 .od-back,
+.feed-post-actions__btn,
+.rp-searchrow__done,
+.responses__edit,
 #chat-back,
 #chat-call {
   position: relative;
@@ -16538,6 +16574,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .cf-party-chat::after,
 .chat__send::after,
 .od-back::after,
+.feed-post-actions__btn::after,
+.rp-searchrow__done::after,
+.responses__edit::after,
 #chat-back::after,
 #chat-call::after {
   content: "";
@@ -17111,3 +17150,100 @@ button.pfp-menu-row:active { opacity: 0.7; }
   border: 1px solid var(--line-strong); font-size: 12px; line-height: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.45);
 }
 .map-place-marker__label[hidden] { display: none; }
+
+/* ══ BD-THEME-01 — light theme ═══════════════════════════════════════════════
+   theme.js writes the resolved theme to <html data-theme>. Dark is the
+   unconditional base above; this block only re-points the tokens and repaints
+   the surfaces that hard-code a dark colour. Map canvases and the map-backed
+   screens keep their dark look in both themes. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --accent-soft:   rgba(255, 107, 53, 0.12);
+  --accent-strong: #F2571F;
+  --bg-0: #f4f4f7;
+  --bg-1: #ffffff;
+  --bg-2: #eeeef3;
+  --bg-3: #e3e3ea;
+  --line:        rgba(16, 16, 28, 0.10);
+  --line-strong: rgba(16, 16, 28, 0.18);
+  --text:   #16161a;
+  --text-1: #16161a;
+  --text-2: #50505c;
+  --text-3: #767684;
+  --success: #15803d;
+  --warning: #b45309;
+  --danger:  #dc2626;
+  --info:    #1d4ed8;
+}
+:root[data-theme="light"],
+:root[data-theme="light"] body { background: #e6e6ec; }
+:root[data-theme="light"] .tabbar { background: rgba(255, 255, 255, 0.90); }
+:root[data-theme="light"] .feed-chip.active { color: #ffffff; }
+/* The accent is one step deeper in light: as text it needs more contrast on white. */
+:root[data-theme="light"] { --accent: #E8521C; }
+
+/* Dark islands — map canvases, the cards floating on them and every other surface that
+   hard-codes a dark background stay dark, so the dark tokens are restored inside. A rule
+   that paints its own dark background must be listed here (siblings of the map shell are
+   not covered by .bd-map-shell). */
+:root[data-theme="light"] :is(
+  .bd-map-shell, .map-home__banner, .map-home__watermark,
+  .loc-perm__floating-card, .loc-perm__sheet,
+  .rp-map__watermark, .omd-map__from, .omd-map__to, .omd-map__watermark,
+  .active-ride__icon-btn, .active-ride-passenger__trip-pill, .active-ride-passenger__top-card,
+  .active-ride__status-pill, .active-ride__stats, .active-ride__notice,
+  .active-ride-driver-sheet__panel, .driver-sheet__panel, .responses__toast,
+  .bd-error-banner.offline, .bd-error-banner.retrying, .bd-error-toast.recovered
+) {
+  color-scheme: dark;
+  --accent: #FF6B35;
+  --accent-soft: rgba(255, 107, 53, 0.14);
+  --accent-strong: #FF7A48;
+  --bg-0: #0a0a0c; --bg-1: #131316; --bg-2: #1a1a1f; --bg-3: #222228;
+  --line: rgba(255,255,255,0.07); --line-strong: rgba(255,255,255,0.12);
+  --text: #f3f3f5; --text-1: #f3f3f5; --text-2: #a8a8b3; --text-3: #6c6c78;
+  --success: #4ADE80; --warning: #FBBF24; --danger: #F87171; --info: #60A5FA;
+  color: var(--text);
+}
+
+/* Passenger profile (BD-PROFILE-P-UI) — hand-tuned dark palette, light counterpart. */
+:root[data-theme="light"] #shell:has(.pfp-experience) { background: var(--bg-0); }
+:root[data-theme="light"] .pfp-experience {
+  --pfp-surface: #ffffff; --pfp-line: #dcdce4; --pfp-muted: #5c5c68;
+  color: var(--text);
+}
+:root[data-theme="light"] .pfp-experience .pfp-identity-card { background: #ffffff; border-color: #e6ddd6; }
+:root[data-theme="light"] .pfp-experience .pfp-avatar { border-color: #f0c4ae; background: #ffece3; color: #b8400f; }
+:root[data-theme="light"] .pfp-experience .pfp-meta-badge { background: #eeeef3; color: #50505c; }
+:root[data-theme="light"] .pfp-experience .pfp-context-card { border-color: #f3d3c3; background: #fff5ef; }
+:root[data-theme="light"] .pfp-experience .pfp-context-card .pfp-eyebrow { color: #b8400f; }
+:root[data-theme="light"] .pfp-experience .pfp-context-icon { color: #b8400f; background: #ffe2d4; }
+:root[data-theme="light"] .pfp-experience .pfp-context-card p { color: #6b5a50; }
+:root[data-theme="light"] .pfp-experience .pfp-route { border-block-color: #f3d3c3; }
+:root[data-theme="light"] .pfp-experience .pfp-read-status[role="alert"] { color: #b91c1c; }
+:root[data-theme="light"] .pfp-experience .pfp-menu-icon { color: #50505c; }
+:root[data-theme="light"] .pfp-experience .pfp-menu-chev { color: #767684; }
+:root[data-theme="light"] .pfp-experience .pfp-safety-card { border-color: #cfe3d9; background: #f1f8f4; }
+:root[data-theme="light"] .pfp-experience .pfp-safety-card p { color: #48605a; }
+:root[data-theme="light"] .pfp-experience .pfp-safety-card .bd-btn { border-color: #9dbdae; color: #24503f; }
+:root[data-theme="light"] .pfp-experience .pf-mypub-empty__cta { background: #ffffff; border-color: #c9c9d3; }
+:root[data-theme="light"] .pfp-experience button.pfp-menu-row:hover { background: #f4f4f7; }
+
+/* Driver profile (BD-PROFILE-D-UI-01) — light counterpart. */
+:root[data-theme="light"] .pf2-dashboard { --pf2-muted: #5c5c68; --pf2-border: rgba(16,16,28,.14); }
+:root[data-theme="light"] .pf2-dashboard .pf2-tab.pf2-tab--active { color: #b8400f; }
+:root[data-theme="light"] .pf2-dashboard .pf2-hero {
+  background: radial-gradient(ellipse at 100% 0, rgba(255,107,53,.12), transparent 65%), #ffffff;
+  box-shadow: 0 8px 24px rgba(16,16,28,.06);
+}
+:root[data-theme="light"] .pf2-hero__eyebrow { color: #b8400f; }
+:root[data-theme="light"] .pf2-context-banner { border-color: #bcd3f2; background: #eff5fe; }
+:root[data-theme="light"] .pf2-context-banner > svg { color: #1d4ed8; }
+:root[data-theme="light"] .pf2-context-banner strong { color: #1e3a8a; }
+:root[data-theme="light"] .pf2-dashboard .pf2-status-card:is([data-state='ready'], [data-state='online']) { background: #ffffff; }
+:root[data-theme="light"] .pf2-dashboard .pf2-po-balance-card {
+  background: radial-gradient(ellipse at 100% 0, rgba(255,107,53,.14), transparent 70%), #fff7f3;
+}
+:root[data-theme="light"] .pf2-dashboard .pf2-po-balance-amount { color: #b8400f; }
+/* A dimmed (unavailable) map dims toward black, not toward the light page. */
+:root[data-theme="light"] :is(.map-home__map, .rpv-map) { background-color: #0a0a0c; }

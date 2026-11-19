@@ -22,6 +22,7 @@ import { acceptCanonicalRideOrder } from '../ride_actions.js';
 import { isBackendEnabled } from '../api_config.js';
 import { user, isDriverLineReady } from '../state.js';
 import { getSmokeRole } from '../smoke_role.js';
+import { busyDriverRide } from '../driver_current_trip.js';
 
 const STATE = {
   LIST:      'list',
@@ -745,6 +746,10 @@ export default function driverMapScreen() {
       // be mutated by a no-longer-ready driver.
       if (!isDriverLineReady(user.get())) {
         await renderReadinessGate(false);
+        return;
+      }
+      if (busyDriverRide()) {
+        showDriverNotice('Сначала завершите текущую поездку — новый заказ можно принять после неё.');
         return;
       }
       const id = btn.dataset.orderId;
