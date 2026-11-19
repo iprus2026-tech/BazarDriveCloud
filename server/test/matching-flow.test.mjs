@@ -108,6 +108,11 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { 
   assert.equal(selfOffer.json().code, 'CANNOT_OFFER_OWN_ORDER');
 
   // driver offers on the passenger's order.
+  // #1178 — a zero or negative bid is refused: it would become a ride with no receipt.
+  for (const price of [0, -1]) {
+    const bad = await post(app, '/api/v1/matching/offers', { vehiclePlate: 'А 123 ВС 77', orderId: order.id, price }, bearer(drvS));
+    assert.equal(bad.statusCode, 400, `price ${price}: ${bad.body}`);
+  }
   const off1res = await post(app, '/api/v1/matching/offers',
     { vehiclePlate: 'А 123 ВС 77', orderId: order.id, driverName: 'Иван', car: 'Kia Rio', rating: '4,9', etaMin: 5, price: 850, message: 'еду' }, bearer(drvS));
   assert.equal(off1res.statusCode, 201);

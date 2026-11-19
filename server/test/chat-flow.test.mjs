@@ -160,6 +160,28 @@ test('chat: once the ride is terminal, writing is 409 CHAT_CLOSED and reading st
   }
 });
 
+test('chat: a blank message is refused; a re-send after the ride ended returns the stored message (#1178)', { skip: SKIP }, async (t) => {
+  const { app, ride } = await fixture(t, [phone(6, 0), phone(6, 1)]);
+  const r = await ride(phone(6, 0), phone(6, 1));
+  for (const body of [' ', '\n\t  ']) {
+    const blank = await send(app, r.drvS, { chatId: r.chatId, body });
+    assert.equal(blank.statusCode, 400, blank.body);
+  }
+  const first = await send(app, r.drvS, { chatId: r.chatId, body: 'Подъезжаю', clientMsgId: 41 });
+  assert.equal(first.statusCode, 201, first.body);
+  const cancel = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(r.tripId)}/status`,
+    { status: 'CANCELED', cancel: { reason: 'changed_mind' } }, bearer(r.paxS));
+  assert.equal(cancel.statusCode, 200);
+  const retry = await send(app, r.drvS, { chatId: r.chatId, body: 'Подъезжаю', clientMsgId: 41 });
+  assert.equal(retry.statusCode, 201, retry.body);
+  assert.equal(retry.json().message.id, first.json().message.id, 'the stored message, not a new one');
+  const fresh = await send(app, r.drvS, { chatId: r.chatId, body: 'Новое', clientMsgId: 42 });
+  assert.equal(fresh.statusCode, 409, 'a new message is still refused');
+  assert.equal(fresh.json().code, 'CHAT_CLOSED');
+  const items = (await get(app, thread(r.chatId), bearer(r.paxS))).json().items;
+  assert.deepEqual(items.map((m) => m.body), ['Подъезжаю'], 'nothing was added to the closed chat');
+});
+
 test('chat: a cancel that commits while a send is in flight closes the chat (CodeRabbit #1151)', { skip: SKIP }, async (t) => {
   const { app, db, ride } = await fixture(t, [phone(4, 0), phone(4, 1)]);
   const r = await ride(phone(4, 0), phone(4, 1));

@@ -79,7 +79,8 @@ export default async function chatService(app) {
         additionalProperties: false,
         properties: {
           chatId: { type: 'string', minLength: 1, maxLength: 200 },
-          body: { type: 'string', minLength: 1, maxLength: 4000 },
+          // At least one non-whitespace character: a blank message is not a message (#1178).
+          body: { type: 'string', minLength: 1, maxLength: 4000, pattern: '\\S' },
           // Accepted for compatibility with existing clients; the server decides the role (R2).
           senderRole: { type: 'string', enum: ['driver', 'passenger'] },
           // client_msg_id is BIGINT; bound to MAX_SAFE_INTEGER so the JS round-trip is lossless.
@@ -92,9 +93,6 @@ export default async function chatService(app) {
     const b = req.body;
     const thread = await authorizeThread(app, req, reply, b.chatId);
     if (thread.refused) return thread.refused;
-    if (TERMINAL_RIDE_STATUSES.has(thread.ride.status)) {
-      return problem(reply, 409, 'CHAT_CLOSED', 'the ride is over — the chat is read-only');
-    }
     const seed = {
       chatId: b.chatId,
       rideId: thread.ride.id,
@@ -107,6 +105,11 @@ export default async function chatService(app) {
     if (seed.clientMsgId != null) {
       const existing = await findMessageByDedup(app.db, seed.chatId, seed.senderRole, seed.clientMsgId);
       if (existing) return reply.code(201).send({ message: serializeMessage(existing) });
+    }
+    // After the dedup lookup on purpose (#1178): a retry of a message that was stored before the
+    // ride ended gets that message back, not 409 — the client's retry must not look like a loss.
+    if (TERMINAL_RIDE_STATUSES.has(thread.ride.status)) {
+      return problem(reply, 409, 'CHAT_CLOSED', 'the ride is over — the chat is read-only');
     }
     const outcome = await app.db.tx(async (client) => {
       // Re-check under a share lock on the ride (CodeRabbit #1151): a cancel or completion that

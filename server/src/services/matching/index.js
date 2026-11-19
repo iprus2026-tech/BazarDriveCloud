@@ -97,7 +97,9 @@ export default async function matchingService(app) {
           car: { type: 'string', maxLength: 120 },
           rating: { type: 'string', maxLength: 8 },
           etaMin: { type: 'integer', minimum: 1, maximum: 1440 },
-          price: { type: 'number', minimum: 0, maximum: 9999999999.99 },
+          // Above zero (#1178): a zero bid becomes a ride whose receipt can never be written
+          // (RECEIPT_FARE_UNKNOWN). An offer without a price still falls back to the estimate.
+          price: { type: 'number', exclusiveMinimum: 0, maximum: 9999999999.99 },
           message: { type: 'string', maxLength: 1000 },
           // #1113 — the car as separate fields; the plate is required (the passenger's pickup check).
           vehicleModel: { type: 'string', maxLength: 120 },
