@@ -588,6 +588,23 @@ export async function createRideOrder(input = {}) {
   return order;
 }
 
+// #1181 — the current user's own order that is still open for this exact route, newest first,
+// or null. Used by the order form so a reload, Back or «new order» on the same route shows the
+// order already published instead of a fresh form that silently creates a second one. Reads the
+// local order store, which also mirrors the user's own server orders (see createRideOrder).
+// Own = the passenger snapshot says so; demo fixtures and driver-surface test orders never match.
+export function findOwnOpenOrderForRoute({ pickupLabel, dropoffLabel } = {}) {
+  const from = typeof pickupLabel === 'string' ? pickupLabel.trim() : '';
+  const to = typeof dropoffLabel === 'string' ? dropoffLabel.trim() : '';
+  if (!from || !to) return null;
+  const label = (point) => (point && typeof point.label === 'string' ? point.label.trim() : '');
+  const found = loadRideOrdersRaw().find((o) => o && typeof o.id === 'string' && o.id
+    && o.status === 'CREATED' && !o.demo && o.createdByRole !== 'driver'
+    && o.passenger?.isCurrentUser === true
+    && label(o.pickup) === from && label(o.dropoff) === to);
+  return found ? { ...found } : null;
+}
+
 export async function listNearbyOrders({ signal } = {}) {
   // #784 CUT-3: on a live backend, the nearby/feed read is the server's CREATED orders.
   if (isBackendEnabled()) {
