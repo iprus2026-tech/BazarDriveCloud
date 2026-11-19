@@ -4,7 +4,7 @@
 import { user } from './state.js';
 import { resolveRole } from './smoke_role.js';
 import { getApiBase, getSessionToken, isBackendEnabled } from './api_config.js';
-import { getRideFromBackend } from './mock_api.js';
+import { getRideFromBackend, listMyOpenRidesFromBackend } from './mock_api.js';
 import { loadActiveRideStore, DEMO_ACTIVE_RIDE_ID, RIDE_STATUS } from './ride_state.js';
 
 const ACTIVE_LABELS = Object.freeze({
@@ -74,10 +74,21 @@ export async function loadDriverTrip({ tripId = null, signal } = {}) {
   const candidates = driverTripCandidates();
   // Revalidate the displayed identity on click; never switch to a different
   // trip under an old card, even if another order became newer in the meantime.
-  const candidate = tripId ? candidates.find(ride => ride.tripId === tripId) : candidates[0];
-  if (!candidate) return { state: 'empty', trip: null };
+  let candidate = tripId ? candidates.find(ride => ride.tripId === tripId) : candidates[0];
+  if (!candidate && !isBackendEnabled()) return { state: 'empty', trip: null };
   if (!isBackendEnabled()) return context(candidate, candidate.tripId);
   try {
+    // #1174 — no local record is not proof of no ride: a server ride reaches this device's
+    // store only through the offer overlay or the ride screen. Ask the server which unfinished
+    // rides this account DRIVES (never the ones it rides as a passenger), keeping a pinned id
+    // pinned. Ids only; the gated ride read below still confirms the ride itself.
+    if (!candidate) {
+      const open = (await listMyOpenRidesFromBackend({ signal })).filter(item => item.role === 'driver');
+      if (signal?.aborted || driverTripScope() !== scope) return { state: 'empty', trip: null };
+      const found = tripId ? open.find(item => item.tripId === tripId) : open[0];
+      if (!found) return { state: 'empty', trip: null };
+      candidate = { tripId: found.tripId };
+    }
     const ride = await getRideFromBackend(candidate.tripId, { signal });
     // The API's role is the stored seed view (passenger after selection),
     // not the requester. Access is checked by the participant-gated GET;

@@ -18,6 +18,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { loadDriverTrip, driverTripRoute } from '../driver_current_trip.js';
 import { user } from '../state.js';
 import { resolveRole } from '../smoke_role.js';
 import {
@@ -394,7 +395,7 @@ function renderPassenger() {
   });
 }
 
-function renderDriverEmpty() {
+function renderDriverEmpty({ isCurrent = () => true } = {}) {
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride';
   root.innerHTML = `
@@ -406,6 +407,15 @@ function renderDriverEmpty() {
     </div>
   `;
   root.querySelector('#ar-empty-feed').addEventListener('click', () => go('/feed'));
+  // #1174 — on a backend "nothing on this device" is not "no ride": ask the server for this
+  // driver's unfinished ride (loadDriverTrip: ids-only discovery, then the gated ride read) and
+  // open it. Backend OFF resolves from the local store only, so the empty state stays as is.
+  if (isBackendEnabled()) {
+    void loadDriverTrip().then((value) => {
+      const route = driverTripRoute(value);
+      if (route && isCurrent() && root.isConnected) go(route);
+    }).catch(() => {});
+  }
   return root;
 }
 
@@ -485,7 +495,7 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     const hasValidStatusQuery = statusQuery && DRIVER_SIMULATION_STATUSES.has(statusQuery);
     const hasExplicitTripId = Boolean(rawTripIdParam);
     const hasLatestHandedOffTripId = Boolean(latestHandedOffTripId);
-    if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId && !hasLatestHandedOffTripId) return renderDriverEmpty();
+    if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId && !hasLatestHandedOffTripId) return renderDriverEmpty({ isCurrent });
     const useSimOverrides = hasValidStatusQuery || Boolean(driverSnapshot);
     const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
     // A confirmed handoff is a real seed even without a canonical record.
