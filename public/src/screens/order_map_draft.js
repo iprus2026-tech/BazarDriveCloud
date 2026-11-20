@@ -8,7 +8,7 @@ import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { user } from '../state.js';
-import { createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
+import { createRideOrder, findOwnOpenOrderForRoute, LOCAL_USER_ID } from '../mock_api.js';
 import { routeEstimateFor } from './route_picker.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
 import { enrichOrderPointWithCoords, maskPassengerPhone, shortRideNumber } from '../passenger_order_utils.js';
@@ -732,12 +732,31 @@ function renderMissingBody() {
 }
 
 // ── Render: success state ─────────────────────────────────────
-function renderSuccessBody(order) {
+// The card's time line. An order restored from the store (#1181) is not always one this form
+// made: a composer order («Новая публикация») keeps its free-text time in scheduledLabel, and
+// scheduledAt may be that same text or missing. The label wins, as on /responses; a timestamp is
+// formatted only when it really is one (Codex P2 on #1197).
+function successTimeCopy(order) {
+  const label = typeof order.scheduledLabel === 'string' ? order.scheduledLabel.trim() : '';
+  if (label) return label;
+  if (order.scheduledMode !== 'later') return 'Сейчас · подача 4–8 мин';
+  const at = typeof order.scheduledAt === 'string' ? order.scheduledAt.trim() : '';
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at)) return `${formatDate(at.slice(0, 10))} · ${at.slice(11, 16)}`;
+  return at || 'Время не указано';
+}
+
+// The card's price line: the numeric price, else the order's own label, else an honest «no price».
+function successPriceCopy(order) {
+  const price = Number(order.estimatedPrice);
+  if (Number.isFinite(price) && price > 0) return `${price} ₽`;
+  const label = typeof order.estimatedPriceLabel === 'string' ? order.estimatedPriceLabel.trim() : '';
+  return label || 'По договорённости';
+}
+
+function renderSuccessBody(order, { restored = false } = {}) {
   const card = document.createElement('div');
   card.className = 'omd-card omd-card--success';
-  const timeCopy = order.scheduledMode === 'now'
-    ? 'Сейчас · подача 4–8 мин'
-    : `${formatDate(order.scheduledAt.slice(0, 10))} · ${order.scheduledAt.slice(11, 16)}`;
+  const timeCopy = successTimeCopy(order);
   const shortId = shortRideNumber(order.id);
 
   card.innerHTML = `
@@ -754,7 +773,9 @@ function renderSuccessBody(order) {
       <h2 class="omd-success__title" tabindex="-1">Заказ опубликован</h2>
       <p class="omd-success__status">Ищем водителей</p>
       <p class="omd-success__hint">
-        Водители увидят маршрут и смогут откликнуться.
+        ${restored
+          ? 'Заказ по этому маршруту уже опубликован — повторно создавать его не нужно. Отклики водителей придут сюда же.'
+          : 'Водители увидят маршрут и смогут откликнуться.'}
       </p>
     </div>
 
@@ -769,7 +790,7 @@ function renderSuccessBody(order) {
       </div>
       <div class="omd-summary__row">
         <dt>Цена</dt>
-        <dd>${escapeHtml(String(order.estimatedPrice))} ₽</dd>
+        <dd>${escapeHtml(successPriceCopy(order))}</dd>
       </div>
       <div class="omd-summary__row">
         <dt>Статус</dt>
@@ -794,12 +815,16 @@ function renderSuccessBody(order) {
       </svg>
       <span>В ленту</span>
     </button>
+    ${restored ? `
+    <button class="bd-btn ghost omd-draft" type="button" data-action="new-order">
+      <span>Создать ещё один заказ</span>
+    </button>` : ''}
   `;
   return card;
 }
 
 // ── Build and event wiring ────────────────────────────────────
-function buildSection({ state, draft, order }) {
+function buildSection({ state, draft, order, restored = false }) {
   const fragment = document.createDocumentFragment();
   // BD-ORDER-P-01 — pill copy uses natural Russian (no technical
   // request/draft/created/state wording leaking into the UI):
@@ -818,7 +843,7 @@ function buildSection({ state, draft, order }) {
   scroll.appendChild(renderMap(draft));
 
   if (order) {
-    scroll.appendChild(renderSuccessBody(order));
+    scroll.appendChild(renderSuccessBody(order, { restored }));
   } else if (state === STATE.MISSING) {
     scroll.appendChild(renderMissingBody());
   } else {
@@ -829,6 +854,20 @@ function buildSection({ state, draft, order }) {
 }
 
 let lastOrder = null;
+// #1181 — the route («from→to») for which the user explicitly chose «Создать ещё один заказ».
+// Only then does the form reopen while an own order for that route is still open; otherwise the
+// order already published is shown. Reset by a successful publish.
+let duplicateAllowedFor = null;
+
+function routeKey(draft) {
+  return draft ? `${draft.pickup.label}→${draft.dropoff.label}` : '';
+}
+
+// The user's own still-open order for the drafted route, unless a second one was asked for.
+function ownOpenOrderFor(draft) {
+  if (!draft || duplicateAllowedFor === routeKey(draft)) return null;
+  return findOwnOpenOrderForRoute({ pickupLabel: draft.pickup.label, dropoffLabel: draft.dropoff.label });
+}
 
 // BD-ACTIVE-07 — Capture the order author's identity at publish time so
 // the driver-side accept handoff renders this passenger (not the demo
@@ -933,6 +972,7 @@ function handlePublish(root, draft) {
       return;
     }
     lastOrder = order;
+    duplicateAllowedFor = null;
     form.publishing = false;
     clearNotice();
     clearFormDraft();
@@ -979,6 +1019,14 @@ function handleAction(root, action, draft, state) {
   if (action === 'close') {
     lastOrder = null;
     go('/feed');
+    return;
+  }
+  if (action === 'new-order') {
+    // An explicit second order for the same route: reopen the form for it.
+    if (!draft) return;
+    duplicateAllowedFor = routeKey(draft);
+    lastOrder = null;
+    rerender(root, { state: STATE.VALID, draft });
     return;
   }
   if (action === 'edit-route' || action === 'pick-route') {
@@ -1116,11 +1164,15 @@ export default function orderMapDraftScreen() {
   let renderedDraft = draft;
 
   const state = draft ? STATE.VALID : STATE.MISSING;
+  // #1181 — an own order for this route is already open (a reload on the success card, Back
+  // from /responses, «new order» with the same route): show it, not a fresh publishable form.
+  const openOrder = ownOpenOrderFor(draft);
+  if (openOrder) lastOrder = openOrder;
 
   const root = document.createElement('section');
   root.className = 'screen screen--order-map-draft';
-  root.dataset.state = state;
-  root.replaceChildren(buildSection({ state, draft }));
+  root.dataset.state = openOrder ? 'success' : state;
+  root.replaceChildren(buildSection({ state, draft, order: openOrder || undefined, restored: Boolean(openOrder) }));
 
   // BD-MAP-08 — dedup guard so a single tap that fires both `pointerup`
   // and `click` does not create two orders. Stamped on the first publish

@@ -1027,7 +1027,7 @@ function renderResponsesFooter({ retry = false } = {}) {
       ${primary}
       <button type="button" class="bd-btn responses__cta responses__cta--secondary" id="responses-map">
         ${PENCIL_SVG}
-        <span>Изменить заказ</span>
+        <span>Новый заказ</span>
       </button>
     </div>`;
 }
@@ -1991,8 +1991,9 @@ export default function responses() {
   }
   root.querySelector('#responses-shield').addEventListener('click', openSafetySheet);
 
+  // #1181 — «На карту» goes to the map, as its label says (it used to open the order form).
   root.querySelector('#responses-edit').addEventListener('click', () => {
-    go('/order-map-draft');
+    go('/map');
   });
 
   const readRegion = root.querySelector('#responses-read-region');
@@ -2297,8 +2298,10 @@ export default function responses() {
         return;
       }
 
+      // #1181 — this control never edited the order: it opened a blank form that published a
+      // second one. It is labelled for what it does and starts from the route choice.
       if (event.target.closest('#responses-map')) {
-        go('/order-map-draft');
+        go('/route-picker');
         return;
       }
 

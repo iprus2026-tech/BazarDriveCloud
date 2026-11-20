@@ -222,7 +222,7 @@ await check('preview OFF: a draft saved with no estimate shows the local estimat
 });
 
 // ── D. order draft ────────────────────────────────────────────────────────────
-function draftHarness({ backend, route, form = null, profile = { name: 'Пассажир', phone: '+79000001005', onboarded: true } }) {
+function draftHarness({ backend, route, form = null, profile = { name: 'Пассажир', phone: '+79000001005', onboarded: true }, openOrder = null }) {
   const routeEstimateFor = estimateRule(backend);
   const storage = new Map([['bazardrive.route_draft.v1', routeDraft(route)]]);
   if (form) storage.set('bazardrive.order_form.v1', JSON.stringify(form));
@@ -230,6 +230,7 @@ function draftHarness({ backend, route, form = null, profile = { name: 'Пасс
   const created = [];
   const timers = [];
   const pending = [];
+  const routeQueries = [];
   const context = baseContext({ backend, storage, navigation, extra: {
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
     // #1179 — publishing needs a registered profile; these cases are a signed-up passenger
@@ -237,6 +238,8 @@ function draftHarness({ backend, route, form = null, profile = { name: 'Пасс
     user: { get: () => profile },
     setPendingAction: (fn) => { pending.push(fn); },
     createRideOrder: async (input) => { created.push(input); return { id: 'order-1', ...input }; },
+    // #1181 — the user's own still-open order for the drafted route (none unless a case passes one).
+    findOwnOpenOrderForRoute: (query) => { routeQueries.push(query); return openOrder; },
     LOCAL_USER_ID: 'u_local',
     roleGateCode: () => null, ROLE_GATE_TEXT: {}, PROFILE_CTA_LABEL: '', PASSENGER_ROLE_REQUIRED: 'PASSENGER_ROLE_REQUIRED',
     enrichOrderPointWithCoords: utils.enrichOrderPointWithCoords,
@@ -261,7 +264,7 @@ function draftHarness({ backend, route, form = null, profile = { name: 'Пасс
     while (timers.length) await timers.shift()();
     await flush();
   }
-  return { f, price, typePrice, publish, created, storage, navigation, pending };
+  return { f, price, typePrice, publish, created, storage, navigation, pending, routeQueries };
 }
 
 // #1179 — no order from an unregistered profile, and no placeholder phone presented as the user's.
@@ -287,6 +290,53 @@ await check('#1179: a registered profile publishes; the order carries the real m
     assert.equal(h.created[0].passenger.phoneMasked, masked, `phone ${phone}`);
     assert.equal(h.navigation.includes('/onboarding'), false);
   }
+});
+
+// #1181 — a route that already has the user's open order shows that order, not a second form.
+await check('#1181: an own open order for the route reopens as the published card; a second one is explicit', async () => {
+  const openOrder = { id: 'order-abc123', status: 'CREATED', scheduledMode: 'now', scheduledAt: '2026-11-19T10:00:00.000Z',
+    estimatedPrice: 450, pickup: { label: 'Лесная, 7' }, dropoff: { label: 'Озеро Сенеж' } };
+  const h = draftHarness({ backend: false, route: OFF_ROUTE, openOrder });
+  // (the query object comes from the vm sandbox, so compare its fields, not its prototype)
+  assert.equal(h.routeQueries[0].pickupLabel, 'Лесная, 7', 'asked for exactly the drafted route');
+  assert.equal(h.routeQueries[0].dropoffLabel, 'Озеро Сенеж');
+  assert.equal(h.f.root.dataset.state, 'success');
+  assert.match(h.f.text(), /ОПУБЛИКОВАН/);
+  assert.match(h.f.text(), /уже опубликован/);
+  assert.match(h.f.text(), /450/);
+  assert.equal(h.f.$('[data-action="publish"]'), null, 'no publish control while the order is open');
+  assert.equal(h.created.length, 0);
+  // «Смотреть отклики» opens that order's board.
+  await h.f.$('[data-action="my-order"]').fire();
+  assert.deepEqual(h.navigation.slice(-1), ['/responses?orderId=order-abc123&state=empty']);
+  // A second order for the same route only on the explicit action.
+  const again = draftHarness({ backend: false, route: OFF_ROUTE, openOrder });
+  await again.f.$('[data-action="new-order"]').fire();
+  assert.equal(again.f.root.dataset.state, 'valid');
+  assert.notEqual(again.f.$('[data-action="publish"]'), null, 'the form is back after «Создать ещё один заказ»');
+  await again.publish();
+  assert.equal(again.created.length, 1);
+});
+await check('#1181: a restored order shows its own time and price — a composer order keeps its free-text time', () => {
+  const base = { id: 'order-abc123', status: 'CREATED', pickup: { label: 'Лесная, 7' }, dropoff: { label: 'Озеро Сенеж' } };
+  const summary = (openOrder) => draftHarness({ backend: false, route: OFF_ROUTE, openOrder }).f.$('.omd-summary').textContent.replace(/\s+/g, ' ');
+  // «Новая публикация» stores the typed time in scheduledLabel and scheduledAt, and may have no price.
+  const composer = summary({ ...base, scheduledMode: 'later', scheduledLabel: 'Завтра утром', scheduledAt: 'Завтра утром', estimatedPrice: 0 });
+  assert.match(composer, /Завтра утром/);
+  assert.doesNotMatch(composer, /· м\b/, 'the free text is not sliced as a timestamp');
+  assert.match(composer, /По договорённости/);
+  assert.doesNotMatch(composer, /Цена\s*0 ₽/);
+  // This form's own orders are unchanged.
+  assert.match(summary({ ...base, scheduledMode: 'now', scheduledAt: '2026-11-19T10:00:00.000Z', estimatedPrice: 450 }), /Сейчас · подача 4–8 мин.*450 ₽/);
+  assert.match(summary({ ...base, scheduledMode: 'later', scheduledAt: '2026-11-20T07:30:00.000Z', estimatedPrice: 450 }), /20\.11\.2026 · 07:30/);
+  // A later order with no usable time, and a label-only price, do not crash or invent values.
+  assert.match(summary({ ...base, scheduledMode: 'later', scheduledAt: null, estimatedPrice: null, estimatedPriceLabel: '1 500 ₽' }), /Время не указано.*1 500 ₽/);
+});
+await check('#1181: with no open order for the route the form is the ordinary new-order form', () => {
+  const h = draftHarness({ backend: false, route: OFF_ROUTE });
+  assert.equal(h.f.root.dataset.state, 'valid');
+  assert.equal(h.f.$('[data-action="new-order"]'), null);
+  assert.notEqual(h.f.$('[data-action="publish"]'), null);
 });
 
 await check('#1058: the price field carries no step grid and no native min / max, in both modes', () => {

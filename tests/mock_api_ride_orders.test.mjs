@@ -31,6 +31,7 @@ const {
   rideOrderToFeedPost,
   listRideOrdersAsFeedPosts,
   mergeFeedAndRideOrderPosts,
+  findOwnOpenOrderForRoute,
 } = await import('../public/src/mock_api.js');
 
 const RIDE_ORDERS_KEY = 'bazardrive.ride_orders.v1';
@@ -233,4 +234,46 @@ test('mergeFeedAndRideOrderPosts: empty rides returns a feed copy; non-arrays to
   assert.notEqual(copy, feed, 'returns a copy, not the same reference');
   assert.deepEqual(mergeFeedAndRideOrderPosts(null, null), []);
   assert.deepEqual(mergeFeedAndRideOrderPosts('x', undefined), []);
+});
+
+// #1181 — the order form asks whether the user already has an open order for the drafted route.
+test('findOwnOpenOrderForRoute: the newest own CREATED order with exactly these two labels', async () => {
+  const own = (id, extra = {}) => ({ id, status: 'CREATED', createdByRole: 'passenger',
+    pickup: { label: 'Лесная, 7' }, dropoff: { label: 'Озеро Сенеж' },
+    passenger: { isCurrentUser: true }, ...extra });
+  const route = { pickupLabel: 'Лесная, 7', dropoffLabel: 'Озеро Сенеж' };
+
+  seedOrders([own('order-new'), own('order-old')]);
+  assert.equal(findOwnOpenOrderForRoute(route).id, 'order-new', 'the store is newest first');
+  assert.equal(findOwnOpenOrderForRoute({ pickupLabel: ' Лесная, 7 ', dropoffLabel: 'Озеро Сенеж ' }).id, 'order-new',
+    'surrounding spaces do not matter');
+
+  // Not this route, in either direction.
+  assert.equal(findOwnOpenOrderForRoute({ pickupLabel: 'Озеро Сенеж', dropoffLabel: 'Лесная, 7' }), null);
+  assert.equal(findOwnOpenOrderForRoute({ pickupLabel: 'Лесная, 7', dropoffLabel: 'Вокзал' }), null);
+  for (const bad of [undefined, {}, { pickupLabel: '', dropoffLabel: 'Озеро Сенеж' }, { pickupLabel: 'Лесная, 7' }]) {
+    assert.equal(findOwnOpenOrderForRoute(bad), null);
+  }
+
+  // Never someone else's, a closed, a demo or a driver-surface test order.
+  for (const other of [
+    own('o1', { passenger: { isCurrentUser: false } }),
+    own('o2', { passenger: null }),
+    own('o3', { status: 'ACCEPTED' }),
+    own('o4', { status: 'CANCELED' }),
+    own('o5', { demo: true }),
+    own('o6', { createdByRole: 'driver' }),
+  ]) {
+    seedOrders([other]);
+    assert.equal(findOwnOpenOrderForRoute(route), null, JSON.stringify(other));
+  }
+
+  // A real published order is found through the same store createRideOrder writes.
+  clearRideOrdersStore();
+  const created = await createRideOrder({ pickup: { label: 'Дом' }, dropoff: { label: 'Центр' },
+    passenger: { name: 'Вы', isCurrentUser: true, authorId: 'local-user' } });
+  assert.equal(findOwnOpenOrderForRoute({ pickupLabel: 'Дом', dropoffLabel: 'Центр' }).id, created.id);
+  // The result is a copy: mutating it does not touch the store.
+  findOwnOpenOrderForRoute({ pickupLabel: 'Дом', dropoffLabel: 'Центр' }).status = 'X';
+  assert.equal(findOwnOpenOrderForRoute({ pickupLabel: 'Дом', dropoffLabel: 'Центр' }).status, 'CREATED');
 });
