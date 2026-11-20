@@ -69,6 +69,10 @@ export function serializeOrder(row, { viewerId = null } = {}) {
     passenger: { isCurrentUser },
     createdAt: toIso(row.created_at),
     acceptedAt: row.accepted_at ? toIso(row.accepted_at) : null,
+    // #1188 — when the owner last edited the order's terms / its price (null: never). Public: a
+    // driver compares them with the time of their own offer.
+    termsChangedAt: row.terms_changed_at ? toIso(row.terms_changed_at) : null,
+    priceChangedAt: row.price_changed_at ? toIso(row.price_changed_at) : null,
   };
 }
 
@@ -105,6 +109,9 @@ export function serializeOffer(row, { orderLegacyId = null, plate = 'masked' } =
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     expiresAt: toIso(row.expires_at),
+    // #1188 — set when the order's time or comment changed under this open offer (it was made
+    // for the previous terms); null otherwise, and again once the driver re-sends the offer.
+    previousTermsAt: row.previous_terms_at ? toIso(row.previous_terms_at) : null,
   };
 }
 
@@ -225,6 +232,7 @@ export function serializeRecoveredOffer(row, { orderLegacyId = null, plate = 'ma
     createdAt: toIsoFromBundle(row.created_at),
     updatedAt: toIsoFromBundle(row.updated_at),
     expiresAt: toIsoFromBundle(row.expires_at),
+    previousTermsAt: toIsoFromBundle(row.previous_terms_at),
   };
 }
 

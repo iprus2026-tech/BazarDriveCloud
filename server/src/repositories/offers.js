@@ -14,6 +14,12 @@
 // is never touched: the conflict is a NO-OP and RETURNING is empty (the caller reads the existing
 // row back). The caller holds the order's FOR UPDATE lock and has checked it is still CREATED,
 // so a revision can never land after /select. Returns the row, or undefined on a no-op conflict.
+//
+// #1188 — one terminal offer IS re-sendable: an offer rejected because the passenger changed the
+// order's price (rejected_by = 'passenger_edit'). The driver offers again on the new price, so that
+// re-send is a NEW bid: it takes this request's price and message as they are (the old ones were
+// for another price), a fresh expires_at, and drops the rejection marks. Any re-send also clears
+// previous_terms_at — the driver has answered the order as it now stands.
 export async function upsertOffer(db, o) {
   const { rows } = await db.query(
     `INSERT INTO offers
@@ -26,12 +32,19 @@ export async function upsertOffer(db, o) {
            car           = COALESCE(EXCLUDED.car, offers.car),
            rating        = COALESCE(EXCLUDED.rating, offers.rating),
            eta_min       = COALESCE(EXCLUDED.eta_min, offers.eta_min),
-           price         = COALESCE(EXCLUDED.price, offers.price),
-           message       = COALESCE(EXCLUDED.message, offers.message),
+           price         = CASE WHEN offers.status = 'rejected' THEN EXCLUDED.price
+                                ELSE COALESCE(EXCLUDED.price, offers.price) END,
+           message       = CASE WHEN offers.status = 'rejected' THEN EXCLUDED.message
+                                ELSE COALESCE(EXCLUDED.message, offers.message) END,
            vehicle_model = COALESCE(EXCLUDED.vehicle_model, offers.vehicle_model),
            vehicle_color = COALESCE(EXCLUDED.vehicle_color, offers.vehicle_color),
-           vehicle_plate = COALESCE(EXCLUDED.vehicle_plate, offers.vehicle_plate)
+           vehicle_plate = COALESCE(EXCLUDED.vehicle_plate, offers.vehicle_plate),
+           expires_at    = CASE WHEN offers.status = 'rejected' THEN EXCLUDED.expires_at
+                                ELSE offers.expires_at END,
+           previous_terms_at = NULL,
+           rejected_by = NULL, rejected_reason = NULL, rejected_at = NULL
        WHERE offers.status IN ('sent', 'withdrawn')
+          OR (offers.status = 'rejected' AND offers.rejected_by = 'passenger_edit')
      RETURNING *`,
     [o.legacyId, o.orderId, o.driverId, o.driverName, o.car, o.rating, o.etaMin, o.price, o.message, o.ttlMin,
       o.vehicleModel ?? null, o.vehicleColor ?? null, o.vehiclePlate ?? null],
@@ -105,6 +118,36 @@ export async function rejectOpenOffersOnOrderCancel(db, orderId) {
     `UPDATE offers
         SET status = 'rejected', rejected_by = 'passenger_cancel',
             rejected_reason = 'order_canceled_by_passenger', rejected_at = now(), updated_at = now()
+      WHERE order_id = $1 AND status = 'sent'
+      RETURNING id`,
+    [orderId],
+  );
+  return rows;
+}
+
+// #1188 — the owner changed the order's PRICE: every still-open offer was a bid against the old
+// price, so it is rejected with its own marks (an earlier previous-terms mark goes with it: the
+// offer is no longer open). Unlike any other rejection this one is re-sendable (upsertOffer): the
+// driver offers again on the new price.
+export async function rejectOpenOffersOnOrderPriceChange(db, orderId) {
+  const { rows } = await db.query(
+    `UPDATE offers
+        SET status = 'rejected', rejected_by = 'passenger_edit',
+            rejected_reason = 'order_price_changed', rejected_at = now(), updated_at = now(),
+            previous_terms_at = NULL
+      WHERE order_id = $1 AND status = 'sent'
+      RETURNING id`,
+    [orderId],
+  );
+  return rows;
+}
+
+// #1188 — the owner changed the time or the comment (not the price): the open offers stay
+// selectable, marked as made for the previous terms. updated_at is NOT bumped — it stays the time
+// the driver last sent the offer. Cleared when the driver sends it again (upsertOffer).
+export async function markOpenOffersPreviousTerms(db, orderId) {
+  const { rows } = await db.query(
+    `UPDATE offers SET previous_terms_at = now()
       WHERE order_id = $1 AND status = 'sent'
       RETURNING id`,
     [orderId],
