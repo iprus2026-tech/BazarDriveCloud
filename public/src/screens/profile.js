@@ -19,6 +19,7 @@ import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import {
   listMyPublicationsSync, listDriverReceipts, listDriverReceiptsResolved, countCompletedPassengerTrips, listHistoryFromBackend,
+  countDriverHistoryTrips,
 } from '../mock_api.js';
 import { isBackendEnabled, getSessionToken } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
@@ -439,7 +440,9 @@ function renderPassenger(root, u, model, isCurrent, logout, ownsScreen, switchRo
             ${passengerMenuRow('pfp-role-switch', SVG_CAR_FRONT, 'Продолжить как водитель',
               model.backend ? 'Сменить роль аккаунта' : 'Переключить режим этой вкладки')}
             ${model.backend ? roleSwitchErrorHtml('pfp-role-switch-err') : ''}
-            ${passengerMenuRow('pfp-logout', SVG_LOGOUT, 'Выйти', 'Завершить локальную сессию')}
+            ${passengerMenuRow('pfp-logout', SVG_LOGOUT, 'Выйти',
+              // #1185 — with the backend ON this revokes the server session of this device.
+              model.backend ? 'Выйти из аккаунта на этом устройстве' : 'Завершить локальную сессию')}
           </div>
         </div>
       </div>
@@ -730,6 +733,15 @@ function driverHeroHtml(u) {
     </div>`;
 }
 
+// #1185 — with the backend ON the driver's trip counts come from their own server history
+// (countDriverHistoryTrips) once the history read lands; the first paint keeps the local count.
+function applyDriverTripCounts(root, counts) {
+  const hero = root.querySelector('.pf2-hero__trips');
+  if (hero) hero.textContent = `${counts.total} ${pluralRu(counts.total, 'поездка', 'поездки', 'поездок')}`;
+  const week = root.querySelector('.pf2-stat-card[data-stat="week-trips"] .pf2-stat-val');
+  if (week) week.textContent = String(counts.thisWeek);
+}
+
 function statusCardHtml(u) {
   const state   = getDriverStatusState(u);
   const checked = u.driverOnline ? ' checked' : '';
@@ -764,7 +776,7 @@ function driverStatsHtml() {
         <span class="pf2-stat-val pf2-stat-val--accent">—</span>
         <span class="pf2-stat-label">Доход · нет данных</span>
       </div>
-      <div class="pf2-stat-card">
+      <div class="pf2-stat-card" data-stat="week-trips">
         <span class="pf2-stat-val">${weekTrips}</span>
         <span class="pf2-stat-label">Поездок за 7 дней</span>
       </div>
@@ -3932,6 +3944,7 @@ export default function profile(renderContext, { logout = performLocalLogout, sw
       .then((items) => {
         if (!document.body.contains(root)) return;
         const all = Array.isArray(items) ? items : [];
+        applyDriverTripCounts(root, countDriverHistoryTrips(all));
         const serverScoped = scopeRole ? all.filter((e) => e && e.role === scopeRole) : all;
         // Merge with the role-scoped LOCAL history so local-only data survives the transition: the
         // passenger's just-submitted rating/tags/comment (local-only) and a locally-completed trip the

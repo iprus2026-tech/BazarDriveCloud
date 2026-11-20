@@ -1125,6 +1125,21 @@ export function countCompletedPassengerTrips() {
   return { total: completed.length, thisWeek };
 }
 
+// #1185 — the same two counts with the backend ON. There a completed ride is a row of the server
+// history, not of this device's order store: a driver who drove on another device, or whose order
+// was never mirrored here, read «0 поездок» after a completed ride. `entries` is the viewer's
+// history as listHistoryFromBackend() returns it (rows exist for COMPLETED rides only, the newest
+// 100); only the rides the viewer drove are counted.
+export function countDriverHistoryTrips(entries, now = Date.now()) {
+  const driven = (Array.isArray(entries) ? entries : []).filter((e) => e && e.role === 'driver');
+  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const thisWeek = driven.filter((e) => {
+    const t = Date.parse(e.completedAt || '');
+    return Number.isFinite(t) && t >= weekAgo;
+  }).length;
+  return { total: driven.length, thisWeek };
+}
+
 // ── Ride order → Feed projection (BD-RIDE-ORDER-UNIFY-01) ──────
 // Read-side adapter: surfaces map-created CREATED ride orders as
 // passenger ride cards in Feed without duplicating them into
