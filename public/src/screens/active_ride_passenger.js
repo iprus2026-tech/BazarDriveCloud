@@ -540,7 +540,11 @@ function carLine(ride) {
   // pins on to prove the banned demo string can only ever surface as a
   // fallback, never a primary value.
   const model = authoritative ? (v.model || null) : (v.model || 'Toyota Camry');
-  if (model) parts.push(model);
+  // #1184 — a real LOCAL ride (the user's own order) is not a demo fixture either: a missing model
+  // or plate is omitted, never the demo car. Only explicit fixture/sim rides keep the fallbacks.
+  // (The provenance test is spelled out here — carLine stays self-contained, like serverVehicle.)
+  const realLocal = !authoritative && Boolean(ride && (ride.orderId || ride.acceptedSource));
+  if (model && !(realLocal && !v.model)) parts.push(model);
   // BD-LIFE-07 — Drop the 'серый' demo fallback. BD-LIFE-06 writes either
   // the real vehicle color or the neutral 'цвет не указан' onto real
   // accepted rides, so the `|| 'серый'` chain only ever fired on
@@ -549,7 +553,7 @@ function carLine(ride) {
   // missing rather than padding it with demo data.
   if (v.color) parts.push(v.color);
   const plate = v.plate || (authoritative ? null : 'А 124 ВВ 77');
-  if (plate) parts.push(plate);
+  if (plate && !(realLocal && !v.plate)) parts.push(plate);
   return parts.join(' · ');
 }
 
@@ -1383,6 +1387,11 @@ function renderPassengerRideComplete(ride, deps) {
   // positional `||` fallbacks — inside the non-authoritative branch on
   // purpose, per the same seed-smoke pin as topDriverCardHtml.
   const authoritative = !!(ride && ride.authoritative);
+  // #1184 — who pays how. The app processes no payment, so every REAL ride (server-confirmed, or a
+  // local ride that came from the user's own order) gets the direct-pay card: the fare and «Оплата
+  // напрямую водителю». The auto-charge simulation («Авто-оплата → Списание → Оплачено») is left
+  // to explicit demo fixtures only.
+  const directPay = authoritative || hasRealRouteContext(ride);
   const routePointsHtml = passengerRoutePointsHtml(ride);
   const driverName = authoritative
     ? ((ride.driver && ride.driver.name) || '—')
@@ -1459,7 +1468,7 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
       <div class="passenger-complete__hero-title" data-default-only>Поездка завершена</div>
       <div class="passenger-complete__hero-title" data-submitted-only>Спасибо за отзыв</div>
-      ${authoritative ? `
+      ${directPay ? `
       <div class="passenger-complete__hero-sub" data-default-only>Спасибо за поездку.</div>` : `
       <div class="passenger-complete__hero-sub" data-default-only data-pay-show="auto">
         Спасибо за поездку. Оплата спишется автоматически.
@@ -1475,7 +1484,7 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
     </div>
 
-    ${authoritative ? `
+    ${directPay ? `
     <div class="passenger-complete__card passenger-complete__pay passenger-complete__pay--direct">
       <div class="passenger-complete__pay-head">
         <div class="passenger-complete__pay-label">Стоимость поездки</div>
@@ -1814,8 +1823,8 @@ function renderPassengerRideComplete(ride, deps) {
     content.dataset.submitted = 'true';
     // Submitting the rating implies the auto-charge has completed
     // by the time we render the thank-you screen — the backend-OFF demo only.
-    // #1115: a server-confirmed ride has no in-app payment, so nothing claims a charge.
-    if (!authoritative) content.dataset.payment = 'paid';
+    // #1115 / #1184: a real ride has no in-app payment, so nothing claims a charge.
+    if (!directPay) content.dataset.payment = 'paid';
     submitBtn.disabled = true;
     // Disable underlying editable controls so a hidden tab/keyboard
     // user can't keep editing fields that the UI no longer shows.
