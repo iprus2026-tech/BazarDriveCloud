@@ -223,6 +223,17 @@ export async function listMyPosts() {
   return listMyPostsSync();
 }
 
+// #1185 — «Мои публикации»: a «Попутчик» request is published as a ride order, not a feed post,
+// so the own open orders join the list through the same projection the feed shows.
+export function listMyPublicationsSync() {
+  const ownOrders = listRideOrdersAsFeedPosts().filter((p) => p.createdByCurrentUser === true);
+  const byId = new Map();
+  for (const p of [...listMyPostsSync(), ...ownOrders]) {
+    if (p && p.id && !byId.has(p.id)) byId.set(p.id, p);
+  }
+  return [...byId.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
 // ── Inbox foundation (BD-RIDE-INBOX-01 + BD-RIDE-INBOX-02) ─────
 // Lightweight, in-memory mock for the "Входящие" hub.
 //   kind:    'response' | 'message' | 'ride'

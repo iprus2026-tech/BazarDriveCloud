@@ -18,7 +18,7 @@ import { readPassengerProfile, loadPassengerHistory, loadPassengerContext, passe
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import {
-  listMyPostsSync, listDriverReceipts, listDriverReceiptsResolved, countCompletedPassengerTrips, listHistoryFromBackend,
+  listMyPublicationsSync, listDriverReceipts, listDriverReceiptsResolved, countCompletedPassengerTrips, listHistoryFromBackend,
 } from '../mock_api.js';
 import { isBackendEnabled, getSessionToken } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
@@ -1012,8 +1012,9 @@ function driverCreateActionsHtml() {
 
 // ── My publications (BD-PROFILE-MY-POSTS-01) ────────────────────────────────
 // Inline Profile section listing the current user's locally created posts.
-// Data source: listMyPostsSync() (localStorage + in-memory FEED_POSTS_V2,
-// filtered by createdByCurrentUser). No new route — entry point lives in
+// Data source: listMyPublicationsSync() — the feed posts (localStorage + in-memory
+// FEED_POSTS_V2, filtered by createdByCurrentUser) plus the user's own open ride
+// orders, which is how a «Попутчик» request is published (#1185). No new route — entry point lives in
 // Profile only. Empty state CTA navigates to /new (composer).
 
 const POST_TYPE_LABELS = {
@@ -1072,7 +1073,7 @@ function myPostCardHtml(p) {
 }
 
 function myPostsSectionHtml() {
-  const posts = listMyPostsSync();
+  const posts = listMyPublicationsSync();
   const count = posts.length;
   const header = `
     <div class="pf-mypub-header">
