@@ -146,6 +146,27 @@ function otpWaitText(seconds) {
 }
 
 // ── Step sequences ────────────────────────────────────────────────────────────
+// #1185 — obvious-garbage guards for the wizard's own fields. They are deliberately loose: the
+// accepted plate FORMATS are an open product decision (#1178), so this only refuses input that is
+// not a phone / not a plate at all.
+// A phone is 10 digits, or 11 with the 7/8 trunk prefix.
+export function isPlausiblePhone(raw) {
+  const digits = String(raw == null ? '' : raw).replace(/\D/g, '');
+  return digits.length === 10 || (digits.length === 11 && (digits[0] === '7' || digits[0] === '8'));
+}
+
+// A plate is 4–12 letters / digits (spaces and hyphens allowed), with at least one letter and one
+// digit. Empty stays allowed here — the readiness checklist owns "plate missing".
+export function isPlausiblePlate(raw) {
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text) return true;
+  if (!/^[\p{L}\d\s-]+$/u.test(text)) return false;
+  const compact = text.replace(/[\s-]/g, '');
+  return compact.length >= 4 && compact.length <= 12 && /\p{L}/u.test(compact) && /\d/.test(compact);
+}
+
+export const VEHICLE_TEXT_MAX = 40;
+
 function formatPhoneDisplay(raw) {
   const d = String(raw ?? '').replace(/\D/g, '');
   if (d.length === 10) return `+7 ${d.slice(0, 3)} ${d.slice(3, 6)}-${d.slice(6, 8)}-${d.slice(8)}`;
@@ -341,13 +362,13 @@ function renderCar(draft, step, total) {
       <div class="bd-field">
         <label class="bd-label" for="ob-make">Марка</label>
         <input class="bd-input" id="ob-make"
-               type="text" placeholder="Toyota, Kia, Hyundai…"
+               type="text" placeholder="Toyota, Kia, Hyundai…" maxlength="${VEHICLE_TEXT_MAX}"
                value="${escapeHtml(draft.vehicleMake)}">
       </div>
       <div class="bd-field">
         <label class="bd-label" for="ob-model">Модель</label>
         <input class="bd-input" id="ob-model"
-               type="text" placeholder="Camry, Rio, Accent…"
+               type="text" placeholder="Camry, Rio, Accent…" maxlength="${VEHICLE_TEXT_MAX}"
                value="${escapeHtml(draft.vehicleModel)}">
       </div>
       <div class="ob-row-2">
@@ -361,14 +382,14 @@ function renderCar(draft, step, total) {
         <div class="bd-field">
           <label class="bd-label" for="ob-color">Цвет</label>
           <input class="bd-input" id="ob-color"
-                 type="text" placeholder="Серебристый"
+                 type="text" placeholder="Серебристый" maxlength="${VEHICLE_TEXT_MAX}"
                  value="${escapeHtml(draft.vehicleColor)}">
         </div>
       </div>
       <div class="bd-field">
         <label class="bd-label" for="ob-plate">Госномер</label>
         <input class="bd-input ob-plate-input" id="ob-plate"
-               type="text" placeholder="А 123 АА 77"
+               type="text" placeholder="А 123 АА 77" maxlength="16"
                autocomplete="off"
                value="${escapeHtml(draft.vehiclePlate)}">
       </div>
@@ -384,6 +405,7 @@ function renderCar(draft, step, total) {
       </div>
     </div>
     <div class="ob-footer">
+      <p class="ob-subtitle" id="ob-err" role="alert" hidden></p>
       <button type="button" class="bd-btn primary" id="ob-next">Продолжить</button>
     </div>
   `;
@@ -1045,8 +1067,9 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     const role = backend ? passengerIdentity.activeRole : draft.role;
     if (backend && !auth.finishLogin()) return;
 
+    // #1185 — never the phone: displayName is public (posts, offers, chat), and «Пропустить» on
+    // the name step used to publish the user's number as their name.
     const displayName = [draft.firstName, draft.lastName].filter(Boolean).join(' ')
-      || draft.phone
       || 'Пользователь';
     const requiredDocIds = DOCS.filter((d) => d.required).map((d) => d.id);
     const documentsReady = role === 'driver'
@@ -1203,6 +1226,11 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           });
         }
         if (nextBtn) nextBtn.addEventListener('click', async () => {
+          // #1185 — an empty, «12» or 16-digit number is not a phone in either mode.
+          if (!isPlausiblePhone(draft.phone)) {
+            setStepError('Введите номер полностью: 10 цифр после +7');
+            return;
+          }
           // R17 / CUT-2 (#784): on a live backend, request the OTP (POST /auth/otp/request) before
           // advancing to the code step; on failure show an inline error and stay. Mock path advances.
           if (!isBackendEnabled()) { next(); return; }
@@ -1296,7 +1324,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         ];
         carFields.forEach(([sel, key]) => {
           const el = root.querySelector(sel);
-          if (el) el.addEventListener('input', () => { draft[key] = el.value.trim(); });
+          if (el) el.addEventListener('input', () => { draft[key] = el.value.trim(); setStepError(''); });
         });
         root.querySelectorAll('.ob-body-chip').forEach((chip) => {
           chip.addEventListener('click', () => {
@@ -1306,7 +1334,20 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
             });
           });
         });
-        if (nextBtn) nextBtn.addEventListener('click', next);
+        if (nextBtn) nextBtn.addEventListener('click', () => {
+          // #1185 — «!!!» is not a plate, and an 80-character model is not a model.
+          if (!isPlausiblePlate(draft.vehiclePlate)) {
+            setStepError('Проверьте госномер: буквы и цифры, например А 123 АА 77');
+            return;
+          }
+          const tooLong = [draft.vehicleMake, draft.vehicleModel, draft.vehicleColor]
+            .some((v) => String(v || '').length > VEHICLE_TEXT_MAX);
+          if (tooLong) {
+            setStepError(`Марка, модель и цвет — не длиннее ${VEHICLE_TEXT_MAX} символов`);
+            return;
+          }
+          next();
+        });
         break;
       }
 
