@@ -373,5 +373,35 @@ await check('receipt preview OFF: the demo fallback for an unknown trip is uncha
   assert.equal(off.content.innerHTML, 'doc:48-321:cash');
 });
 
+// ── #1185 — backend OFF, a REAL local ride: no demo shift stats ──────────────
+await check('backend OFF: a real local ride counts «сегодня» / «поездок» from the local history, rating «—»', () => {
+  const context = vm.createContext({
+    console, backendRead: false, backendRide: false, driverToday: null,
+    ride: { tripId: 't', orderId: 'order-1', ride: { todayEarnings: '4 720 ₽', tripsToday: 7, rating: '4,92' } },
+    loadRideHistory: () => [{ role: 'driver', tripId: 'a', completedAt: 'today', receipt: { net: 370 } }],
+    summarizeDriverToday: (entries) => ({ trips: entries.length, earnings: 370 }),
+  });
+  vm.runInContext([
+    sourceFunction(driverSource, 'formatRub'),
+    sourceFunction(driverSource, 'driverStatsView'),
+    'globalThis.api = { view: driverStatsView, setRide: (r) => { ride = r; } };',
+  ].join('\n'), context, { filename: 'actual_driver_stats_local.js' });
+  const real = JSON.parse(JSON.stringify(context.api.view()));
+  assert.equal(real.today.replace(/\s/g, ' '), '370 ₽', 'from the history, not the seed');
+  assert.equal(real.trips, '1');
+  assert.equal(real.rating, '—', 'no rating source');
+  context.api.setRide({ tripId: 't', acceptedSource: 'driver_map', ride: { todayEarnings: '4 720 ₽' } });
+  assert.equal(context.api.view().trips, '1', 'acceptedSource marks a real ride as well');
+  context.api.setRide({ tripId: 'demo', ride: { todayEarnings: '4 720 ₽', tripsToday: 7, rating: '4,92' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(context.api.view())), { today: '4 720 ₽', trips: '7', rating: '4,92' },
+    'a demo fixture keeps its stats');
+});
+
+await check('the status pill follows the «На линии» toggle on a real ride; the overlay stats follow the history', () => {
+  assert.match(driverSource, /const realRide = backendRead \|\| Boolean\(ride && \(ride\.orderId \|\| ride\.acceptedSource\)\);/);
+  assert.match(driverSource, /realRide && user\.get\(\)\.driverOnline !== true\s*\? 'Не на линии'/);
+  assert.match(driverSource, /if \(!backendRead && \(ride\.orderId \|\| ride\.acceptedSource\)\) \{[\s\S]{0,120}payload\.stats = \[/);
+});
+
 console.log(`\n${passed} passed; ${failures.length} failed`);
 if (failures.length) process.exitCode = 1;
