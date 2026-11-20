@@ -86,7 +86,7 @@ expect('locked branch contains NO data-action="accept"',
 
 // ── #1185 — the «На линии» toggle gates the working surface and direct accept ──
 expect('driver map: a line-ready driver whose toggle is off gets the offline card, not the list',
-  /const isOffline = \(\) => !fixture && user\.get\(\)\.driverOnline !== true;/.test(driverMap)
+  /const isOffline = \(\) => !fixture && \(refreshDriverLineOff\(\) \|\| user\.get\(\)\.driverOnline !== true\);/.test(driverMap)
     && /async function renderList\(isRetry\) \{\s*if \(isOffline\(\)\) \{ renderOffline\(\); return; \}/.test(driverMap)
     && /card\.dataset\.state = STATE\.OFFLINE;/.test(driverMap));
 const offlineCard = (driverMap.match(/function buildOfflineCard\(\)[\s\S]*?\n\}/) || [''])[0];
@@ -96,6 +96,16 @@ expect('driver map: accept re-checks the toggle at tap time, after the readiness
   /if \(!isDriverLineReady\(user\.get\(\)\)\) \{\s*await renderReadinessGate\(false\);\s*return;\s*\}[\s\S]{0,160}if \(isOffline\(\)\) \{\s*renderOffline\(\);\s*return;\s*\}/.test(driverMap));
 expect('driver map: «Выйти на линию» re-checks readiness before writing driverOnline',
   /action === 'go-online'\) \{[\s\S]{0,220}isDriverLineReady\(user\.get\(\)\)[\s\S]{0,120}user\.set\(\{ driverOnline: true \}\);/.test(driverMap));
+// Review follow-up — user.get() is a per-tab cache: the gates read the PERSISTED flag first, and
+// only ever lower this tab's flag (an «on» written elsewhere is never adopted).
+expect('state: refreshDriverLineOff reads the persisted record and only downgrades the cached flag',
+  /export function refreshDriverLineOff\(\) \{[\s\S]{0,420}localStorage\.getItem\(KEY\)[\s\S]{0,260}parsed\.driverOnline === false[\s\S]{0,200}if \(persistedOff && cache && cache\.driverOnline === true\) cache = \{ \.\.\.cache, driverOnline: false \};/.test(state)
+    && !/driverOnline: true \}/.test((state.match(/export function refreshDriverLineOff\(\)[\s\S]*?\n\}/) || [''])[0]));
+const feedSrc = read('../public/src/screens/feed.js');
+const postDetailSrc = read('../public/src/screens/post_detail.js');
+expect('feed + post detail: direct accept checks the persisted flag at tap time',
+  /if \(refreshDriverLineOff\(\)\) \{\s*toast\(/.test(feedSrc)
+    && /if \(spec\.kind === 'accept'\) \{[\s\S]{0,260}if \(refreshDriverLineOff\(\)\) \{/.test(postDetailSrc));
 expect('ride_actions: canAcceptOrder refuses a driver who is not «На линии»',
   /if \(!isDriverLineReady\(u\)\) return false;[\s\S]{0,260}if \(u\.driverOnline !== true\) return false;/.test(rideActions));
 

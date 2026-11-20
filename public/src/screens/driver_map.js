@@ -20,7 +20,7 @@ import { listNearbyOrders, createRideOrder } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
 import { isBackendEnabled } from '../api_config.js';
-import { user, isDriverLineReady } from '../state.js';
+import { user, isDriverLineReady, refreshDriverLineOff } from '../state.js';
 import { getSmokeRole } from '../smoke_role.js';
 import { busyDriverRide } from '../driver_current_trip.js';
 
@@ -713,8 +713,9 @@ export default function driverMapScreen() {
   // the user taps «Повторить».
   const onDriverMapRetry = () => { void renderList(true); };
   // #1185 — the «На линии» gate of the working surface. Fixture previews (?fixture=…) are not a
-  // driver's shift and skip it.
-  const isOffline = () => !fixture && user.get().driverOnline !== true;
+  // driver's shift and skip it. refreshDriverLineOff() first: user.get() is this tab's cache and
+  // would not see the toggle switched off in another tab.
+  const isOffline = () => !fixture && (refreshDriverLineOff() || user.get().driverOnline !== true);
   function renderOffline() {
     ++readEpoch;
     cancelActiveRead();
@@ -730,7 +731,7 @@ export default function driverMapScreen() {
     if (fixture === READ_STATE.LOADING) return;
     const live = await readNearbyOrders({ isRetry, onRetry: onDriverMapRetry, epoch });
     if (!isCurrent(epoch) || !keepDriverPrecedence() || !isDriverLineReady(user.get())) return;
-    // The toggle was switched off (another tab) while the read was in flight.
+    // The toggle was switched off (here or in another tab) while the read was in flight.
     if (isOffline()) { renderOffline(); return; }
     if (live === READ_FAILED) {
       renderReadState(READ_STATE.ERROR, buildReadErrorCard());

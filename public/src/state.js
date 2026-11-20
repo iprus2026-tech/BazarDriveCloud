@@ -357,6 +357,25 @@ export const user = {
   },
 };
 
+// #1185 — cross-tab view of the «На линии» toggle. `user.get()` is THIS tab's cached projection
+// (only the auth key is synced on `storage` events), so a toggle switched off in another tab is
+// invisible to it. The order gates call this first: it reads the persisted record and, when that
+// says the line is off, lowers this tab's cached flag too. Downgrade only — an «on» written by
+// another tab is never adopted (the driver goes online here explicitly), so a foreign or stale
+// record can only close the gate, never open it. Returns true when the persisted flag is off.
+export function refreshDriverLineOff() {
+  let persistedOff = false;
+  try {
+    const raw = localStorage.getItem(KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    persistedOff = !!parsed && typeof parsed === 'object' && parsed.driverOnline === false;
+  } catch {
+    persistedOff = false;
+  }
+  if (persistedOff && cache && cache.driverOnline === true) cache = { ...cache, driverOnline: false };
+  return persistedOff;
+}
+
 // BD-PROFILE-D-05G — Append a single new vehicle to the persisted garage
 // collection. Single safe save path used by the Driver Profile garage's
 // "Добавить авто" sheet — every other render/wire path in 05A–05F stays
