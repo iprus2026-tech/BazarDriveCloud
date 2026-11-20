@@ -9,6 +9,8 @@
 //   - an order with a driver, or a canceled one, is 409 ORDER_NOT_EDITABLE;
 //   - a comment stored only in the passenger snapshot is cleared in both copies; a new price sent
 //     without a label gets a label for that price (so the ride does not show the old one);
+//   - a time change without a label clears the stored time label; a repeated price with more than
+//     two decimals is a no-op (it is stored as NUMERIC(12,2)) and rejects no later offer;
 //   - /readyz reports schema-incomplete on a database without migration 0016 (an isolated one).
 // SKIPPED without DATABASE_URL; runs in server-ci's app job.
 import { test } from 'node:test';
@@ -264,6 +266,30 @@ test('an edit leaves no comment in the snapshot and no label for another price',
   assert.equal((await post(app, '/api/v1/matching/select', { orderId, driverId: drvS.user.userId }, bearer(paxS))).statusCode, 200);
   const { rows: [ride] } = await db.query('SELECT passenger_note, ride_price FROM rides WHERE trip_id = $1', [`trip_${orderId}`]);
   assert.deepEqual([ride.passenger_note, ride.ride_price], [null, `${(800).toLocaleString('ru-RU')} ₽`]);
+});
+
+test('a time edit drops the old time label; a repeated sub-cent price rejects no offer', { skip: SKIP }, async (t) => {
+  const { app, db, phones: [pax, drv], orderIds } = await setup(t, ['+1644', '+1645']);
+  const paxS = await mintSession(app, pax);
+  const drvS = await grantDriverRole(db, await mintSession(app, drv));
+  const body = { ...ORDER, scheduledMode: 'later', scheduledAt: '2026-12-01T10:00', scheduledLabel: '1 дек, 10:00' };
+  const orderId = (await post(app, '/api/v1/orders', body, bearer(paxS))).json().order.id;
+  orderIds.push(orderId);
+
+  const moved = await patch(app, orderUrl(orderId), { scheduledAt: '2026-12-02T12:00' }, bearer(paxS));
+  assert.equal(moved.statusCode, 200, moved.body);
+  assert.deepEqual([moved.json().order.scheduledAt, moved.json().order.scheduledLabel], ['2026-12-02T12:00', '']);
+
+  const first = await patch(app, orderUrl(orderId), { estimatedPrice: 800.001 }, bearer(paxS));
+  assert.deepEqual([first.statusCode, first.json().order.estimatedPrice, first.json().order.estimatedPriceLabel],
+    [200, 800, `${(800).toLocaleString('ru-RU')} ₽`]);
+  // A driver offers after the edit; the same request again must not reject that offer.
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: PLATE, orderId, etaMin: 5 }, bearer(drvS))).statusCode, 201);
+  const again = await patch(app, orderUrl(orderId), { estimatedPrice: 800.001 }, bearer(paxS));
+  assert.equal(again.statusCode, 200, again.body);
+  assert.equal(again.json().order.priceChangedAt, first.json().order.priceChangedAt);
+  const [offer] = await offerRows(db, orderId);
+  assert.deepEqual([offer.status, offer.rejected_by, offer.previous_terms], ['sent', null, false]);
 });
 
 test('readiness: a database without migration 0016 is schema-incomplete', { skip: SKIP }, async (t) => {

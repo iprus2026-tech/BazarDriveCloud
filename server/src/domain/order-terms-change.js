@@ -16,10 +16,21 @@
 //   - a comment in the passenger snapshot. The ride note falls back to it when the order's own
 //     comment is blank (domain/ride-order-comment.js), and an order may carry its comment only
 //     there. So the comment is compared as the ride would read it, and a request that names the
-//     comment is written whenever either copy differs from it — the repository replaces both.
+//     comment is written whenever either copy differs from it — the repository replaces both;
+//   - a time label for another time. formatRideOrderWhen() shows scheduledLabel before it
+//     formats scheduledAt, so a time or mode change sent without a label clears the stored one
+//     (scheduledAt is free text, #1114 — the server has no label to make for it).
+// And a price is compared at the precision it is stored at (orders.estimated_price is
+// NUMERIC(12,2)): 800.001 is stored as 800.00, so repeating it must not count as a new price.
 import { rideNoteText, rideOrderComment } from './ride-order-comment.js';
 
 const text = (v) => (typeof v === 'string' ? v : '');
+// Rounded half away from zero on the decimal text, as PostgreSQL rounds the value node-pg sends
+// (String(n)) into NUMERIC(12,2) — 1.005 is 1.01 there, not the binary 1.00.
+const storedPrice = (n) => {
+  const s = String(n);
+  return s.includes('e') ? Math.round(n * 100) / 100 : Math.round(Number(`${s}e2`)) / 100;
+};
 const priceLabel = (n) => (n > 0 ? `${n.toLocaleString('ru-RU')} ₽` : '');
 
 export function orderTermsChange(row, body) {
@@ -29,8 +40,9 @@ export function orderTermsChange(row, body) {
   let timeChanged = false;
   let commentChanged = false;
 
-  if (b.estimatedPrice !== undefined && Number(b.estimatedPrice) !== (Number(row.estimated_price) || 0)) {
-    values.estimatedPrice = Number(b.estimatedPrice);
+  const price = b.estimatedPrice !== undefined ? storedPrice(Number(b.estimatedPrice)) : undefined;
+  if (price !== undefined && price !== (Number(row.estimated_price) || 0)) {
+    values.estimatedPrice = price;
     priceChanged = true;
   }
   const label = b.estimatedPriceLabel !== undefined
@@ -47,8 +59,9 @@ export function orderTermsChange(row, body) {
     values.scheduledAt = b.scheduledAt;
     timeChanged = true;
   }
-  if (b.scheduledLabel !== undefined && b.scheduledLabel !== text(row.scheduled_label)) {
-    values.scheduledLabel = b.scheduledLabel;
+  const timeLabel = b.scheduledLabel !== undefined ? b.scheduledLabel : (timeChanged ? '' : undefined);
+  if (timeLabel !== undefined && timeLabel !== text(row.scheduled_label)) {
+    values.scheduledLabel = timeLabel;
   }
   if (b.comment !== undefined) {
     const snap = (row.passenger_snapshot && typeof row.passenger_snapshot === 'object') ? row.passenger_snapshot : {};

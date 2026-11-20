@@ -82,3 +82,33 @@ test('the comment is compared as the ride reads it: the snapshot copy counts', (
   const blank = orderTermsChange({ ...ROW, comment: '' }, { comment: '  ' });
   assert.deepEqual([blank.hasWrites, blank.termsChanged], [true, false]);
 });
+
+test('a time or mode change without a label clears the stored time label', () => {
+  const later = { ...ROW, scheduled_mode: 'later', scheduled_at: '2026-12-01T10:00', scheduled_label: '1 дек, 10:00' };
+  const moved = orderTermsChange(later, { scheduledAt: '2026-12-02T12:00' });
+  assert.deepEqual(moved.values, { scheduledAt: '2026-12-02T12:00', scheduledLabel: '' });
+  assert.deepEqual([moved.priceChanged, moved.termsChanged], [false, true]);
+  // Back to «now»: the dated label goes too.
+  assert.deepEqual(orderTermsChange(later, { scheduledMode: 'now' }).values, { scheduledMode: 'now', scheduledLabel: '' });
+  // A label the request carries is stored as sent.
+  assert.deepEqual(orderTermsChange(later, { scheduledAt: '2026-12-02T12:00', scheduledLabel: '2 дек, 12:00' }).values,
+    { scheduledAt: '2026-12-02T12:00', scheduledLabel: '2 дек, 12:00' });
+  // The same time without a label leaves the stored label alone.
+  assert.equal(orderTermsChange(later, { scheduledAt: '2026-12-01T10:00', scheduledMode: 'later' }).hasWrites, false);
+  // A time change on an order with no label writes no empty label.
+  assert.deepEqual(orderTermsChange(ROW, { scheduledAt: '2026-12-02T12:00' }).values, { scheduledAt: '2026-12-02T12:00' });
+});
+
+test('a price is compared at the stored precision (NUMERIC(12,2))', () => {
+  // 800.001 is stored as 800.00: the first edit writes 800, a repeat against 800.00 is a no-op.
+  const first = orderTermsChange(ROW, { estimatedPrice: 800.001 });
+  assert.deepEqual(first.values, { estimatedPrice: 800, estimatedPriceLabel: `${(800).toLocaleString('ru-RU')} ₽` });
+  const stored = { ...ROW, estimated_price: '800.00', estimated_price_label: first.values.estimatedPriceLabel };
+  assert.deepEqual(orderTermsChange(stored, { estimatedPrice: 800.001 }),
+    { values: {}, hasWrites: false, priceChanged: false, termsChanged: false });
+  assert.equal(orderTermsChange(ROW, { estimatedPrice: 500.004 }).hasWrites, false);
+  // Rounded as PostgreSQL rounds the decimal text: 1.005 -> 1.01.
+  assert.equal(orderTermsChange(ROW, { estimatedPrice: 1.005 }).values.estimatedPrice, 1.01);
+  assert.equal(orderTermsChange({ ...ROW, estimated_price: '1.01' }, { estimatedPrice: 1.005 }).hasWrites, false);
+  assert.equal(orderTermsChange({ ...ROW, estimated_price: '0.00' }, { estimatedPrice: 1e-7 }).hasWrites, false);
+});
