@@ -829,6 +829,24 @@ export async function cancelOrderOnBackend(orderId, { signal } = {}) {
   return null;
 }
 
+// #1188 — the same withdrawal with the backend OFF, where the local order store is the only
+// record. Own = the passenger snapshot says so (the rule of findOwnOpenOrderForRoute): a demo
+// fixture, a driver-surface test order and someone else's order are never the caller's to cancel.
+export function isOwnLocalOrder(order) {
+  return !!order && typeof order.id === 'string' && !!order.id && !order.demo
+    && order.createdByRole !== 'driver' && order.passenger?.isCurrentUser === true;
+}
+
+// CREATED -> CANCELED on the local copy. Returns the canceled order, or null when there is nothing
+// to cancel here: the backend is ON (cancelOrderOnBackend owns it), the order is not the caller's,
+// or it is no longer open (a driver was selected, or it is already canceled).
+export function cancelOwnLocalOrder(orderId) {
+  if (isBackendEnabled()) return null;
+  const order = loadRideOrdersRaw().find((o) => o && o.id === orderId);
+  if (!isOwnLocalOrder(order) || order.status !== 'CREATED') return null;
+  return updateTripStatus(orderId, 'CANCELED');
+}
+
 // POLL the realtime cursor. Returns { tripId, status, events, cursor }; pass the prior cursor as
 // `since` for an incremental read. The caller re-fetches the full snapshot when `status` changes.
 export async function pollRide(tripId, since, { signal } = {}) {

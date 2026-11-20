@@ -440,6 +440,41 @@ async function seamChecks() {
     assert.equal(mockApi.getOrderById('order-x').status, 'CREATED');
   });
 
+  await check('#1188 backend OFF: cancelOwnLocalOrder moves only the caller\'s own open order', async () => {
+    delete globalThis.__BD_API_BASE__;
+    globalThis.fetch = () => { throw new Error('fetch must not run while OFF'); };
+    const own = { isCurrentUser: true, authorId: 'me' };
+    const put = (order) => { storage.clear(); storage.set(ORDERS_KEY, JSON.stringify([{ id: 'order-x', pickup: { label: 'A' }, dropoff: { label: 'B' }, ...order }])); };
+    put({ status: 'CREATED', passenger: own });
+    assert.equal(mockApi.isOwnLocalOrder(mockApi.getOrderById('order-x')), true);
+    const canceled = mockApi.cancelOwnLocalOrder('order-x');
+    assert.equal(canceled.status, 'CANCELED');
+    assert.equal(mockApi.getOrderById('order-x').status, 'CANCELED');
+    assert.equal(mockApi.cancelOwnLocalOrder('order-x'), null, 'a repeat has nothing to cancel');
+    for (const [label, order] of [
+      ['someone else\'s order', { status: 'CREATED', passenger: { isCurrentUser: false, authorId: 'other' } }],
+      ['no passenger snapshot', { status: 'CREATED' }],
+      ['a demo fixture', { status: 'CREATED', passenger: own, demo: true }],
+      ['a driver-surface test order', { status: 'CREATED', passenger: own, createdByRole: 'driver' }],
+      ['an order with a driver', { status: 'ACCEPTED', passenger: own }],
+    ]) {
+      put(order);
+      assert.equal(mockApi.cancelOwnLocalOrder('order-x'), null, label);
+      assert.equal(mockApi.getOrderById('order-x').status, order.status, `${label}: untouched`);
+    }
+    assert.equal(mockApi.cancelOwnLocalOrder('missing'), null);
+  });
+
+  await check('#1188 backend ON: cancelOwnLocalOrder does nothing — the server owns the cancel', async () => {
+    storage.clear();
+    storage.set(ORDERS_KEY, JSON.stringify([{ id: 'order-x', status: 'CREATED', pickup: { label: 'A' }, dropoff: { label: 'B' }, passenger: { isCurrentUser: true } }]));
+    globalThis.__BD_API_BASE__ = 'https://api.fixture.invalid';
+    globalThis.fetch = () => { throw new Error('the local cancel never calls the network'); };
+    assert.equal(mockApi.cancelOwnLocalOrder('order-x'), null);
+    assert.equal(mockApi.getOrderById('order-x').status, 'CREATED');
+    delete globalThis.__BD_API_BASE__;
+  });
+
   await check('ON: POST /orders/:id/cancel, and only a confirmed CANCELED order moves the local copy', async () => {
     seedOrder();
     globalThis.__BD_API_BASE__ = 'https://api.fixture.invalid';
@@ -476,8 +511,9 @@ async function seamChecks() {
 
 // ── D. /responses order cancel controller (#1049) ─────────────────────────────
 function responsesHarness(overrides = {}) {
-  const calls = { cancel: [], renders: 0, offers: 0, navigation: [] };
+  const calls = { cancel: [], localCancel: [], renders: 0, offers: 0, navigation: [] };
   let cancelImpl = () => Promise.resolve({ id: 'order-x', status: 'CANCELED' });
+  let localCancelResult = { id: 'order-x', status: 'CANCELED' };
   const orderCancelEl = new FakeElement('div');
   orderCancelEl._attached = true;
   const context = vm.createContext({
@@ -493,6 +529,9 @@ function responsesHarness(overrides = {}) {
     root: {}, readRegion: { focus() {} },
     document: { body: { contains: () => true } },
     cancelOrderOnBackend: (...args) => { calls.cancel.push(args); return cancelImpl(...args); },
+    // #1188 — backend OFF: the owner's own local order is cancelable through the local store.
+    localOwnOrder: () => false,
+    cancelOwnLocalOrder: (...args) => { calls.localCancel.push(args); return localCancelResult; },
     resolveCanonicalOrder: () => ({ id: 'order-x', status: 'CANCELED' }),
     renderReadRegion: () => { calls.renders += 1; },
     loadServerOffers: () => { calls.offers += 1; return Promise.resolve(); },
@@ -518,14 +557,19 @@ function responsesHarness(overrides = {}) {
     api: context.api, context, calls, el: orderCancelEl,
     failWith: (error) => { cancelImpl = () => Promise.reject(error); },
     hold: () => { const d = deferred(); cancelImpl = () => d.promise; return d; },
+    localCancelReturns: (value) => { localCancelResult = value; },
   };
 }
 
 async function responsesChecks() {
-  await check('cancel is offered only for the owner\'s CREATED order without a driver, backend ON', async () => {
+  await check('cancel is offered only for the owner\'s CREATED order without a driver (server order, or own local order with the backend OFF)', async () => {
     assert.equal(responsesHarness().api.cancelable(), true);
+    // #1188 — backend OFF used to mean «never»: now the user's own local order qualifies.
+    assert.equal(responsesHarness({ backendAuthoritative: false, localOwnOrder: () => true }).api.cancelable(), true);
     for (const [label, override] of [
-      ['backend OFF', { backendAuthoritative: false }],
+      ['backend OFF, not the user\'s own local order', { backendAuthoritative: false }],
+      ['backend OFF, own order ACCEPTED', { backendAuthoritative: false, localOwnOrder: () => true, canonicalOrder: { id: 'order-x', status: 'ACCEPTED' } }],
+      ['backend OFF, own order, driver handed off', { backendAuthoritative: false, localOwnOrder: () => true, isAccepted: true }],
       ['fixture preview', { fixture: 'loaded' }],
       ['no local order copy', { canonicalOrder: null }],
       ['order ACCEPTED', { canonicalOrder: { id: 'order-x', status: 'ACCEPTED' } }],
@@ -571,6 +615,30 @@ async function responsesChecks() {
     assert.match(canceled, /Заказ отменён/);
     assert.match(canceled, /data-order-action="recreate"/);
     assert.doesNotMatch(h.api.canceledHtml(false), /recreate/);
+  });
+
+  await check('#1188 backend OFF: the cancel goes to the local store, never to the server seam', async () => {
+    const h = responsesHarness({ backendAuthoritative: false, localOwnOrder: () => true });
+    await h.api.cancel();
+    assert.deepEqual(h.calls.localCancel, [['order-x']]);
+    assert.deepEqual(h.calls.cancel, [], 'cancelOrderOnBackend is not called with the backend OFF');
+    const state = h.api.inspect();
+    assert.equal(state.readState, 'canceled');
+    assert.equal(state.effectiveState, 'canceled');
+    assert.equal(state.orderCancelPending, false);
+    assert.equal(h.calls.renders, 1);
+  });
+
+  await check('#1188 backend OFF: a local order that is no longer open is refused with its reason, no retry', async () => {
+    const h = responsesHarness({ backendAuthoritative: false, localOwnOrder: () => true });
+    h.localCancelReturns(null);
+    await h.api.cancel();
+    assert.deepEqual(h.calls.localCancel, [['order-x']]);
+    assert.equal(h.el.dataset.stage, 'error');
+    assert.match(h.el.innerHTML, /уже есть водитель/);
+    assert.doesNotMatch(h.el.innerHTML, /confirm-cancel/);
+    assert.equal(h.api.inspect().readState, 'empty', 'the order is not shown as canceled');
+    assert.equal(h.api.inspect().orderCancelPending, false);
   });
 
   await check('a second confirm while the request is in flight is ignored', async () => {
