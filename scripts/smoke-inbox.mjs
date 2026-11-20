@@ -433,6 +433,34 @@ expect('inbox Enter/Space handler opens Daily Communication entry', /addEventLis
 expect('inbox entry does not call ride/order lifecycle writers', !/acceptOrder|updateTripStatus|saveActiveRideStore|acceptNearbyOrder|acceptPassengerRequestFromPost/.test(inbox));
 expect('mock_api.js does not seed a Daily Communication inbox item', !/\/daily-communication/.test(mockApi));
 
+// ── #1183 — the Inbox shows only the items addressed to the viewer's role ──
+const viewerRoleBody = functionBody(inbox, 'viewerRoleOf') || '';
+const itemsForViewerBody = functionBody(inbox, 'itemsForViewer') || '';
+expect('the viewer role is driver only for a driver; everyone else reads as a passenger',
+  /u\.role === 'driver' \? 'driver' : 'passenger'/.test(viewerRoleBody));
+expect('the role is the effective one (per-tab preview override included), read at call time',
+  /function itemsForViewer\(items, role = viewerRoleOf\(applySmokeRole\(user\.get\(\)\)\)\)/.test(inbox));
+expect('an item with no role is for everyone; a role item only for that role',
+  /!item\.role \|\| item\.role === role/.test(itemsForViewerBody));
+expect('the filter is applied to the settled read, before the loaded/empty decision',
+  /items\s*=\s*Array\.isArray\(result\) \? result : \[\];\s*items\s*=\s*itemsForViewer\(items\);\s*readState\s*=\s*items\.length \? 'loaded' : 'empty'/.test(refreshInboxBody));
+// Behavioural: the same rule over the real seed. Every item names a role, each role has items,
+// and no item for one role opens the other role's surface.
+{
+  const seed = [...itemsBody.matchAll(/id:\s*'([^']+)'[\s\S]*?role:\s*'(passenger|driver)'[\s\S]*?primary:\s*\{[^}]*href:\s*'([^']*)'[^}]*\}[\s\S]*?secondary:\s*\{[^}]*href:\s*'([^']*)'/g)]
+    .map(([, id, role, primary, secondary]) => ({ id, role, hrefs: [primary, secondary] }));
+  expect('every seed item is parsed with a role and both hrefs', seed.length === (itemsBody.match(/\bid:\s*'inbox-/g) || []).length && seed.length >= 6,
+    `parsed=${seed.length}`);
+  for (const role of ['passenger', 'driver']) {
+    const mine = seed.filter((item) => item.role === role);
+    const other = role === 'driver' ? 'passenger' : 'driver';
+    expect(`a ${role} has Inbox items`, mine.length > 0, `count=${mine.length}`);
+    const crossed = mine.filter((item) => item.hrefs.some((href) => new RegExp(`[?&]role=${other}\\b`).test(href)
+      || (role === 'passenger' && href.startsWith('/respond'))));
+    expect(`no ${role} item opens the ${other}'s screen`, crossed.length === 0, crossed.map((item) => item.id).join(','));
+  }
+}
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

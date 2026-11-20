@@ -8,6 +8,7 @@ import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
+import { applySmokeRole } from '../smoke_role.js';
 
 // BD-CLOUD-DESIGN-LOADING-02F — Inbox owns an honest list-read boundary while
 // preserving the shared app-shell error overlay as an additive channel. The
@@ -163,6 +164,18 @@ function filterItems(items, tab) {
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
+}
+
+// #1183 — an Inbox item is addressed to one side of a trip (`role`). The viewer sees only the
+// items for the role they are in: a passenger no longer gets «Ответить пассажиру» (the driver's
+// offer form) or «К активной поездке» into the driver's ride screen, and the other way round.
+// The role is the effective one (the per-tab preview override included), as on the profile; a
+// guest or a profile with no role reads as a passenger. An item with no `role` is for everyone.
+function viewerRoleOf(u) {
+  return u && u.role === 'driver' ? 'driver' : 'passenger';
+}
+function itemsForViewer(items, role = viewerRoleOf(applySmokeRole(user.get()))) {
+  return items.filter((item) => item && (!item.role || item.role === role));
 }
 
 function unreadCount(items) {
@@ -612,6 +625,7 @@ export default function inbox() {
     // semantic action is the same (close and bottom «Позже» both dismiss).
     const focusSnapshot = captureScreenFocus();
     items = Array.isArray(result) ? result : [];
+    items = itemsForViewer(items);
     readState = items.length ? 'loaded' : 'empty';
     renderList();
     restoreScreenFocus(focusSnapshot);
