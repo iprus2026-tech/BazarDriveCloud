@@ -1324,8 +1324,10 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         ];
         carFields.forEach(([sel, key]) => {
           const el = root.querySelector(sel);
-          if (el) el.addEventListener('input', () => { draft[key] = el.value.trim(); setStepError(''); });
+          if (el) el.addEventListener('input', () => { draft[key] = el.value.trim(); });
         });
+        // #1185 — typing in any car field clears the step's validation message.
+        root.querySelector('.ob-scroll')?.addEventListener('input', () => setStepError(''));
         root.querySelectorAll('.ob-body-chip').forEach((chip) => {
           chip.addEventListener('click', () => {
             draft.vehicleBody = chip.dataset.body;
