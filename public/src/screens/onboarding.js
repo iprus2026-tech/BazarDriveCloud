@@ -1,4 +1,5 @@
 import { user, REQUIRED_DOCS } from '../state.js';
+import { isPlausiblePlate, VEHICLE_TEXT_MAX } from '../garage.js';
 import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { isBackendEnabled } from '../api_config.js';
@@ -155,17 +156,8 @@ export function isPlausiblePhone(raw) {
   return digits.length === 10 || (digits.length === 11 && (digits[0] === '7' || digits[0] === '8'));
 }
 
-// A plate is 4–12 letters / digits (spaces and hyphens allowed), with at least one letter and one
-// digit. Empty stays allowed here — the readiness checklist owns "plate missing".
-export function isPlausiblePlate(raw) {
-  const text = String(raw == null ? '' : raw).trim();
-  if (!text) return true;
-  if (!/^[\p{L}\d\s-]+$/u.test(text)) return false;
-  const compact = text.replace(/[\s-]/g, '');
-  return compact.length >= 4 && compact.length <= 12 && /\p{L}/u.test(compact) && /\d/.test(compact);
-}
-
-export const VEHICLE_TEXT_MAX = 40;
+// The plate rule and the text cap live in garage.js — the garage add / edit sheets use the same.
+export { isPlausiblePlate, VEHICLE_TEXT_MAX };
 
 function formatPhoneDisplay(raw) {
   const d = String(raw ?? '').replace(/\D/g, '');

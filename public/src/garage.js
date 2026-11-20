@@ -364,3 +364,50 @@ export function listArchivedGarageVehicles(u) {
   }
   return out;
 }
+
+// ── #1185 — obvious-garbage guards for vehicle fields ───────────────────────
+// Shared by the onboarding car step and the garage add / edit sheets. They are
+// deliberately loose: which plate FORMATS are accepted is an open product
+// decision (#1178), so this only refuses what is not a plate at all.
+export const VEHICLE_TEXT_MAX = 40;
+export const GARAGE_MODEL_REQUIRED = 'Укажите модель, чтобы сохранить авто.';
+
+// A plate is 4–12 letters / digits (spaces and hyphens allowed), with at least
+// one letter and one digit. Empty stays allowed — "plate missing" belongs to
+// the readiness checklist.
+export function isPlausiblePlate(raw) {
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text) return true;
+  if (!/^[\p{L}\d\s-]+$/u.test(text)) return false;
+  const compact = text.replace(/[\s-]/g, '');
+  return compact.length >= 4 && compact.length <= 12 && /\p{L}/u.test(compact) && /\d/.test(compact);
+}
+
+// Two plates are the same vehicle when they agree after dropping spaces,
+// hyphens and letter case («А 123 ВС 77» = «а123вс77»).
+export function plateKey(raw) {
+  return String(raw == null ? '' : raw).replace(/[\s-]/g, '').toUpperCase();
+}
+
+// The message to show for a garage add / edit draft, or '' when it may be
+// saved. `vehicles` is the current garage list; `exceptId` is the vehicle
+// being edited, so it does not collide with itself.
+export function garageDraftError(draft, vehicles = [], options = {}) {
+  const text = (v) => (typeof v === 'string' ? v.trim() : '');
+  const model = text(draft && draft.model);
+  const color = text(draft && draft.color);
+  const plate = text(draft && draft.plate);
+  if (!model) return GARAGE_MODEL_REQUIRED;
+  if (model.length > VEHICLE_TEXT_MAX || color.length > VEHICLE_TEXT_MAX) {
+    return `Модель и цвет — не длиннее ${VEHICLE_TEXT_MAX} символов.`;
+  }
+  if (!isPlausiblePlate(plate)) return 'Проверьте номер: буквы и цифры, например А 123 ВС 77.';
+  const key = plateKey(plate);
+  if (key) {
+    const exceptId = options && options.exceptId;
+    const taken = (Array.isArray(vehicles) ? vehicles : []).some((v) => v
+      && v.id !== exceptId && plateKey(v.plate) === key);
+    if (taken) return 'Авто с таким номером уже есть в гараже.';
+  }
+  return '';
+}
