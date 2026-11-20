@@ -165,6 +165,7 @@ Use registered runtime routes from `public/src/app.js`. Important routes:
 - `/route-picker`
 - `/route-preview`
 - `/order-map-draft`
+- `/order-map-draft?orderId=...` (edit mode of the caller's own open order — see Order Map Draft flow note)
 - `/order/<id>` (Order Detail; `/order` is the exact-registration anchor — see Order Detail flow note)
 - `/responses`
 - `/respond?postId=...`
@@ -234,6 +235,14 @@ Submit does not navigate directly. Runtime behavior:
 - User taps success CTA responses or my-order.
 - `handleAction` navigates to `/responses?orderId=...&state=empty`.
 Docs and smoke expectations must preserve the success-card state before the CTA tap.
+A reload or re-entry with the same route restores that order's card (`findOwnOpenOrderForRoute`),
+not a fresh form.
+
+Edit mode (#1188): `/order-map-draft?orderId=<id>` — entered from «Изменить заказ» on
+`/responses` — edits the caller's own `CREATED` order in place: price, time, comment; the route
+is fixed (another route is a new order). It sends only the changed terms through
+`updateOwnOrderTerms()` (backend ON: `PATCH /api/v1/orders/:orderId`; OFF: the local store and
+its local offers) and returns to `/responses?orderId=...`. It never touches the new-order draft.
 
 ### Responses
 Selecting a driver builds active ride:
