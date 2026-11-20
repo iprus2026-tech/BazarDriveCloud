@@ -35,6 +35,9 @@ const MOCK_REQUEST = {
   note:        'Маленький чемодан',
 };
 
+// The honest «no price» copy, as on the order form's success card (order_map_draft.js).
+const NO_PRICE_LABEL = 'По договорённости';
+
 const MOCK_DRIVERS = [
   {
     id:            'driver_1',
@@ -302,8 +305,10 @@ export function requestFromOrder(order, explicitOrderId = '') {
   // указан') and board-only fields (id/orderId/passengerId/status/time/
   // numericPrice) on top, so the derivation itself is never duplicated.
   const core = buildRideRequestContext(order);
-  const price = core.price || MOCK_REQUEST.price;
-  const numericPrice = Number(order.estimatedPrice) || MOCK_REQUEST.numericPrice;
+  // #1185 — an order published with no budget («Попутчик» with the field left empty) has no
+  // price of its own: say so instead of borrowing the demo request's 950 ₽.
+  const price = core.price || NO_PRICE_LABEL;
+  const numericPrice = Number(order.estimatedPrice) > 0 ? Number(order.estimatedPrice) : 0;
   return {
     id: String(order.id || MOCK_REQUEST.id),
     orderId: String(order.id || MOCK_REQUEST.orderId),
@@ -678,7 +683,7 @@ function mapServerOfferToDriverCard(offer, request, index) {
   const value = Number(offer && offer.price);
   const price = Number.isFinite(value) && value > 0
     ? formatRub(value)
-    : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
+    : (request.isFallback ? 'По договорённости' : (request.price || NO_PRICE_LABEL));
   // #1113 — the offer's car as separate fields; the plate is the server's masked form («А ••• ОР 77»)
   // before selection. The visible car line is built from those fields (the server's normalized
   // values); an offer from before the slice has no vehicle and keeps its own display line.
