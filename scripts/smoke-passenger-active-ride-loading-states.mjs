@@ -403,6 +403,15 @@ expect('paymentBlockHtml hides the card for a real local ride with no payment me
   passenger.includes("if (hasRealRouteContext(ride) && pay.last4 == null && pay.method == null) return '';"));
 expect('chatLabelFor gives a real local ride zero unread instead of the demo "2" [#1184]',
   chatLabelForBody.includes('const demoUnread = hasRealRouteContext(ride) ? 0 : 2;'));
+expect('the completion screen gives every real ride the direct-pay card; the auto-charge simulation is demo-only [#1184]',
+  passenger.includes('const directPay = authoritative || hasRealRouteContext(ride);')
+    && (passenger.match(/\$\{directPay \? `/g) || []).length === 2
+    && passenger.includes("if (!directPay) content.dataset.payment = 'paid';")
+    && !passenger.includes("if (!authoritative) content.dataset.payment = 'paid';"));
+expect('carLine omits a missing model / plate on a real local ride instead of the demo car [#1184]',
+  passenger.includes('const realLocal = !authoritative && Boolean(ride && (ride.orderId || ride.acceptedSource));')
+    && passenger.includes('if (model && !(realLocal && !v.model)) parts.push(model);')
+    && passenger.includes('if (plate && !(realLocal && !v.plate)) parts.push(plate);'));
 expect('the rating thank-you does not claim the rating was sent to the driver [#1184]',
   passenger.includes('Оценка сохранена на этом устройстве') && !/оценка отправлена/i.test(passenger));
 
