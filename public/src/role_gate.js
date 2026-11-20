@@ -55,13 +55,20 @@ export function roleCorrectedRoute(route, accountRole) {
   if (!ROLE_PARAM_ROUTES.includes(path)) return null;
   const params = new URLSearchParams(qi === -1 ? '' : full.slice(qi + 1));
   const asked = params.get('role');
-  if (asked === accountRole) return null;
-  if (asked === null) {
-    if (path !== '/trip-confirmation' || accountRole !== 'driver') return null;
-  } else if (asked !== 'passenger' && asked !== 'driver') {
-    return null;
+  if (asked !== null && asked !== 'passenger' && asked !== 'driver') return null;
+  // `/trip-confirmation` also takes an explicit `state=` that picks the variant on its own
+  // (PASSENGER_* / DRIVER_*), whatever `role=` says — the other side's state is dropped too.
+  const other = accountRole === 'driver' ? 'PASSENGER_' : 'DRIVER_';
+  const foreignState = path === '/trip-confirmation'
+    && (params.get('state') || '').startsWith(other);
+  const roleOk = asked === accountRole
+    || (asked === null && !(path === '/trip-confirmation' && accountRole === 'driver'));
+  if (roleOk && !foreignState) return null;
+  if (!roleOk) {
+    params.set('role', accountRole);
+    params.delete('status');
   }
-  params.set('role', accountRole);
-  params.delete('status');
-  return `${path}?${params.toString()}`;
+  if (foreignState) params.delete('state');
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }

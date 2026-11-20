@@ -325,7 +325,15 @@ setAdmissionGuard(
     // demo's view switch there.
     if (admission && typeof admission !== 'string' && snapshot.state === 'AUTHENTICATED') {
       const corrected = roleCorrectedRoute((location.hash || '').slice(1), snapshot.user?.activeRole);
-      if (corrected) return corrected;
+      if (corrected) {
+        // Replace the mistyped entry instead of stacking the corrected one on top of it:
+        // otherwise browser Back lands on the uncorrected URL and is bounced forward again.
+        // A throwing replaceState falls back to the router's ordinary navigation.
+        try {
+          history.replaceState(null, '', `${location.pathname}${location.search}#${corrected}`);
+        } catch { /* the router's go() below still navigates */ }
+        return corrected;
+      }
     }
     return admission;
   },

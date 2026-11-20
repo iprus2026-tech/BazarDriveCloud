@@ -64,3 +64,24 @@ test('other routes, other roles and odd input are never touched', () => {
   assert.equal(roleCorrectedRoute('/active-ride?role=admin', 'passenger'), null, 'an unknown role value is the screen\'s default');
   for (const route of [null, undefined, 42, {}]) assert.equal(roleCorrectedRoute(route, 'driver'), null);
 });
+
+test('/trip-confirmation: the other side\'s explicit state is dropped, with or without a role fix', () => {
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&role=driver&state=DRIVER_CONFIRMED', 'passenger'),
+    '/trip-confirmation?tripId=t1&role=passenger');
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&role=passenger&state=DRIVER_CONFIRMED', 'passenger'),
+    '/trip-confirmation?tripId=t1&role=passenger', 'a matching role does not excuse a foreign state');
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&state=DRIVER_WAITING', 'passenger'),
+    '/trip-confirmation?tripId=t1');
+  assert.equal(roleCorrectedRoute('/trip-confirmation?state=DRIVER_WAITING', 'passenger'), '/trip-confirmation');
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&role=driver&state=PASSENGER_CONFIRMED', 'driver'),
+    '/trip-confirmation?tripId=t1&role=driver');
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&state=PASSENGER_PENDING', 'driver'),
+    '/trip-confirmation?tripId=t1&role=driver');
+  // Own-side and role-neutral states stay; the corrected route is stable (no loop).
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&role=passenger&state=PASSENGER_CONFIRMED', 'passenger'), null);
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&role=driver&state=EXPIRED', 'driver'), null);
+  assert.equal(roleCorrectedRoute('/trip-confirmation?tripId=t1&role=driver&state=EXPIRED', 'passenger'),
+    '/trip-confirmation?tripId=t1&role=passenger&state=EXPIRED');
+  assert.equal(roleCorrectedRoute('/active-ride?role=passenger&state=DRIVER_CONFIRMED', 'passenger'), null,
+    'state= means nothing on other routes');
+});
