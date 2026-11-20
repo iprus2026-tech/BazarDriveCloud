@@ -90,6 +90,8 @@ expect('the /trip-confirmation shield toggles a safety note instead of a no-op [
   /id="cf-safety-note"[^>]*hidden/.test(confirmation)
     && /#cf-shield'\)\.addEventListener\('click',\s*\(e\)\s*=>\s*\{[\s\S]{0,200}note\.hidden = !note\.hidden/.test(confirmation)
     && !/no-op stub here/.test(confirmation));
+expect('the collapsed safety note is really hidden: .bd-alert display:flex needs a [hidden] override [#1185]',
+  /\.cf-safety-note\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(css));
 expect('«Проверить отметки» answers when the permit is already marked [#1185]',
   /checkReadyBtn && user\.get\(\)\.taxiPermit[\s\S]{0,260}Разрешение отмечено/.test(profile));
 
