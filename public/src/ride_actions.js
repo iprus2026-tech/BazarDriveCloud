@@ -50,6 +50,9 @@ export function canManageOwnOrder(order, _user) {
 export function canAcceptOrder(order, u) {
   if (!order || !isDriverMode(u)) return false;
   if (!isDriverLineReady(u)) return false;
+  // #1185 — a ready driver who has not gone «На линию» does not take orders: the toggle used to
+  // change nothing. Like a not-ready driver they still see «Откликнуться» (the offer path).
+  if (u.driverOnline !== true) return false;
   if (canManageOwnOrder(order, u)) return false;
   // Backend matching starts with an offer through /respond. Direct acceptance
   // below only operates on locally stored canonical orders.
