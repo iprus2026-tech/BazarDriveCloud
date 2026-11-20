@@ -336,19 +336,64 @@ function buildBody() {
   scroll.appendChild(renderCard(result));
   fragment.appendChild(scroll);
 
+  const toast = document.createElement('div');
+  toast.className = 'feed-toast';
+  toast.id = 'rpv-toast';
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
+  toast.hidden = true;
+  fragment.appendChild(toast);
+
   return { fragment, state: result.state };
 }
 
-function shareRoute() {
-  // Fail-soft: use the native Web Share API when present, otherwise no-op.
-  // No backend, no network — a missing/declined share never throws.
+// #1185 — what «Поделиться маршрутом» hands over. The route lives only in this device's draft, so
+// a link to this screen would open empty for anyone else: the share is the route as text.
+export function routeShareText(draft) {
+  if (!draft || !draft.pickup || !draft.dropoff) return '';
+  const parts = [`Маршрут: ${draft.pickup.label.trim()} → ${draft.dropoff.label.trim()}`];
+  if (hasEstimate(draft)) {
+    if (isFiniteNumber(draft.distanceKm)) parts.push(`${formatDistance(draft.distanceKm)} км`);
+    if (isFiniteNumber(draft.durationMin)) parts.push(`${Math.round(draft.durationMin)} мин`);
+    parts.push(`от ${Math.round(draft.estimatePriceFrom)} ₽`);
+  }
+  return parts.join(' · ');
+}
+
+let toastTimer = null;
+function showToast(root, message) {
+  const el = root && root.querySelector('#rpv-toast');
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+}
+
+// The system share sheet when the browser has one, else the clipboard; the toast says which
+// happened (the same pattern as the feed's «Поделиться»). Never silent.
+async function shareRoute(root) {
+  const { state, draft } = readDraft();
+  if (state !== STATE.VALID) {
+    showToast(root, 'Сначала выберите маршрут');
+    return;
+  }
+  const text = routeShareText(draft);
   try {
-    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-      const url = typeof location !== 'undefined' ? location.href : undefined;
-      navigator.share({ title: 'Предпросмотр маршрута', url }).catch(() => {});
+    if (typeof navigator.share === 'function') {
+      await navigator.share({ title: 'Маршрут', text });
+      return;
     }
-  } catch {
-    /* ignore — share is best-effort */
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      showToast(root, 'Маршрут скопирован');
+      return;
+    }
+    showToast(root, 'Не удалось поделиться: этот браузер не умеет копировать');
+  } catch (err) {
+    // A dismissed share sheet is the user's choice, not a failure.
+    if (err && err.name === 'AbortError') return;
+    showToast(root, 'Не удалось поделиться. Попробуйте ещё раз');
   }
 }
 
@@ -370,7 +415,7 @@ function handleAction(action, target) {
     return;
   }
   if (action === 'share-route') {
-    shareRoute();
+    void shareRoute(target.closest('.screen--route-preview'));
     return;
   }
 }
