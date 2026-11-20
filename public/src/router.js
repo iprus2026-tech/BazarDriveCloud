@@ -99,7 +99,9 @@ function isLifecycleResult(result) {
 
 const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-confirmation']);
 const SHOW_FAB    = new Set(['/feed']);
-const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/order-map-draft']);
+// #1183 — `/responses` is the passenger's board for their own order; a driver has none, so it joins
+// the passenger order flow that driver mode sends to /driver-map.
+const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/order-map-draft', '/responses']);
 // BD-OPS-03/09 — dev/docs routes open from a clean profile and hide product
 // chrome. Product routes keep the welcome guard and chrome policy unchanged.
 const DEV_DOCS_ROUTES = new Set(['/ops/screens']);

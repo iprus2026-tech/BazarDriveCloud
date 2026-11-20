@@ -17,6 +17,8 @@ import {
 } from '../mapbox/mapbox_state.js';
 import { GEO_STATUS, getPermissionStatus } from '../mapbox/geolocation_service.js';
 import { listPublicPlaces } from '../public_places.js';
+import { user } from '../state.js';
+import { resolveRole } from '../smoke_role.js';
 
 const STATE_QUERY_KEYS = new Map([
   ['default',       MAP_STATE.DEFAULT],
@@ -488,6 +490,16 @@ export default function mapScreen() {
 
   root.appendChild(buildActionCard(state));
 
+  // #1183 — a driver reaches this map on purpose (the «Карта» chips on /driver-map), but building a
+  // passenger route is not theirs: /route-picker is guarded for driver mode, so «Выбрать маршрут»
+  // and «Ввести адрес вручную» only bounced them back. In driver mode the route CTA becomes
+  // «К заказам» (→ /driver-map) and the manual-address controls are removed.
+  const driverView = resolveRole(user.get()) === 'driver';
+  if (driverView) {
+    root.querySelectorAll('[data-action="manual"]').forEach((el) => el.remove());
+    root.querySelectorAll('[data-action="route"]').forEach((el) => { el.textContent = 'К заказам'; });
+  }
+
   root.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn || btn.disabled) return;
@@ -505,7 +517,8 @@ export default function mapScreen() {
     } else if (action === 'nearby') {
       go('/map?state=nearby');
     } else if (action === 'route' || action === 'manual') {
-      go('/route-picker');
+      if (!driverView) go('/route-picker');
+      else go('/driver-map');
     } else if (action === 'feed') {
       go('/feed');
     }
