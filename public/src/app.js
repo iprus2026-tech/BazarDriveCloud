@@ -18,6 +18,7 @@ import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from
 import { setLocalLogoutObserver, resetLocalSession, AUTH_CLEAR_FOREIGN } from './mock_auth.js';
 import { createAuthLogout } from './auth_logout.js';
 import { putSessionActiveRole } from './api_client.js';
+import { roleCorrectedRoute } from './role_gate.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
 import welcome    from './screens/welcome.js';
@@ -318,6 +319,22 @@ setAdmissionGuard(
       && user.get().onboarded !== true;
     if ((bootSession.hasUncommittedLogin() || authenticatedIncomplete)
         && path !== '/onboarding') return '/onboarding';
+    // #1183 — with a real session `?role=` on the ride, confirmation and profile screens must
+    // agree with the account's active role (the server's, from the session read). Backend OFF
+    // never reaches this: its snapshot is LOCAL_DEMO_BOOT, and `?role=` stays the single-device
+    // demo's view switch there.
+    if (admission && typeof admission !== 'string' && snapshot.state === 'AUTHENTICATED') {
+      const corrected = roleCorrectedRoute((location.hash || '').slice(1), snapshot.user?.activeRole);
+      if (corrected) {
+        // Replace the mistyped entry instead of stacking the corrected one on top of it:
+        // otherwise browser Back lands on the uncorrected URL and is bounced forward again.
+        // A throwing replaceState falls back to the router's ordinary navigation.
+        try {
+          history.replaceState(null, '', `${location.pathname}${location.search}#${corrected}`);
+        } catch { /* the router's go() below still navigates */ }
+        return corrected;
+      }
+    }
     return admission;
   },
   () => showBootSession(bootSession.getSnapshot()),
