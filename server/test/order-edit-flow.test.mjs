@@ -6,10 +6,14 @@
 //     clears the mark; a repeated request and a label-only write change nothing for the offers;
 //   - a price edit rejects the open offers (rejected_by = 'passenger_edit'); the driver offers
 //     again as a new bid; any other rejection stays terminal;
-//   - an order with a driver, or a canceled one, is 409 ORDER_NOT_EDITABLE.
+//   - an order with a driver, or a canceled one, is 409 ORDER_NOT_EDITABLE;
+//   - a comment stored only in the passenger snapshot is cleared in both copies; a new price sent
+//     without a label gets a label for that price (so the ride does not show the old one);
+//   - /readyz reports schema-incomplete on a database without migration 0016 (an isolated one).
 // SKIPPED without DATABASE_URL; runs in server-ci's app job.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
@@ -228,4 +232,73 @@ test('an order with a driver, or a canceled one, is not editable', { skip: SKIP 
   assert.equal((await post(app, `${orderUrl(canceledId)}/cancel`, undefined, bearer(paxS))).statusCode, 200);
   const dead = await patch(app, orderUrl(canceledId), { comment: 'Поздно' }, bearer(paxS));
   assert.deepEqual([dead.statusCode, dead.json().code], [409, 'ORDER_NOT_EDITABLE']);
+});
+
+test('an edit leaves no comment in the snapshot and no label for another price', { skip: SKIP }, async (t) => {
+  const { app, db, phones: [pax, drv], orderIds } = await setup(t, ['+1642', '+1643']);
+  const paxS = await mintSession(app, pax);
+  const drvS = await grantDriverRole(db, await mintSession(app, drv));
+  // The comment travels only in the passenger snapshot; the order's own comment is empty.
+  const body = { ...ORDER, comment: '', passenger: { name: 'Анна', comment: 'Позвоните у подъезда' } };
+  const orderId = (await post(app, '/api/v1/orders', body, bearer(paxS))).json().order.id;
+  orderIds.push(orderId);
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: PLATE, orderId, etaMin: 5 }, bearer(drvS))).statusCode, 201);
+
+  const cleared = await patch(app, orderUrl(orderId), { comment: '' }, bearer(paxS));
+  assert.equal(cleared.statusCode, 200, cleared.body);
+  assert.ok(cleared.json().order.termsChangedAt, 'clearing the snapshot comment is a change of terms');
+  const { rows: [stored] } = await db.query(
+    `SELECT comment, passenger_snapshot->>'comment' AS snap, passenger_snapshot->>'name' AS name FROM orders WHERE legacy_id = $1`, [orderId]);
+  assert.deepEqual([stored.comment, stored.snap, stored.name], ['', '', 'Анна'], 'both copies are cleared; the rest of the snapshot stays');
+  assert.equal((await offerRows(db, orderId))[0].previous_terms, true);
+
+  // A new price without a label: the stored label follows the price, and the open offer is rejected.
+  const priced = await patch(app, orderUrl(orderId), { estimatedPrice: 800 }, bearer(paxS));
+  assert.deepEqual([priced.statusCode, priced.json().order.estimatedPrice, priced.json().order.estimatedPriceLabel],
+    [200, 800, `${(800).toLocaleString('ru-RU')} ₽`]);
+  assert.equal((await offerRows(db, orderId))[0].rejected_by, 'passenger_edit');
+
+  // The driver offers again with no price of their own: the ride is priced at the new estimate
+  // and carries no comment.
+  assert.equal((await post(app, '/api/v1/matching/offers', { vehiclePlate: PLATE, orderId }, bearer(drvS))).statusCode, 201);
+  assert.equal((await post(app, '/api/v1/matching/select', { orderId, driverId: drvS.user.userId }, bearer(paxS))).statusCode, 200);
+  const { rows: [ride] } = await db.query('SELECT passenger_note, ride_price FROM rides WHERE trip_id = $1', [`trip_${orderId}`]);
+  assert.deepEqual([ride.passenger_note, ride.ride_price], [null, `${(800).toLocaleString('ru-RU')} ₽`]);
+});
+
+test('readiness: a database without migration 0016 is schema-incomplete', { skip: SKIP }, async (t) => {
+  const admin = new pg.Client({ connectionString: DATABASE_URL });
+  await admin.connect();
+  const dbName = `bazardrive_m0016_${process.pid}_${Date.now()}`;
+  await admin.query(`CREATE DATABASE ${dbName}`);
+  const url = new URL(DATABASE_URL);
+  url.pathname = '/' + dbName;
+  const db = new pg.Client({ connectionString: url.toString() });
+  let app = null;
+  t.after(async () => {
+    if (app) await app.close().catch(() => {});
+    await db.end().catch(() => {});
+    await admin.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, [dbName]).catch(() => {});
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => {});
+    await admin.end();
+  });
+  await db.connect();
+  const dir = new URL('../migrations/', import.meta.url);
+  const M0016 = '0016_order_edit_terms.sql';
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+  assert.ok(files.includes(M0016));
+  for (const f of files.filter((name) => name < M0016)) await db.query(fs.readFileSync(new URL(f, dir), 'utf8'));
+
+  app = await buildApp({ config: { ...baseConfig, databaseUrl: url.toString() } });
+  const readyz = async () => { const res = await get(app, '/api/v1/readyz'); return [res.statusCode, res.json().db]; };
+  assert.deepEqual(await readyz(), [503, 'schema-incomplete'], 'migrations up to 0015 only');
+  await db.query(fs.readFileSync(new URL(M0016, dir), 'utf8'));
+  assert.deepEqual(await readyz(), [200, 'up']);
+  // Each column is load-bearing on its own.
+  for (const [table, column] of [['orders', 'terms_changed_at'], ['orders', 'price_changed_at'], ['offers', 'previous_terms_at']]) {
+    await db.query(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+    assert.deepEqual(await readyz(), [503, 'schema-incomplete'], `${table}.${column} missing`);
+    await db.query(fs.readFileSync(new URL(M0016, dir), 'utf8'));
+    assert.deepEqual(await readyz(), [200, 'up']);
+  }
 });

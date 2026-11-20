@@ -73,6 +73,10 @@ async function dbPlugin(app, opts) {
     // sign-in (same-method replacement), and the LIVE /api/v1/auth/telegram route writes
     // telegram_identities and auth_telegram_attempts (the replay store is the partial unique
     // index), so a database without 0015 must report schema-incomplete.
+    //
+    // 0016 (#1188) — offers.previous_terms_at is written by every POST /matching/offers
+    // (upsertOffer), and orders.terms_changed_at / price_changed_at by PATCH /orders/:orderId, so
+    // a database without 0016 fails ordinary offer creation and must report schema-incomplete.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -649,6 +653,18 @@ async function dbPlugin(app, opts) {
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='auth_telegram_attempts_pkey' AND pc.contype='p')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='auth_telegram_attempts_outcome_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='auth_telegram_attempts_init_data_hash_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='init_data_hash' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%init_data_hash IS NOT NULL%')
+            )
+            -- 0016 (#1188) — the order-edit timestamps, written by POST /matching/offers and
+            -- PATCH /orders/:orderId.
+            AND (
+              SELECT count(*) FROM pg_attribute a
+               WHERE a.attrelid = to_regclass('public.orders') AND a.attnum > 0 AND NOT a.attisdropped
+                 AND a.attname IN ('terms_changed_at', 'price_changed_at')
+            ) = 2
+            AND EXISTS (
+              SELECT 1 FROM pg_attribute a
+               WHERE a.attrelid = to_regclass('public.offers') AND a.attnum > 0 AND NOT a.attisdropped
+                 AND a.attname = 'previous_terms_at'
             )
             ) AS ok`,
       );

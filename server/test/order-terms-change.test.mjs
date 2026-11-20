@@ -50,3 +50,35 @@ test('the time and the comment change the terms without changing the price', () 
   const both = orderTermsChange(ROW, { comment: 'Новый', estimatedPrice: 650 });
   assert.deepEqual([both.priceChanged, both.termsChanged], [true, true]);
 });
+
+test('a new price without a label gets a label for that price', () => {
+  const made = orderTermsChange(ROW, { estimatedPrice: 1480 });
+  assert.deepEqual(made.values, { estimatedPrice: 1480, estimatedPriceLabel: `${(1480).toLocaleString('ru-RU')} ₽` });
+  assert.deepEqual([made.priceChanged, made.termsChanged], [true, true]);
+  // No budget has no label; a label the request does carry is kept as sent.
+  assert.deepEqual(orderTermsChange(ROW, { estimatedPrice: 0 }).values, { estimatedPrice: 0, estimatedPriceLabel: '' });
+  assert.deepEqual(orderTermsChange(ROW, { estimatedPrice: 800, estimatedPriceLabel: '800' }).values,
+    { estimatedPrice: 800, estimatedPriceLabel: '800' });
+  // The same price without a label leaves the stored label alone.
+  assert.equal(orderTermsChange(ROW, { estimatedPrice: 500 }).hasWrites, false);
+});
+
+test('the comment is compared as the ride reads it: the snapshot copy counts', () => {
+  // The comment lives only in the snapshot (order.comment is empty): clearing it is a change.
+  const snapOnly = { ...ROW, comment: '', passenger_snapshot: { name: 'А', comment: 'Позвоните у подъезда' } };
+  const cleared = orderTermsChange(snapOnly, { comment: '' });
+  assert.deepEqual(cleared.values, { comment: '' });
+  assert.deepEqual([cleared.hasWrites, cleared.termsChanged, cleared.priceChanged], [true, true, false]);
+  // Naming the same text moves it into the order's own column without changing the terms.
+  const same = orderTermsChange(snapOnly, { comment: 'Позвоните у подъезда' });
+  assert.deepEqual([same.hasWrites, same.termsChanged], [true, false]);
+  // A stale snapshot copy behind the order's own comment is replaced, also without a change of terms.
+  const stale = orderTermsChange({ ...ROW, passenger_snapshot: { comment: 'старое' } }, { comment: 'Подъезд 2' });
+  assert.deepEqual([stale.hasWrites, stale.termsChanged], [true, false]);
+  // Both copies already say it, or the snapshot has no text: nothing to write.
+  assert.equal(orderTermsChange({ ...ROW, passenger_snapshot: { comment: 'Подъезд 2' } }, { comment: 'Подъезд 2' }).hasWrites, false);
+  assert.equal(orderTermsChange({ ...ROW, passenger_snapshot: { comment: '  ' } }, { comment: 'Подъезд 2' }).hasWrites, false);
+  // Blank text is no comment: '' -> '  ' is written, but the ride reads the same nothing.
+  const blank = orderTermsChange({ ...ROW, comment: '' }, { comment: '  ' });
+  assert.deepEqual([blank.hasWrites, blank.termsChanged], [true, false]);
+});
