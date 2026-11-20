@@ -36,6 +36,9 @@ import {
   countArchivedGarageVehicles,
   listArchivedGarageVehicles,
   getGarageReadinessState,
+  garageDraftError,
+  GARAGE_MODEL_REQUIRED,
+  VEHICLE_TEXT_MAX,
 } from '../garage.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
@@ -2576,15 +2579,15 @@ function garageAddSheetHtml() {
           <div class="pf2-garage-add-sheet__body">
             <label class="pf2-garage-add-sheet__field">
               <span class="pf2-garage-add-sheet__label">Модель *</span>
-              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-model" name="model" placeholder="Toyota Prius" autocomplete="off" required>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-model" maxlength="${VEHICLE_TEXT_MAX}" name="model" placeholder="Toyota Prius" autocomplete="off" required>
             </label>
             <label class="pf2-garage-add-sheet__field">
               <span class="pf2-garage-add-sheet__label">Цвет</span>
-              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-color" name="color" placeholder="белый" autocomplete="off">
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-color" maxlength="${VEHICLE_TEXT_MAX}" name="color" placeholder="белый" autocomplete="off">
             </label>
             <label class="pf2-garage-add-sheet__field">
               <span class="pf2-garage-add-sheet__label">Номер</span>
-              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-plate" name="plate" placeholder="А 123 ВС 77" autocomplete="off">
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-plate" maxlength="16" name="plate" placeholder="А 123 ВС 77" autocomplete="off">
             </label>
             <label class="pf2-garage-add-sheet__active-toggle">
               <input type="checkbox" id="pf2-garage-add-make-active" data-garage-add-action="make-active-toggle">
@@ -2620,15 +2623,15 @@ function garageEditSheetHtml() {
           <div class="pf2-garage-add-sheet__body">
             <label class="pf2-garage-add-sheet__field">
               <span class="pf2-garage-add-sheet__label">Модель *</span>
-              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-model" name="edit-model" placeholder="Toyota Prius" autocomplete="off" required>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-model" maxlength="${VEHICLE_TEXT_MAX}" name="edit-model" placeholder="Toyota Prius" autocomplete="off" required>
             </label>
             <label class="pf2-garage-add-sheet__field">
               <span class="pf2-garage-add-sheet__label">Цвет</span>
-              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-color" name="edit-color" placeholder="белый" autocomplete="off">
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-color" maxlength="${VEHICLE_TEXT_MAX}" name="edit-color" placeholder="белый" autocomplete="off">
             </label>
             <label class="pf2-garage-add-sheet__field">
               <span class="pf2-garage-add-sheet__label">Номер</span>
-              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-plate" name="edit-plate" placeholder="А 123 ВС 77" autocomplete="off">
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-plate" maxlength="16" name="edit-plate" placeholder="А 123 ВС 77" autocomplete="off">
             </label>
             <p class="pf2-garage-add-sheet__error" id="pf2-garage-edit-error" data-garage-edit-state="idle" hidden>Укажите модель, чтобы сохранить авто.</p>
           </div>
@@ -2803,6 +2806,7 @@ function wireGarageActions(root, vehicles = []) {
     const errEl = root.querySelector('#pf2-garage-add-error');
     if (errEl) {
       errEl.hidden = true;
+      errEl.textContent = GARAGE_MODEL_REQUIRED;
       errEl.dataset.garageAddState = 'idle';
     }
   };
@@ -2861,6 +2865,17 @@ function wireGarageActions(root, vehicles = []) {
       color: colorEl?.value || '',
       plate: plateEl?.value || '',
     };
+    // #1185 — «!!!», a second car with the same plate and an 80-character model are refused here,
+    // with the reason in the sheet's single error line.
+    const problem = garageDraftError(draft, buildGarageVehicles(user.get()));
+    if (problem) {
+      if (errEl) {
+        errEl.textContent = problem;
+        errEl.hidden = false;
+        errEl.dataset.garageAddState = 'invalid';
+      }
+      return;
+    }
     const trimmedModel = typeof draft.model === 'string' ? draft.model.trim() : '';
     if (!trimmedModel) {
       if (errEl) {
@@ -2905,6 +2920,7 @@ function wireGarageActions(root, vehicles = []) {
     const errEl = root.querySelector('#pf2-garage-edit-error');
     if (errEl) {
       errEl.hidden = true;
+      errEl.textContent = GARAGE_MODEL_REQUIRED;
       errEl.dataset.garageEditState = 'idle';
     }
   };
@@ -2954,6 +2970,16 @@ function wireGarageActions(root, vehicles = []) {
       color: colorEl?.value || '',
       plate: plateEl?.value || '',
     };
+    // #1185 — same guards as the add sheet; the edited vehicle does not collide with itself.
+    const problem = garageDraftError(draft, buildGarageVehicles(user.get()), { exceptId: vehicleId });
+    if (problem) {
+      if (errEl) {
+        errEl.textContent = problem;
+        errEl.hidden = false;
+        errEl.dataset.garageEditState = 'invalid';
+      }
+      return;
+    }
     const trimmedModel = typeof draft.model === 'string' ? draft.model.trim() : '';
     if (!trimmedModel) {
       if (errEl) {
