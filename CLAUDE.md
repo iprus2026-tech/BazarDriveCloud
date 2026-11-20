@@ -191,12 +191,17 @@ Use real runtime paths (public/src/screens/feed.js, etc).
 ### Onboarding
 `/onboarding` has more than one entry point, and they resolve differently — do not
 collapse them:
-- The first-run Start path (`welcome.js`'s `startLoading()`) never opens `/onboarding`
-  at all — after role + permissions + loading it routes straight to `/driver-map` or
-  `/feed` (or runs a pending action).
-- Only the welcome `Войти` handler calls bare `go('/onboarding')`; on `finish()`, a
-  pending action wins if one is set, otherwise passenger -> `/feed`, driver ->
-  `/profile` (never back to `/welcome`).
+- The first-run Start path (`welcome.js`'s `startLoading()`) never calls
+  `go('/onboarding')` itself — after role + permissions + loading it routes to
+  `/driver-map` or `/feed` (or runs a pending action). Backend OFF: that is where the
+  user lands. Backend ON: the session admission guard (`sessionRouteAdmission()` in
+  `auth_session_bootstrap.js`, wired in `app.js`) sends an anonymous user from those
+  routes to `/onboarding`, so the first run continues there — and onboarding opens on
+  the phone step, not on «Кто вы?», because the role was just chosen
+  (`roleAlreadyChosen()` in `onboarding.js`; «Назад» still reaches the role step).
+- Only the welcome `Войти` handler calls bare `go('/onboarding')` (no role yet, so it
+  opens on the role step); on `finish()`, a pending action wins if one is set,
+  otherwise passenger -> `/feed`, driver -> `/profile` (never back to `/welcome`).
 - `#/onboarding?step=phone` is a separate deep-link re-entry, called only by
   `profile.js` (`#pfp-verify-getcode` / `#pfp-verify-confirm`). Completing it calls
   `completePhoneVerification()`, which navigates to the fixed `verifyReturnRoute()`
