@@ -847,6 +847,80 @@ export function cancelOwnLocalOrder(orderId) {
   return updateTripStatus(orderId, 'CANCELED');
 }
 
+// #1188 — the owner edits an open order in place: the price, the time or the comment (the route is
+// a new order). `terms` carries only what changed; labels are left to the record keeper, which
+// makes a price label for a new price and drops a time label the new time no longer matches.
+// Backend ON: PATCH /orders/:id (the server rejects the open offers on a new price and marks them
+// «made for the previous terms» on a new time or comment; 409 ORDER_NOT_EDITABLE once a driver is
+// chosen or the order is canceled; 403 PASSENGER_ROLE_REQUIRED in driver mode) and the server copy
+// replaces the transitional local one. Backend OFF: the local store is the record, under the rule of
+// cancelOwnLocalOrder (own, still CREATED); anything else is the same ORDER_NOT_EDITABLE refusal.
+export const ORDER_NOT_EDITABLE = 'ORDER_NOT_EDITABLE';
+const EDITABLE_ORDER_TERMS = ['estimatedPrice', 'scheduledMode', 'scheduledAt', 'comment'];
+
+function editableOrderTerms(terms) {
+  const out = {};
+  if (!terms || typeof terms !== 'object') return out;
+  for (const key of EDITABLE_ORDER_TERMS) {
+    if (terms[key] !== undefined) out[key] = terms[key];
+  }
+  return out;
+}
+
+// The local copy after an edit, by the server's rules (server/src/domain/order-terms-change.js).
+function applyOrderTerms(order, terms, now = new Date().toISOString()) {
+  const next = { ...order };
+  const price = terms.estimatedPrice !== undefined ? Number(terms.estimatedPrice) || 0 : undefined;
+  const priceChanged = price !== undefined && price !== (Number(order.estimatedPrice) || 0);
+  if (priceChanged) {
+    next.estimatedPrice = price;
+    next.estimatedPriceLabel = price > 0 ? `${price.toLocaleString('ru-RU')} ₽` : '';
+  }
+  const timeChanged = (terms.scheduledMode !== undefined && terms.scheduledMode !== order.scheduledMode)
+    || (terms.scheduledAt !== undefined && terms.scheduledAt !== order.scheduledAt);
+  if (timeChanged) {
+    if (terms.scheduledMode !== undefined) next.scheduledMode = terms.scheduledMode;
+    if (terms.scheduledAt !== undefined) next.scheduledAt = terms.scheduledAt;
+    next.scheduledLabel = '';
+  }
+  let commentChanged = false;
+  if (terms.comment !== undefined) {
+    const before = (typeof order.comment === 'string' && order.comment.trim())
+      || (typeof order.passenger?.comment === 'string' ? order.passenger.comment.trim() : '');
+    commentChanged = before !== terms.comment.trim();
+    next.comment = terms.comment;
+    if (order.passenger && typeof order.passenger === 'object') next.passenger = { ...order.passenger, comment: terms.comment };
+  }
+  if (priceChanged || timeChanged || commentChanged) next.termsChangedAt = now;
+  if (priceChanged) next.priceChangedAt = now;
+  return next;
+}
+
+export async function updateOwnOrderTerms(orderId, terms, { signal } = {}) {
+  const body = editableOrderTerms(terms);
+  const list = loadRideOrdersRaw();
+  const local = list.find((o) => o && o.id === orderId) || null;
+  if (isBackendEnabled()) {
+    if (!Object.keys(body).length) return local ? { ...local } : null;
+    const r = await apiFetch(`/orders/${encodeURIComponent(orderId)}`, { method: 'PATCH', body, signal });
+    if (!r || typeof r.order !== 'object' || !r.order || r.order.id !== orderId) {
+      throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed order edit response' });
+    }
+    const merged = local ? { ...local, ...r.order } : r.order;
+    persistRideOrders(local
+      ? loadRideOrdersRaw().map((o) => (o && o.id === orderId ? merged : o))
+      : [merged, ...loadRideOrdersRaw()]);
+    return merged;
+  }
+  if (!isOwnLocalOrder(local) || local.status !== 'CREATED') {
+    throw Object.assign(new Error('order is not editable'), { code: ORDER_NOT_EDITABLE });
+  }
+  if (!Object.keys(body).length) return { ...local };
+  const next = applyOrderTerms(local, body);
+  persistRideOrders(list.map((o) => (o && o.id === orderId ? next : o)));
+  return next;
+}
+
 // POLL the realtime cursor. Returns { tripId, status, events, cursor }; pass the prior cursor as
 // `since` for an incremental read. The caller re-fetches the full snapshot when `status` changes.
 export async function pollRide(tripId, since, { signal } = {}) {

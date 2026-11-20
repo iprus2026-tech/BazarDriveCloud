@@ -9191,6 +9191,34 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding: 6px 4px;
 }
 .responses__cancel-order:active { opacity: 0.7; }
+/* #1188 — the owner's two order actions: change the terms, or withdraw. */
+.responses__order-manage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.responses__edit-order {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 6px 4px;
+}
+.responses__edit-order:active { opacity: 0.7; }
+/* #1188 — an offer made before the owner changed the time or the comment. */
+.responses__driver-previous-terms {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+/* #1188 — the edit form: the route is fixed. */
+.omd-route__fixed {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
 .responses__order-cancel-text,
 .responses__order-cancel-error {
   margin: 0;
