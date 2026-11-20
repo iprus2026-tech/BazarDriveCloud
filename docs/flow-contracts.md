@@ -67,7 +67,7 @@ Registered in `public/src/app.js`.
 | `/settings` | `settings.js` | Shared, UI-only settings shell opened from the profile gears; `?role=driver` only steers «Назад». |
 | `/ops/screens` | `ops_screens.js` | ScreenOps dev/docs tool, outside the ride flow: not in the tabbar, exempt from the welcome guard. |
 
-Unknown routes still fall back through the router to `/feed`. The one dynamic exception is `/order/<id>`: any `/order/<anything>` path without an exact registration resolves to the `/order` loader.
+Unknown routes still fall back through the router to the `/feed` loader, and the router still reports the rendered route as `/feed`. Since #1185 that loader answers a path it does not own with a **not-found state** («Страница не найдена», the typed address, «В ленту» → `/feed`) instead of rendering the feed under the wrong address; the bare root forms (an empty path, `/`) and `/feed` itself show the feed. The one dynamic exception is `/order/<id>`: any `/order/<anything>` path without an exact registration resolves to the `/order` loader.
 
 ### `/map` surface — Mapbox reality
 

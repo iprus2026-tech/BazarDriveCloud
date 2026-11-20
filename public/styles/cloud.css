@@ -453,6 +453,11 @@ body {
 .bd-empty { text-align: center; padding: 48px 20px; color: var(--text-3); }
 .bd-empty__title { font-size: 16px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
 
+/* #1185 — the not-found state the /feed loader shows for an address with no screen. */
+.not-found__text { margin: 0 auto 20px; max-width: 320px; font-size: 14px; line-height: 1.45; }
+.not-found__path { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.not-found__cta { min-width: 160px; }
+
 /* ═══════════════════════════════════════════════════════════
    SCREEN-SPECIFIC STYLES
 ═══════════════════════════════════════════════════════════ */
