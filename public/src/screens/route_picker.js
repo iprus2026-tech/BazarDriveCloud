@@ -296,6 +296,18 @@ function clonePoint(point) {
   return { ...point };
 }
 
+// The entrance / comment of a manually entered address (the order form's comment holds 200).
+const POINT_NOTE_MAX = 200;
+
+// «Город, улица дом» for a manually entered address; the city is not repeated when the street
+// line already names it, and either part alone is the whole label.
+export function manualAddressLabel(city, street) {
+  const c = String(city ?? '').trim();
+  const st = String(street ?? '').trim();
+  if (!c || !st) return st || c;
+  return st.toLowerCase().includes(c.toLowerCase()) ? st : `${c}, ${st}`;
+}
+
 // #1185 — two points are the same place when their visible label and address agree.
 function pointKey(point) {
   if (!point) return '';
@@ -362,6 +374,8 @@ function sanitizePoint(raw) {
     id, label, hint, source, coords: resolvePointCoords(raw, label),
     // #1160 — a catalog place keeps its id through the persisted draft.
     ...(isPlaceId(raw.placeId) ? { placeId: raw.placeId } : {}),
+    // #1185 — the entrance note of a manual address keeps travelling with the point.
+    ...(typeof raw.note === 'string' && raw.note.trim() ? { note: raw.note.trim().slice(0, POINT_NOTE_MAX) } : {}),
   };
 }
 
@@ -618,6 +632,15 @@ function clearAll() {
 function makeManualPoint() {
   const label = routeDraft.query.trim();
   return makePoint(`manual-${Date.now()}`, label, 'Введено вручную', 'manual');
+}
+
+// #1185 — an address typed into a route field and not picked from the list is still what the
+// passenger meant: leaving the field («Готово», or a tap on the other field) keeps it as a
+// manually entered point instead of erasing it. Returns true when there was text to keep.
+function commitTypedQuery() {
+  if (!routeDraft.query.trim()) return false;
+  setPoint(routeDraft.focus, makeManualPoint());
+  return true;
 }
 
 function activeInputValue(kind) {
@@ -1299,9 +1322,9 @@ function handleClick(root, target) {
     return;
   }
   if (action === 'done') {
-    // «Готово» collapses the search query back to the saved/recent list
-    // without committing anything — the field value stays as-is.
-    if (routeDraft.query) {
+    // «Готово» collapses the search back to the saved/recent list. Text typed into the field
+    // stays there as a manually entered address (#1185); a blank query is just dropped.
+    if (!commitTypedQuery() && routeDraft.query) {
       clearQuery();
       notice = '';
       syncDraft();
@@ -1331,15 +1354,17 @@ function handleClick(root, target) {
     const street = (streetEl?.value ?? '').trim();
     const extra = (extraEl?.value ?? '').trim();
     if (street || city) {
-      const hintParts = [];
-      if (street && city) hintParts.push(city);
-      if (extra) hintParts.push(extra);
+      // #1185 — the city and the entrance note used to live only in the point's hint, which the
+      // passenger sees and nobody else: the order carried «ул. Ленина, 5» alone. The city is now
+      // part of the address, and the note travels with the point so the order form can offer it
+      // as the comment for the driver (order_map_draft.js).
       const point = makePoint(
         `manual-${Date.now()}`,
-        street || city,
-        hintParts.join(' · ') || 'Введено вручную',
+        manualAddressLabel(city, street),
+        extra || 'Введено вручную',
         'manual',
       );
+      if (extra) point.note = extra.slice(0, POINT_NOTE_MAX);
       setPoint(routeDraft.focus, point);
     } else {
       routeDraft.manual = false;
@@ -1394,6 +1419,10 @@ function handleClick(root, target) {
 
   const focusKind = target.closest('[data-focus]')?.dataset.focus;
   if (focusKind === 'pickup' || focusKind === 'dropoff') {
+    // #1185 — a tap inside the field being typed in (to move the caret) changes nothing: it used
+    // to clear the text. A tap on the other field keeps the typed address in the field it leaves.
+    if (focusKind === routeDraft.focus && routeDraft.query && !routeDraft.manual) return;
+    if (focusKind !== routeDraft.focus) commitTypedQuery();
     routeDraft.focus = focusKind;
     routeDraft.query = '';
     routeDraft.manual = false;

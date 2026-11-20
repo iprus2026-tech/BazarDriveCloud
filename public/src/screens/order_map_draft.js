@@ -133,6 +133,8 @@ function scrollFeedbackIntoView(root) {
 
 let formHydrated = false;
 let routeFingerprint = null;
+// #1185 — the route note last offered as the comment (null: none offered yet). See applyRouteNote().
+let appliedRouteNote = null;
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -190,6 +192,7 @@ function hydrateForm() {
     }
     if (isFiniteNumber(parsed.price)) form.price = clampPrice(parsed.price);
     if (typeof parsed.fingerprint === 'string') routeFingerprint = parsed.fingerprint;
+    if (typeof parsed.routeNote === 'string') appliedRouteNote = parsed.routeNote;
   } catch {
     // ignore — fall back to defaults.
   }
@@ -208,6 +211,33 @@ function syncRouteFingerprint(draft) {
   routeFingerprint = fp;
 }
 
+// #1185 — the entrance / comment typed with a manually entered address («Подъезд 3, домофон 28#»)
+// is meant for the driver, and the order comment is what reaches the driver. The note of the
+// pickup (and, marked «Куда:», of the dropoff) is offered as the comment once per note: it fills
+// an empty comment, or replaces the previous offer when the passenger has not edited it. Text the
+// passenger typed is never overwritten, and a comment they cleared is not filled again.
+export function routeNoteOf(draft) {
+  const text = (point) => (point && typeof point.note === 'string' ? point.note.trim() : '');
+  const pickup = text(draft?.pickup);
+  const dropoff = text(draft?.dropoff);
+  return [pickup, dropoff ? `Куда: ${dropoff}` : ''].filter(Boolean).join(' · ').slice(0, COMMENT_LIMIT);
+}
+
+// The rule itself, as data: `applied` is the note last offered (null — none yet), `comment` the
+// field as it stands. Returns the pair to keep.
+export function offerRouteNote({ note, applied, comment }) {
+  if (note === (applied ?? '')) return { applied, comment };
+  const untouched = !comment.trim() || comment === applied;
+  return { applied: note, comment: untouched ? note : comment };
+}
+
+function applyRouteNote(draft) {
+  if (!draft) return;
+  const next = offerRouteNote({ note: routeNoteOf(draft), applied: appliedRouteNote, comment: form.comment });
+  appliedRouteNote = next.applied;
+  form.comment = next.comment;
+}
+
 function persistForm() {
   try {
     if (typeof localStorage === 'undefined') return;
@@ -218,6 +248,7 @@ function persistForm() {
       price: form.price,
       comment: form.comment,
       fingerprint: routeFingerprint,
+      routeNote: appliedRouteNote,
     }));
   } catch {
     // fail soft
@@ -239,6 +270,7 @@ function clearFormDraft() {
   form.errors = [];
   form.notice = null;
   formHydrated = false;
+  appliedRouteNote = null;
 }
 
 // BD-AUTH-BOUNDARY-01 — wiped on local logout / reset so the next
@@ -1155,6 +1187,7 @@ export default function orderMapDraftScreen() {
   const draft = readRouteDraft();
   hydrateForm();
   syncRouteFingerprint(draft);
+  applyRouteNote(draft);
   // Reset transient state on fresh entry.
   form.publishing = false;
   form.errors = [];
