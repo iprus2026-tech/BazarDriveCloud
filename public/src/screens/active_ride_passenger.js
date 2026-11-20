@@ -47,6 +47,7 @@ import {
   removeRideHistoryEntry,
 } from '../ride_history.js';
 import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../ride_waiting_policy.js';
+import { shortRideNumber } from '../passenger_order_utils.js';
 
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
   <polyline points="6 15 12 9 18 15"/>
@@ -507,7 +508,10 @@ function formatTripNumber(tripId) {
   if (typeof tripId !== 'string' || !tripId) return TRIP_NUMBER_FALLBACK;
   // Demo trip id is human-unfriendly — keep the design's №48-321 in that case.
   if (tripId === DEMO_ACTIVE_RIDE_ID) return TRIP_NUMBER_FALLBACK;
-  return `№${tripId}`;
+  // #1185 — the ride's ONE short number (shortRideNumber, #1118): the same «№ 2a9008» the order
+  // card and the receipt show, instead of the raw «№trip_order-…» id.
+  const short = shortRideNumber(tripId);
+  return short ? `№ ${short}` : TRIP_NUMBER_FALLBACK;
 }
 
 // #1113 — the ride's car from the server (`vehicle { model, color, plate }`, the full plate after
@@ -1418,7 +1422,7 @@ function renderPassengerRideComplete(ride, deps) {
         ${CHEVRON_UP_SVG}
       </button>
       <div class="active-ride-passenger__trip-pill" role="status" aria-live="polite">
-        <span class="active-ride-passenger__trip-label">Поездка ${escapeHtml(formatTripNumber(ride.tripId))}</span>
+        <span class="active-ride-passenger__trip-label" data-trip-id="${escapeHtml(String(ride.tripId || ''))}">Поездка ${escapeHtml(formatTripNumber(ride.tripId))}</span>
       </div>
       <button type="button" class="bd-iconbtn active-ride__icon-btn active-ride-passenger__shield" id="arp-shield" aria-label="Безопасность">
         ${SHIELD_SVG}
@@ -2080,7 +2084,7 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
       <button type="button" class="passenger-cancel-fallback__top-back" id="arp-canceled-top-back" aria-label="Вернуться на главную">
         ${CHEVRON_UP_SVG}
       </button>
-      <div class="passenger-cancel-fallback__trip">Поездка ${escapeHtml(tripLabel)}</div>
+      <div class="passenger-cancel-fallback__trip" data-trip-id="${escapeHtml(String((ride && ride.tripId) || ''))}">Поездка ${escapeHtml(tripLabel)}</div>
       <div class="passenger-cancel-fallback__badge" aria-label="${escapeHtml(badgeLabel)}">${escapeHtml(badgeText)}</div>
     </div>
 
@@ -2244,7 +2248,7 @@ export default function activeRidePassenger(options = {}) {
         ${CHEVRON_UP_SVG}
       </button>
       <div class="active-ride-passenger__trip-pill" role="status" aria-live="polite">
-        <span class="active-ride-passenger__trip-label">Поездка ${escapeHtml(formatTripNumber(ride.tripId))}</span>
+        <span class="active-ride-passenger__trip-label" data-trip-id="${escapeHtml(String(ride.tripId || ''))}">Поездка ${escapeHtml(formatTripNumber(ride.tripId))}</span>
       </div>
       <button type="button" class="bd-iconbtn active-ride__icon-btn active-ride-passenger__shield" id="arp-shield" aria-label="Безопасность">
         ${SHIELD_SVG}

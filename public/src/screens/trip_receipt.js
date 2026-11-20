@@ -94,7 +94,7 @@ function receiptDocHtml(receipt) {
       <div class="trip-receipt__hero">
         <p class="trip-receipt__hero-label">Ваш доход за поездку</p>
         <p class="trip-receipt__hero-value">${escapeHtml(formatReceiptRub(receipt.net))}</p>
-        <p class="trip-receipt__hero-trip">Поездка № ${escapeHtml(String(receipt.tripId))}</p>
+        <p class="trip-receipt__hero-trip">Поездка № ${escapeHtml(shortRideNumber(receipt.tripId))}</p>
       </div>
       <div class="trip-receipt__rows" role="list" aria-label="Разбивка по поездке">
         <div class="trip-receipt__row" role="listitem">
@@ -117,7 +117,7 @@ function receiptDocHtml(receipt) {
       </div>
       <dl class="trip-receipt__meta">
         ${completed ? `<div class="trip-receipt__meta-row"><dt>Завершено</dt><dd>${escapeHtml(completed)}</dd></div>` : ''}
-        <div class="trip-receipt__meta-row"><dt>Номер поездки</dt><dd>№ ${escapeHtml(String(receipt.tripId))}</dd></div>
+        <div class="trip-receipt__meta-row"><dt>Номер поездки</dt><dd>№ ${escapeHtml(shortRideNumber(receipt.tripId))}</dd></div>
         <div class="trip-receipt__meta-row"><dt>Статус</dt><dd>Завершено и рассчитано</dd></div>
       </dl>
       <p class="trip-receipt__settle-note">${escapeHtml(settleNote)}</p>
@@ -131,7 +131,7 @@ function receiptDocHtml(receipt) {
 
 // E — missing receipt fallback.
 function receiptMissingHtml(tripId) {
-  const idText = tripId ? `№ ${escapeHtml(String(tripId))}` : '';
+  const idText = tripId ? `№ ${escapeHtml(shortRideNumber(tripId))}` : '';
   return `
     <article class="trip-receipt__doc trip-receipt__doc--missing" role="status">
       <div class="trip-receipt__missing-icon" aria-hidden="true">🧾</div>

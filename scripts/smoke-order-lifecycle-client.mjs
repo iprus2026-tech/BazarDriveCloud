@@ -95,6 +95,7 @@ const { RIDE_STATUS } = await import('../public/src/ride_state.js');
 const mockApi = await import('../public/src/mock_api.js');
 const roleGate = await import('../public/src/role_gate.js');
 const repeatRoute = await import('../public/src/repeat_route.js');
+const passengerOrderUtils = await import('../public/src/passenger_order_utils.js');
 const ORDERS_KEY = 'bazardrive.ride_orders.v1';
 const REPEAT_ROUTE_KEY = 'bazardrive.repeat_route.v1';
 
@@ -629,6 +630,7 @@ function fallbackHarness(ride, variant = 'canceled') {
   const context = vm.createContext({
     console, escapeHtml, RIDE_STATUS,
     TRIP_NUMBER_FALLBACK: '№48-321', DEMO_ACTIVE_RIDE_ID: 'trip_moscow_sheremetyevo_demo',
+    shortRideNumber: passengerOrderUtils.shortRideNumber, // #1185 — formatTripNumber's one short-number rule
     CHEVRON_UP_SVG: '', X_CIRCLE_SVG: '', PLUS_SVG: '',
     resolveRideStatusLabel: () => 'Пассажир не вышел',
     buildRepeatRouteDraft: repeatRoute.buildRepeatRouteDraft,
