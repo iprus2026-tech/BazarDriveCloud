@@ -44,6 +44,7 @@ import {
   updateTripStatus,
   requestServerDriverReceipt,
   loadDriverTodayStats,
+  summarizeDriverToday,
   resolveMockDriverReceipt,
   getRideFromBackend,
   patchRideStatus,
@@ -60,6 +61,7 @@ import activeRidePassenger from './active_ride_passenger.js';
 import {
   saveRideHistoryEntry,
   buildDriverHistoryEntry,
+  loadRideHistory,
 } from '../ride_history.js';
 import {
   openDriverCancelSheet,
@@ -1120,10 +1122,16 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     ? `<span class="active-ride__status-sep" aria-hidden="true">|</span><span class="active-ride__status-time">${escapeHtml(shiftDuration)}</span>`
     : '';
   const initialStats = driverStatsView();
+  // #1185 — on a real ride the pill follows the driver's own «На линии» toggle instead of always
+  // saying «На линии»; demo fixtures keep their label.
+  const realRide = backendRead || Boolean(ride && (ride.orderId || ride.acceptedSource));
+  const lineLabel = realRide && user.get().driverOnline !== true
+    ? 'Не на линии'
+    : (ride.driver?.onlineLabel || 'На линии');
   const top = document.createElement('div');
   top.className = 'active-ride__top';
   top.innerHTML = `
-    <div class="active-ride__status-row"><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-gear" aria-label="Настройки смены">${arIcon('gear', 18)}</button><div class="active-ride__status-pill" role="status" aria-live="polite"><span class="active-ride__status-dot" aria-hidden="true"></span><span class="active-ride__status-text">${escapeHtml(ride.driver?.onlineLabel || 'На линии')}</span>${shiftPillSuffix}</div><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-shield" aria-label="Безопасность">${arIcon('shield', 18)}</button></div>
+    <div class="active-ride__status-row"><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-gear" aria-label="Настройки смены">${arIcon('gear', 18)}</button><div class="active-ride__status-pill" role="status" aria-live="polite"><span class="active-ride__status-dot" aria-hidden="true"></span><span class="active-ride__status-text">${escapeHtml(lineLabel)}</span>${shiftPillSuffix}</div><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-shield" aria-label="Безопасность">${arIcon('shield', 18)}</button></div>
     <div class="active-ride__stats" role="group" aria-label="Статистика смены"><div class="active-ride__stat"><div class="active-ride__stat-value" data-driver-stat="today">${escapeHtml(initialStats.today)}</div><div class="active-ride__stat-label">сегодня</div></div><div class="active-ride__stat"><div class="active-ride__stat-value" data-driver-stat="trips">${escapeHtml(initialStats.trips)}</div><div class="active-ride__stat-label">поездок</div></div><div class="active-ride__stat"><div class="active-ride__stat-value">★ <span data-driver-stat="rating">${escapeHtml(initialStats.rating)}</span></div><div class="active-ride__stat-label">рейтинг</div></div></div>
     <div class="active-ride__map-banner" id="ar-map-banner" hidden><span class="active-ride__map-banner-dot" aria-hidden="true"></span><span class="active-ride__map-banner-text"></span></div>
   `;
@@ -1711,6 +1719,13 @@ export default function activeRide({ isCurrent = () => true } = {}) {
   // rating or shift source yet, so the rating is «—» unless the ride carries one.
   function driverStatsView() {
     if (!backendRead) {
+      // #1185 — a real local ride (an accepted order, not a demo fixture) never shows the seed's
+      // demo «4 720 ₽ · 7 · 4,92»: «сегодня» and «поездок» are counted from this device's own ride
+      // history for the local day, and there is no rating source, so the rating is «—».
+      if (ride && (ride.orderId || ride.acceptedSource)) {
+        const local = summarizeDriverToday(loadRideHistory(), new Date());
+        return { today: formatRub(local.earnings), trips: String(local.trips), rating: '—' };
+      }
       return {
         today: String(ride.ride?.todayEarnings || '0 ₽'),
         trips: String(ride.ride?.tripsToday ?? 0),
@@ -1783,6 +1798,17 @@ export default function activeRide({ isCurrent = () => true } = {}) {
       // receipt (either mode) → no fare.
       entry.fare = receipt ? formatRub(receipt.fare) : null;
       saveRideHistoryEntry(entry);
+    }
+    // #1185 — a real local ride: the overlay's shift stats and the header follow the local history,
+    // read after this trip was saved so it is counted.
+    if (!backendRead && (ride.orderId || ride.acceptedSource)) {
+      const view = driverStatsView();
+      payload.stats = [
+        { key: 'today', val: view.today, lbl: 'Сегодня' },
+        { key: 'trips', val: view.trips, lbl: 'Поездок' },
+        { key: 'rating', val: view.rating, lbl: 'Рейтинг' },
+      ];
+      applyDriverTodayStats();
     }
     sheet.innerHTML = '';
     openDriverEarningsSheet(root, {
