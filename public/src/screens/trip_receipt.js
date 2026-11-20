@@ -81,10 +81,10 @@ function receiptHeadHtml(title) {
 function receiptDocHtml(receipt) {
   const isCash = receipt.paymentMode === 'cash';
   const completed = formatCompletedAt(receipt.completedAt);
-  const totalLabel = isCash ? 'Итого наличными' : 'Итого к зачислению';
+  const totalLabel = isCash ? 'Итого наличными' : 'Итого';
   const settleNote = isCash
     ? 'Оплата получена наличными от пассажира. Сумма не зачисляется на баланс.'
-    : 'Сумма зачислена на ваш баланс BazarDrive.';
+    : 'Пассажир платит вам напрямую. Приложение не проводит оплату и не зачисляет сумму на баланс.';
   return `
     <article class="trip-receipt__doc trip-receipt__doc--${escapeHtml(receipt.paymentMode)}" data-payment-mode="${escapeHtml(receipt.paymentMode)}">
       <div class="trip-receipt__doc-top">

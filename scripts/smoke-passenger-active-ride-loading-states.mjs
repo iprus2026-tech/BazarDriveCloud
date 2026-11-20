@@ -395,6 +395,17 @@ const chatLabelForBody = functionBody(passenger, 'chatLabelFor');
 expect('chatLabelFor defaults unread to 0 (not the demo "2 unread") for an authoritative ride with no real chat data',
   chatLabelForBody.includes('const authoritative = !!(ride && ride.authoritative)')
     && chatLabelForBody.includes('hasRawUnread ? Number(rawUnread) : (authoritative ? 0 : 2)'));
+// #1184 — a real LOCAL ride (the user's own order, accepted on this device) is not a demo fixture
+// either: no fabricated card, no fabricated unread count. Only explicit fixture/sim rides keep them.
+expect('paymentInfo gives a real local ride neutral nulls instead of the demo card [#1184]',
+  /if \(hasRealRouteContext\(ride\)\) \{\s*return \{\s*last4: pay\.last4 \|\| null,/.test(paymentInfoBody));
+expect('paymentBlockHtml hides the card for a real local ride with no payment method [#1184]',
+  passenger.includes("if (hasRealRouteContext(ride) && pay.last4 == null && pay.method == null) return '';"));
+expect('chatLabelFor gives a real local ride zero unread instead of the demo "2" [#1184]',
+  chatLabelForBody.includes('const demoUnread = hasRealRouteContext(ride) ? 0 : 2;'));
+expect('the rating thank-you does not claim the rating was sent to the driver [#1184]',
+  passenger.includes('Оценка сохранена на этом устройстве') && !/оценка отправлена/i.test(passenger));
+
 // #939 Codex review-fix #2 — driver identity (name/initials) and route
 // pickup/dropoff labels get the same authoritative-or-demo policy as
 // carLine/paymentInfo/chatLabelFor. topDriverCardHtml/routeBlockHtml both

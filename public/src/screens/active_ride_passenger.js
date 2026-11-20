@@ -569,6 +569,17 @@ function paymentInfo(ride) {
       amount: pay.amount || (ride.order && ride.order.offerPrice) || null,
     };
   }
+  // #1184 — a real local ride (an order of the user's own, accepted on this device) is not a demo
+  // fixture either: no card was ever entered, so it gets the same neutral nulls and the card is
+  // hidden. Only an explicit fixture/sim ride keeps the demo card below.
+  if (hasRealRouteContext(ride)) {
+    return {
+      last4: pay.last4 || null,
+      method: pay.method || null,
+      note: pay.note || null,
+      amount: pay.amount || (ride.order && ride.order.offerPrice) || null,
+    };
+  }
   return {
     last4: pay.last4 || '4417',
     method: pay.method || 'Тинькофф',
@@ -891,7 +902,10 @@ function chatLabelFor(ride) {
   // shows zero unread — never the fabricated demo "2 unread" badge. A
   // genuinely local/demo ride keeps the exact prior fallback.
   const authoritative = !!(ride && ride.authoritative);
-  const unreadCount = hasRawUnread ? Number(rawUnread) : (authoritative ? 0 : 2);
+  // #1184 — nor does a real local ride (the user's own order) get the demo "2 unread" over an
+  // empty chat; only an explicit fixture/sim ride keeps it.
+  const demoUnread = hasRealRouteContext(ride) ? 0 : 2;
+  const unreadCount = hasRawUnread ? Number(rawUnread) : (authoritative ? 0 : 2) && demoUnread;
   const label = unreadCount > 0
     ? `Написать водителю · ${unreadCount} непрочитанных`
     : 'Написать водителю';
@@ -1020,6 +1034,8 @@ function paymentBlockHtml(ride, options = {}) {
   // "•• null · null" fragment. amount alone (a real, reprojected fare) is
   // not enough to show a payment-METHOD card.
   if (ride && ride.authoritative && pay.last4 == null && pay.method == null) return '';
+  // #1184 — the same for a real local ride (see paymentInfo).
+  if (hasRealRouteContext(ride) && pay.last4 == null && pay.method == null) return '';
   return `
     <div class="active-ride-passenger__payment" role="group" aria-label="Способ оплаты">
       <div class="active-ride-passenger__payment-icon" aria-hidden="true">${CARD_SVG}</div>
@@ -1455,7 +1471,7 @@ function renderPassengerRideComplete(ride, deps) {
         Спасибо за поездку. Оплата успешно прошла.
       </div>`}
       <div class="passenger-complete__hero-sub" data-submitted-only>
-        Ваша оценка отправлена водителю. Хорошей дороги!
+        Оценка сохранена на этом устройстве. Хорошей дороги!
       </div>
     </div>
 
