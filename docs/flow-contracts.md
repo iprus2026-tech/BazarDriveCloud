@@ -343,7 +343,7 @@ still needs a later server-side guarantee. Account switch (B2-C) remains deferre
 | `public/src/screens/driver_handoff_snapshot.js` | Non-route helper. Driver-side confirmed-handoff snapshot store (TTL-bounded) plus overlay onto a ride object. No DOM/router. |
 | `public/src/screens/active_ride.js` | Driver active ride and role dispatch. |
 | `public/src/screens/active_ride_driver_sheets.js` | Non-route helper. Driver cancel / problem / safety sheets and the earnings overlay opener (BD-RIDE-D-SHEETS-01). UI-only: persistence stays in `active_ride.js` callbacks. |
-| `public/src/screens/active_ride_driver_noshow.js` | Non-route helper. Driver no-show sub-flow (BD-RIDE-D-NOSHOW-01) opened from `WAITING_PASSENGER`; its only write is the existing `NO_SHOW` transition through the screen's `onConfirmNoShow` callback. |
+| `public/src/screens/active_ride_driver_noshow.js` | Non-route helper. Driver no-show sub-flow (BD-RIDE-D-NOSHOW-01) opened from `WAITING_PASSENGER`; its only write is the existing `NO_SHOW` transition through the screen's `onConfirmNoShow` callback. Its compensation figures (and the paid-wait amount on the `WAITING_PASSENGER` sheet) are labelled an estimate that is not paid out yet (#1182): nothing carries them to the fare, the receipt, the history or the payouts. |
 | `public/src/screens/active_ride_passenger.js` | Passenger active ride renderer. |
 | `public/src/screens/active_ride_passenger_sheets.js` | Non-route helper. Passenger cancel and safety sheets, imported only by `active_ride_passenger.js`. UI-only: persistence stays in the screen's callbacks. |
 | `public/src/screens/trip_receipt.js` | Driver completed-ride receipt (`/receipt?tripId=`); reads and formats the persisted receipt, never recomputes it. |

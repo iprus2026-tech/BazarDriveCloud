@@ -268,7 +268,7 @@
 // v400 (#1140): refresh precached app.js + screens/composer.js + screens/profile.js — role-scoped composer draft; «Перейти в режим пассажира» is a real role switch to the feed.
 // v401 (#1125): refresh precached mock_api.js + screens/feed.js + screens/post_detail.js + screens/driver_map.js + styles/cloud.css — a Guest on a live backend gets «Войдите» instead of the order feed; a hidden public point reads «Адрес скрыт».
 // v402 (#1160): precache public_places.js; refresh passenger_order_utils.js + screens/route_picker.js + screens/map.js + styles/cloud.css — public places (airports, stations) as quick buttons in /route-picker and pins on /map.
-const VERSION    = 'v410';
+const VERSION    = 'v411';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
