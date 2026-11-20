@@ -245,15 +245,18 @@ function buildEmptyCard() {
   const card = document.createElement('div');
   card.className = 'map-home__sheet driver-map__sheet';
   card.dataset.state = STATE.EMPTY;
+  // #1185 — the test order is a local demo affordance (it never reaches the server): a driver
+  // on a real backend is not offered an order that exists only on this device.
+  const testOrderCta = isBackendEnabled() ? '' : `<button class="bd-btn primary map-home__cta" type="button" data-action="create-order">
+      Создать тестовый заказ
+    </button>`;
   card.innerHTML = `
     <div class="map-home__sheet-grip" aria-hidden="true"></div>
     <div class="bd-empty">
       <div class="bd-empty__title">Заказов рядом пока нет</div>
       <p>Опубликованные пассажирами заказы будут появляться здесь, как только водители выйдут в смену.</p>
     </div>
-    <button class="bd-btn primary map-home__cta" type="button" data-action="create-order">
-      Создать тестовый заказ
-    </button>
+    ${testOrderCta}
     <button class="bd-btn ghost map-home__cta map-home__cta--ghost" type="button" data-action="feed">
       Вернуться в ленту
     </button>
