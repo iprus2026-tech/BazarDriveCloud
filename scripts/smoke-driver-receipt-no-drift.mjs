@@ -344,6 +344,14 @@ const sw = read('../public/sw.js');
 expect('sw precaches the trip receipt screen',
   /screens\/trip_receipt\.js/.test(sw));
 
+// ── 5b. #1184 — the noncash receipt does not claim a balance credit ──
+// No payment is processed by the app (the passenger receipt says «Оплата производится напрямую
+// водителю»), so the driver's noncash receipt must say the same, not «зачислена на ваш баланс».
+const receiptScreen = read('../public/src/screens/trip_receipt.js');
+expect('the noncash driver receipt states direct payment, with no balance-credit claim [#1184]',
+  receiptScreen.includes('Пассажир платит вам напрямую.')
+    && !/Сумма зачислена/.test(receiptScreen) && !/Итого к зачислению/.test(receiptScreen));
+
 // ── 6. Auth boundary wiring (PR #382, Codex #2) ──────────────
 const boundarySrc = read('../public/src/storage_boundary.js');
 expect('storage_boundary imports clearDriverReceiptsStore',
