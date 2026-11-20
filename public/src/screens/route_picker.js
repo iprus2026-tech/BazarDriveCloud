@@ -296,6 +296,18 @@ function clonePoint(point) {
   return { ...point };
 }
 
+// #1185 — two points are the same place when their visible label and address agree.
+function pointKey(point) {
+  if (!point) return '';
+  const norm = (v) => (typeof v === 'string' ? v.trim().toLowerCase().replace(/\s+/g, ' ') : '');
+  return `${norm(point.label)}|${norm(point.address)}`;
+}
+
+export function isSamePoint(a, b) {
+  const key = pointKey(a);
+  return key !== '|' && key !== '' && key === pointKey(b);
+}
+
 function cloneRoute(route) {
   if (!route) return null;
   return { ...route };
@@ -1366,6 +1378,12 @@ function handleClick(root, target) {
   }
   if (action === 'continue') {
     if (routeDraft.status !== ROUTE_STATUS.ROUTE_DRAFT_READY) return;
+    // #1185 — «Работа → Работа» is not a route: stay on the picker and say why.
+    if (isSamePoint(routeDraft.pickup, routeDraft.dropoff)) {
+      notice = 'Откуда и куда совпадают. Измените одну из точек.';
+      rerender(root);
+      return;
+    }
     // /active-ride guard: never start a new route over a live trip until
     // the passenger has explicitly dismissed the guard banner.
     if (activeRideGuardTripId) return;

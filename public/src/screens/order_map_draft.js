@@ -15,7 +15,6 @@ import { enrichOrderPointWithCoords, maskPassengerPhone, shortRideNumber } from 
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const FORM_DRAFT_KEY = 'bazardrive.order_form.v1';
-const STORAGE_LABEL = 'localStorage';
 
 const STATE = {
   VALID: 'valid',
@@ -280,6 +279,18 @@ function formatDate(iso) {
   return `${d}.${m}.${y}`;
 }
 
+// #1185 — local calendar date as YYYY-MM-DD (the date input's own format and time zone).
+function todayIso(now = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+// A malformed date/time is not "past" here — the empty-field rule owns that case.
+export function isPastSchedule(date, time, now = new Date()) {
+  const at = new Date(`${date}T${time}`);
+  return Number.isFinite(at.getTime()) && at.getTime() < now.getTime();
+}
+
 function validate(draft) {
   const errors = [];
   if (form.mode === 'later') {
@@ -289,13 +300,20 @@ function validate(draft) {
         copy: 'Укажите время поездки',
         path: 'order.schedule',
       });
+    } else if (isPastSchedule(form.date, form.time)) {
+      // #1185 — «Позже» is a time ahead of now.
+      errors.push({
+        key: 'schedule',
+        copy: 'Это время уже прошло. Выберите время позже текущего',
+        path: 'order.schedule',
+      });
     }
   }
   const price = currentPrice(draft);
   if (price == null || price <= 0) {
     errors.push({
       key: 'price',
-      copy: hasEstimate(draft) ? 'Проверьте цену или контакт' : 'Укажите цену поездки',
+      copy: hasEstimate(draft) ? 'Проверьте цену поездки' : 'Укажите цену поездки',
       path: 'order.price',
     });
   }
@@ -458,7 +476,7 @@ function renderScheduleFields() {
       <label class="omd-schedule-field">
         <span class="omd-schedule-field__label">ДАТА</span>
         <input class="omd-input" type="date" data-input="date"
-               value="${escapeHtml(form.date)}"
+               value="${escapeHtml(form.date)}" min="${todayIso()}"
                aria-label="Дата поездки">
       </label>
       <label class="omd-schedule-field">
@@ -554,7 +572,6 @@ function renderErrors() {
       <span class="omd-error__dot" aria-hidden="true"></span>
       <div class="omd-error__body">
         <div class="omd-error__copy">${escapeHtml(err.copy)}</div>
-        <code class="omd-error__path">${escapeHtml(err.path)}</code>
       </div>
     </li>
   `).join('');
@@ -691,21 +708,6 @@ function renderMissingBody() {
         Сначала выберите точки поездки, затем создайте заказ.
       </p>
     </div>
-
-    <dl class="omd-diag" aria-label="Диагностика">
-      <div class="omd-diag__row">
-        <dt>Источник</dt>
-        <dd>${escapeHtml(STORAGE_LABEL)} · пусто</dd>
-      </div>
-      <div class="omd-diag__row">
-        <dt>Ключ</dt>
-        <dd><code>${escapeHtml(ROUTE_DRAFT_KEY)}</code></dd>
-      </div>
-      <div class="omd-diag__row">
-        <dt>Шаг назад</dt>
-        <dd><code>/route-picker</code></dd>
-      </div>
-    </dl>
 
     ${renderNotice()}
     ${renderDebugTrail()}
@@ -1071,6 +1073,8 @@ function handleAction(root, action, draft, state) {
   }
   if (action === 'save-draft') {
     persistForm();
+    // #1185 — the tap used to give no feedback at all.
+    publishFeedback(root, 'info', 'Черновик сохранён на этом устройстве.', draft);
     return;
   }
   if (action === 'price-down') {
