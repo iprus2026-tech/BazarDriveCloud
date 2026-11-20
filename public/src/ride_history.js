@@ -146,6 +146,25 @@ export function removeRideHistoryEntry(identity) {
   }
 }
 
+// #1185 — «Закрыть поездку» on the driver's completion sheet. The closed state used to live only
+// in the overlay's DOM, so a reload or Back showed the earnings summary and the button again. It
+// is stamped on the trip's own driver history entry (saveRideHistoryEntry keeps extra fields on
+// upsert), so no new storage key is needed and it is cleared with the history.
+export function markDriverTripClosed(tripId) {
+  if (typeof tripId !== 'string' || !tripId) return false;
+  const list = readStore();
+  const idx = list.findIndex((e) => e && e.role === 'driver' && e.tripId === tripId);
+  if (idx < 0) return false;
+  if (list[idx].closedAt) return true;
+  list[idx] = { ...list[idx], closedAt: new Date().toISOString() };
+  return writeStore(list) !== false;
+}
+
+export function isDriverTripClosed(tripId) {
+  if (typeof tripId !== 'string' || !tripId) return false;
+  return readStore().some((e) => e && e.role === 'driver' && e.tripId === tripId && !!e.closedAt);
+}
+
 export function clearRideHistory() {
   try { localStorage.removeItem(HISTORY_KEY); } catch {}
 }

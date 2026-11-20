@@ -1318,6 +1318,13 @@ function responsesSafetySheetHtml() {
 function renderList(drivers, selectedDriverId, declined, sortMode) {
   const sorted = sortDrivers(drivers, sortMode);
   const allDeclined = drivers.length > 0 && declined.size === drivers.length;
+  // #1185 — the counter is the offers still on the table: a declined driver no longer counts, and
+  // the number of hidden ones is said next to it (they can be restored).
+  const hiddenCount = drivers.filter((d) => declined.has(d.id)).length;
+  const activeCount = drivers.length - hiddenCount;
+  const countLabel = hiddenCount > 0
+    ? `${responsesWord(activeCount)} · ${hiddenCount} отклонено`
+    : responsesWord(activeCount);
   const chips = SORT_MODES.map((m) => {
     const active = m.key === sortMode;
     return `<button type="button" class="responses__chip${active ? ' is-active' : ''}"
@@ -1326,8 +1333,8 @@ function renderList(drivers, selectedDriverId, declined, sortMode) {
   return `
     <div class="responses__toolbar">
       <div class="responses__count">
-        <span class="responses__count-badge">${escapeHtml(String(drivers.length))}</span>
-        <span class="responses__count-label">${escapeHtml(responsesWord(drivers.length))}</span>
+        <span class="responses__count-badge">${escapeHtml(String(activeCount))}</span>
+        <span class="responses__count-label">${escapeHtml(countLabel)}</span>
       </div>
       <div class="responses__status">
         <span class="responses__status-dot" aria-hidden="true"></span>

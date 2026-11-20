@@ -792,7 +792,11 @@ function bindEarningsEvents(overlay, options) {
   // Optimistic close: spinner for a beat, then the calm "снова на линии"
   // card. Mock only — no status mutation, no backend.
   function scheduleClose() {
-    setTimeout(() => { overlay.dataset.stage = 'closed'; }, 1400);
+    setTimeout(() => {
+      overlay.dataset.stage = 'closed';
+      // #1185 — let the screen remember that this trip was closed.
+      if (typeof options.onClosed === 'function') options.onClosed();
+    }, 1400);
   }
   function enterLoading() {
     if (overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'closed') return;
