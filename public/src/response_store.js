@@ -72,14 +72,43 @@ export function resolveResponseById(responseId) {
   return (r && typeof r === 'object' && r.kind === 'passenger_response') ? r : null;
 }
 
-// «Вы откликнулись · 950 ₽» for a CTA, or '' when the post has no own offer.
-export function ownOfferLabel(postId) {
-  const offer = findOwnOfferForPost(postId);
-  if (!offer) return '';
-  const n = Number(offer.driverPrice);
-  let price;
-  try { price = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n); } catch { price = String(n); }
-  return `Вы откликнулись · ${price} ₽`;
+// #1188 — what became of the driver's own offer on this post after the owner edited the order:
+//   'price-changed' — the new price rejected it (the driver may offer again: a fresh bid);
+//   'terms-changed' — a new time or comment came after it (it stays selectable, marked);
+//   'current'       — made for the order as it stands.
+// Backend OFF the local offer itself says so (reconcileResponsesAfterOrderEdit); with the backend
+// ON the driver cannot read the offer back, so the post's edit stamps (the public projection's
+// termsChangedAt / priceChangedAt) are compared with the time the offer was sent from this device.
+// Returns { offer, standing } or null when there is no own offer on the post.
+export function ownOfferOnPost(post) {
+  const id = post && (typeof post.id === 'string' || typeof post.id === 'number') ? String(post.id).trim() : '';
+  if (!id) return null;
+  const r = resolveResponseById(`resp_${id}`);
+  if (!r || String(r.requestId) !== id || !(Number(r.driverPrice) > 0)) return null;
+  if (r.status === 'REJECTED' && r.rejectedBy === 'passenger_edit') return { offer: r, standing: 'price-changed' };
+  if (r.status !== 'SENT') return null;
+  const sentAt = Date.parse(r.createdAt);
+  const after = (stamp) => typeof stamp === 'string' && Number.isFinite(sentAt) && Date.parse(stamp) > sentAt;
+  if (after(post.priceChangedAt)) return { offer: r, standing: 'price-changed' };
+  if (r.previousTermsAt || after(post.termsChangedAt)) return { offer: r, standing: 'terms-changed' };
+  return { offer: r, standing: 'current' };
+}
+
+function formatOwnOfferPrice(value) {
+  const n = Number(value);
+  try { return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n); } catch { return String(n); }
+}
+
+// The CTA text for the driver's own offer on a post, or '' when there is none:
+// «Вы откликнулись · 950 ₽», «Условия изменились · ваш отклик 950 ₽», «Цена изменилась · откликнуться снова».
+// Takes the post (its edit stamps decide the standing); a bare id reads the offer alone.
+export function ownOfferLabel(post) {
+  const own = ownOfferOnPost(typeof post === 'object' && post ? post : { id: post });
+  if (!own) return '';
+  const price = `${formatOwnOfferPrice(own.offer.driverPrice)} ₽`;
+  if (own.standing === 'price-changed') return 'Цена изменилась · откликнуться снова';
+  if (own.standing === 'terms-changed') return `Условия изменились · ваш отклик ${price}`;
+  return `Вы откликнулись · ${price}`;
 }
 
 // #1176 — the local user's own driver offer for a feed post, if one was sent from this device

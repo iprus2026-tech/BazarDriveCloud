@@ -526,7 +526,8 @@ function renderTripCard(p, guestReadOnly = false) {
   } else if (p.passenger) {
     // #1176 — a driver who already responded from this device sees their offer, and the same
     // tap opens it for editing.
-    const mine = !guestReadOnly && isDriverMode(u) ? ownOfferLabel(p.id) : '';
+    // #1188 — the post's edit stamps say whether that offer still answers the order's terms.
+    const mine = !guestReadOnly && isDriverMode(u) ? ownOfferLabel(p) : '';
     ctaAttrs = `data-action="respond" data-post-id="${postId}" aria-label="${mine ? 'Изменить своё предложение' : 'Откликнуться на заявку попутчика'}"`;
     ctaLabel = mine ? escapeHtml(mine) : 'Откликнуться';
   } else if (!guestReadOnly && canManageOwnOrder(p, u)) {

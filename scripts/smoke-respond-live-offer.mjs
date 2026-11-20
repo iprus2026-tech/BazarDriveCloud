@@ -50,8 +50,9 @@ function respondHarness({ backend = true, vehicle = { model: 'Kia Rio', color: '
     loadResource: (fn) => fn(),
     resolveActiveGarageVehicle: () => (vehicle ? { ...vehicle } : null),
     // #1176 — respond.js imports this from response_store.js: the driver's earlier offer for
-    // the post, if any (null in every case but the revision ones below).
-    findOwnOfferForPost: () => existingOffer,
+    // the post, if any (null in every case but the revision ones below). #1188 — it now comes
+    // with its standing against the order's edits; these cases are offers for the current terms.
+    ownOfferOnPost: () => (existingOffer ? { offer: existingOffer, standing: 'current' } : null),
     setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
     window: { location: { hash: '#/respond' } },
     document: { body: { contains: () => true }, createElement: (tag) => new FakeElement(tag) },

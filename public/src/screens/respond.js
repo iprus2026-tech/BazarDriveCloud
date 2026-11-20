@@ -6,7 +6,7 @@ import { isBackendEnabled } from '../api_config.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, DRIVER_ROLE_REQUIRED } from '../role_gate.js';
 import { loadResource } from '../data_layer.js';
 import { resolveActiveGarageVehicle } from '../garage.js';
-import { findOwnOfferForPost } from '../response_store.js';
+import { ownOfferOnPost } from '../response_store.js';
 
 const RESPOND_KEY    = 'bazardrive.respond.v1';
 const RESPONSES_KEY  = 'bazardrive.responses.v1';
@@ -418,7 +418,12 @@ function renderPassengerRide(root, post) {
   // #1176 — the driver's own offer already sent for this post from this device. The form then
   // opens as an EDIT of it (its price, timing and text), and says so, instead of a blank form
   // that silently replaced or — on a backend — was silently ignored.
-  const existingOffer = findOwnOfferForPost(post.id);
+  // #1188 — an offer the owner's new price rejected is not edited: the driver makes a fresh bid from
+  // the order's current price. One made before a new time or comment is still an edit, and says so.
+  const ownOffer = ownOfferOnPost(post);
+  const offerStanding = ownOffer ? ownOffer.standing : null;
+  const rejectedOffer = offerStanding === 'price-changed' ? ownOffer.offer : null;
+  const existingOffer = ownOffer && !rejectedOffer ? ownOffer.offer : null;
   // An offer saved before `messageText` existed has only the composed `message`: recover the
   // driver's text from it, so a price-only revision cannot erase what they wrote (Codex P2 on #1195).
   const existingText = existingOffer
@@ -470,7 +475,16 @@ function renderPassengerRide(root, post) {
       <div class="bd-alert info respond__existing" id="respond-existing" role="status">
         ${INFO_SVG}
         <p class="respond__info-text">
-          Вы уже откликнулись: ${escapeHtml(formatOfferPrice(existingOffer.driverPrice))}. Измените цену или сообщение и отправьте — пассажир увидит новое предложение вместо прежнего.
+          ${offerStanding === 'terms-changed'
+            ? `Пассажир изменил время или комментарий после вашего отклика (${escapeHtml(formatOfferPrice(existingOffer.driverPrice))}). Проверьте условия и отправьте предложение снова — пассажир увидит, что оно для новых условий.`
+            : `Вы уже откликнулись: ${escapeHtml(formatOfferPrice(existingOffer.driverPrice))}. Измените цену или сообщение и отправьте — пассажир увидит новое предложение вместо прежнего.`}
+        </p>
+      </div>` : ''}
+      ${rejectedOffer ? `
+      <div class="bd-alert info respond__existing" id="respond-existing" role="status">
+        ${INFO_SVG}
+        <p class="respond__info-text">
+          Пассажир изменил цену — ваш прежний отклик (${escapeHtml(formatOfferPrice(rejectedOffer.driverPrice))}) отклонён. Предложите снова.
         </p>
       </div>` : ''}
 
