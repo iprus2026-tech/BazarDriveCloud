@@ -10,7 +10,6 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import { routeEstimateFor } from './route_picker.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
-const STORAGE_LABEL = 'localStorage';
 
 const STATE = {
   VALID: 'valid',
@@ -253,21 +252,6 @@ function renderMissingCard() {
       </p>
     </div>
 
-    <dl class="rpv-diag" aria-label="Диагностика">
-      <div class="rpv-diag__row">
-        <dt>Источник</dt>
-        <dd>${escapeHtml(STORAGE_LABEL)} · пусто</dd>
-      </div>
-      <div class="rpv-diag__row">
-        <dt>Ключ</dt>
-        <dd><code>${escapeHtml(ROUTE_DRAFT_KEY)}</code></dd>
-      </div>
-      <div class="rpv-diag__row">
-        <dt>Шаг назад</dt>
-        <dd><code>/route-picker</code></dd>
-      </div>
-    </dl>
-
     <button class="bd-btn primary rpv-cta" type="button" data-action="pick-route">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -330,31 +314,6 @@ function renderMalformedCard(missing) {
       </svg>
       <span>Выбрать маршрут</span>
     </button>
-    <button class="bd-btn rpv-secondary" type="button" data-action="toggle-details"
-            aria-expanded="false" aria-controls="rpv-details">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="9"/>
-        <line x1="12" y1="11" x2="12" y2="16"/>
-        <line x1="12" y1="8" x2="12.01" y2="8"/>
-      </svg>
-      <span>Подробнее</span>
-    </button>
-
-    <dl class="rpv-diag rpv-details" id="rpv-details" aria-label="Диагностика черновика" hidden>
-      <div class="rpv-diag__row">
-        <dt>Источник</dt>
-        <dd>${escapeHtml(STORAGE_LABEL)}</dd>
-      </div>
-      <div class="rpv-diag__row">
-        <dt>Ключ</dt>
-        <dd><code>${escapeHtml(ROUTE_DRAFT_KEY)}</code></dd>
-      </div>
-      <div class="rpv-diag__row">
-        <dt>Шаг назад</dt>
-        <dd><code>/route-picker</code></dd>
-      </div>
-    </dl>
   `;
   return card;
 }
@@ -393,15 +352,6 @@ function shareRoute() {
   }
 }
 
-function toggleDetails(target) {
-  const card = target.closest('.rpv-card');
-  const details = card?.querySelector('.rpv-details');
-  if (!details) return;
-  const willShow = details.hidden;
-  details.hidden = !willShow;
-  target.setAttribute('aria-expanded', String(willShow));
-}
-
 function handleAction(action, target) {
   if (action === 'create-order') {
     go('/order-map-draft');
@@ -421,10 +371,6 @@ function handleAction(action, target) {
   }
   if (action === 'share-route') {
     shareRoute();
-    return;
-  }
-  if (action === 'toggle-details') {
-    toggleDetails(target);
     return;
   }
 }
