@@ -1320,7 +1320,8 @@ body {
 .feed-search[hidden] { display: none; }
 #feed-search-toggle[hidden] { display: none; }
 .feed-search__reset { margin-top: 14px; }
-.screen--feed { position: relative; }
+.screen--feed,
+.screen--route-preview { position: relative; }
 .feed-toast {
   position: absolute;
   left: 16px;
@@ -5766,24 +5767,26 @@ body {
 .active-ride__route-list::before {
   content: "";
   position: absolute;
-  left: 30px;
+  left: 65px;
   top: 14px;
   bottom: 14px;
   width: 2px;
   background: var(--line-strong);
   border-radius: 1px;
 }
+/* #1185 — the track has its own lane between the time column and the address: it used to run
+   through the middle of the time column, so a label like «18 мин» was printed over the dot. */
 .active-ride__route-point {
   position: relative;
   display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 12px;
+  grid-template-columns: 52px 1fr;
+  gap: 28px;
   align-items: start;
 }
 .active-ride__route-point::after {
   content: "";
   position: absolute;
-  left: 26px;
+  left: 61px;
   top: 6px;
   width: 10px;
   height: 10px;
@@ -5801,6 +5804,8 @@ body {
   font-weight: 700;
   color: var(--text);
   padding-top: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 .active-ride__route-body { min-width: 0; }
 .active-ride__route-main {

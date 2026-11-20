@@ -59,7 +59,9 @@ export const DRIVER_CANCEL_REASONS = [
   ['car_problem', 'Проблема с автомобилем', 'Не могу безопасно продолжить подачу'],
   ['unsafe_situation', 'Небезопасная ситуация', 'Есть риск для водителя или пассажира'],
   ['cannot_reach_passenger', 'Не могу связаться с пассажиром', 'Нет ответа в чате и по телефону'],
-  ['other', 'Другая причина', 'Опишу подробнее ниже'],
+  // #1185 — the comment is optional here, as on the passenger sheet and on the server: the copy
+  // used to promise a description («Опишу подробнее ниже») the sheet never asked for.
+  ['other', 'Другая причина', 'Можно описать ниже'],
 ];
 
 // Reason label lookup used by the driver screen's canceled stub to show
@@ -156,7 +158,7 @@ export function renderDriverCancelSheet(selected = '') {
       <p class="driver-cancel-sheet__lead">Выберите причину отмены.</p>
       <div class="driver-cancel-sheet__options" role="radiogroup" aria-label="Причина отмены">${cancelOptionsHtml(selected)}</div>
       <div class="driver-cancel-sheet__custom">
-        <label class="driver-cancel-sheet__custom-label" for="driver-cancel-custom">Опишите причину</label>
+        <label class="driver-cancel-sheet__custom-label" for="driver-cancel-custom">Опишите причину (необязательно)</label>
         <textarea class="driver-cancel-sheet__textarea" id="driver-cancel-custom" rows="2" maxlength="${DRIVER_CANCEL_COMMENT_MAX}" placeholder="Расскажите, что случилось"></textarea>
       </div>
       <div class="driver-cancel-sheet__error" id="driver-cancel-error" role="alert">
