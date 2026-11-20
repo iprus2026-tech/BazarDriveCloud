@@ -45,7 +45,53 @@ function feedDateLabel(now = new Date()) {
 // only on a successful reload (guarded by onlyIfState), reports server_error
 // with the guarded onRetry on failure, and falls back to [] so the feed's own
 // empty state is preserved (the overlay is additive).
+// #1185 — the router sends every path it has no screen for to this loader («the /feed fallback»)
+// and leaves the address as typed. The feed used to render under that wrong address as if
+// nothing had happened. This loader now answers such a path with a not-found state: what was
+// typed, and one way out. The bare root forms (an empty hash, `#/`) are the app's home and still
+// show the feed. Routing itself is unchanged — the router still resolves an unknown path to the
+// /feed loader and reports the rendered route as /feed.
+const HOME_PATHS = new Set(['', '/', '/feed']);
+
+export function unknownRoutePath(hash) {
+  const raw = typeof hash === 'string' ? hash : ((typeof location !== 'undefined' && location.hash) || '');
+  const path = raw.replace(/^#/, '').split('?')[0];
+  return HOME_PATHS.has(path) ? null : path;
+}
+
+const NOT_FOUND_PATH_MAX = 60;
+
+// The address as a person reads it: percent-escapes decoded when they decode cleanly, cut to a
+// line's length. It is only ever shown as text (escaped at the call site).
+export function readableRoutePath(path) {
+  let text = String(path ?? '');
+  try { text = decodeURIComponent(text); } catch { /* a stray «%» — show it as typed */ }
+  return text.length > NOT_FOUND_PATH_MAX ? `${text.slice(0, NOT_FOUND_PATH_MAX)}…` : text;
+}
+
+function notFoundView(path) {
+  const shown = readableRoutePath(path);
+  const root = document.createElement('section');
+  root.className = 'screen screen--not-found';
+  root.dataset.state = 'not-found';
+  root.innerHTML = `
+    <header class="bd-topbar">
+      <div class="bd-topbar__titles"><h1 class="bd-topbar__title">Страница не найдена</h1></div>
+    </header>
+    <div class="bd-scroll">
+      <div class="bd-empty not-found" role="status">
+        <div class="bd-empty__title">Такой страницы нет</div>
+        <p class="not-found__text">Адрес <span class="not-found__path">${escapeHtml(shown)}</span> не ведёт ни на один экран. Возможно, ссылка устарела или в ней опечатка.</p>
+        <button type="button" class="bd-btn primary not-found__cta" data-action="not-found-feed">В ленту</button>
+      </div>
+    </div>`;
+  root.querySelector('[data-action="not-found-feed"]').addEventListener('click', () => go('/feed'));
+  return root;
+}
+
 export default function feed(renderContext) {
+  const unknownPath = unknownRoutePath();
+  if (unknownPath !== null) return notFoundView(unknownPath);
   const guestReadOnly = renderContext?.guestReadOnly === true;
   // BD-FEED-01 — return the screen shell synchronously and load in the
   // background (refreshList) so the feed paints a loading skeleton immediately

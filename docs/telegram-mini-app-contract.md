@@ -41,7 +41,7 @@ The new legacy document stays outside the document registry in this slice. Regis
 
 | Surface | Fact | Evidence |
 |---|---|---|
-| Router | The path is `location.hash` up to `?`. An unknown path falls back to `/feed`. Without `welcomeSeen`, every path redirects to `/welcome` except `/welcome` itself, dev/docs routes and an admission that sets `skipWelcome`. | `public/src/router.js:187-231`, `:210-212` |
+| Router | The path is `location.hash` up to `?`. An unknown path falls back to the `/feed` loader (which, since #1185, shows a not-found state for it — see `docs/flow-contracts.md`); the rendered route is still `/feed`. Without `welcomeSeen`, every path redirects to `/welcome` except `/welcome` itself, dev/docs routes and an admission that sets `skipWelcome`. | `public/src/router.js:187-231`, `:210-212` |
 | Boot | Before and after the router starts, `app.js` re-enters `go((location.hash \|\| '#/welcome').slice(1))`. | `public/src/app.js:379`, `:422` |
 | Import order | No module reads `location.hash` at import time. Reads happen inside functions only. | grep over `public/src` |
 | CSP | `script-src 'self'`; `connect-src 'self' https://*.mapbox.com`. The CSP lives in a `<meta>` only. | `public/index.html:13` |
@@ -215,7 +215,7 @@ Version comparison is numeric per dot segment of `tgWebAppVersion`. An event bel
 ### Back navigation
 
 - **Visibility.** It follows the route the router actually rendered, not the raw hash:
-  - an unknown path renders the `/feed` fallback and keeps its hash (`public/src/router.js:227-231`), so it counts as `/feed`;
+  - an unknown path renders the `/feed` fallback and keeps its hash (`public/src/router.js:227-231`), so it counts as `/feed` — the not-found state that loader shows since #1185 is a root like the feed (it carries its own «В ленту»);
   - `/order/<id>` counts as `/order`.
   
   `web_app_setup_back_button` is `{ is_visible: false }` when the rendered route is one of the roots `/welcome`, `/feed`, `/map`, `/driver-map`, `/rules`, `/profile`, and `{ is_visible: true }` otherwise. It is re-evaluated after every mount.
