@@ -96,6 +96,22 @@ await check('an edit sends only what changed; an untouched form sends nothing', 
   assert.doesNotMatch(sourceFunction(formSource, 'orderEditTerms'), /Label/);
 });
 
+await check('a value the form normalized to show it is not sent back unless that field is edited (Codex P2)', () => {
+  const long = 'Подъезд 3, '.repeat(30).trim();
+  const order = { estimatedPrice: 150000.5, scheduledMode: 'now', comment: long };
+  const opened = editFormFromOrder(order);
+  assert.equal(opened.price, 100000, 'the form shows the price in its own range');
+  assert.equal(opened.comment.length, 200, 'and the comment within its own limit');
+  // Only the time changes: neither the clamped price nor the cut comment goes back.
+  const now = new Date('2026-11-20T12:00:00.000Z');
+  assert.deepEqual(orderEditTerms(order, { ...opened, mode: 'later', date: '2026-12-02', time: '12:00' }, now),
+    { scheduledMode: 'later', scheduledAt: '2026-12-02T12:00:00' });
+  assert.deepEqual(orderEditTerms(order, opened), {});
+  // Editing that very field sends what the passenger typed.
+  assert.deepEqual(orderEditTerms(order, { ...opened, price: 90000 }), { estimatedPrice: 90000 });
+  assert.deepEqual(orderEditTerms(order, { ...opened, comment: 'Подъезд 3' }), { comment: 'Подъезд 3' });
+});
+
 // ── B. the seam, backend OFF ──────────────────────────────────────────────────
 await check('backend OFF: the owner\'s open order is edited in the local store by the server\'s rules', async () => {
   off();
@@ -143,6 +159,47 @@ await check('backend OFF: an order that is not the caller\'s open order is refus
     assert.equal(storage.get(ORDERS_KEY), before, `${label}: untouched`);
   }
   await assert.rejects(mockApi.updateOwnOrderTerms('missing', { estimatedPrice: 900 }), (err) => err.code === mockApi.ORDER_NOT_EDITABLE);
+});
+
+const RESPONSES_KEY = 'bazardrive.responses.v1';
+function putResponses(entries) {
+  storage.set(RESPONSES_KEY, JSON.stringify(Object.fromEntries(entries.map((r) => [r.id, r]))));
+}
+const responses = () => JSON.parse(storage.get(RESPONSES_KEY) || '{}');
+const offer = (id, extra = {}) => ({ id, kind: 'passenger_response', orderId: 'order-x', status: 'SENT', driverPrice: 600, ...extra });
+
+await check('backend OFF: a new price rejects the open local offers on the order; others are untouched (Codex P2)', async () => {
+  off();
+  put({});
+  putResponses([offer('resp_a'), offer('resp_b', { status: 'WITHDRAWN' }), offer('resp_c', { orderId: 'order-y' }), { ...offer('resp_d'), kind: 'other' }]);
+  await mockApi.updateOwnOrderTerms('order-x', { estimatedPrice: 800 });
+  const r = responses();
+  assert.deepEqual([r.resp_a.status, r.resp_a.rejectedBy, r.resp_a.rejectedReason, Boolean(r.resp_a.rejectedAt)],
+    ['REJECTED', 'passenger_edit', 'order_price_changed', true]);
+  assert.equal(r.resp_b.status, 'WITHDRAWN');
+  assert.equal(r.resp_c.status, 'SENT', 'another order\'s offer');
+  assert.equal(r.resp_d.status, 'SENT', 'not a passenger response');
+});
+
+await check('backend OFF: a time or comment edit keeps the open local offers, marked; no change marks nothing', async () => {
+  off();
+  put({});
+  putResponses([offer('resp_a')]);
+  await mockApi.updateOwnOrderTerms('order-x', { estimatedPrice: 500, comment: 'Подъезд 2' });
+  assert.equal(responses().resp_a.previousTermsAt, undefined, 'the same terms mark nothing');
+  await mockApi.updateOwnOrderTerms('order-x', { comment: 'Подъезд 3' });
+  const r = responses().resp_a;
+  assert.deepEqual([r.status, Boolean(r.previousTermsAt), r.rejectedBy], ['SENT', true, undefined]);
+  // A refused edit touches no offer.
+  put({ status: 'ACCEPTED' });
+  putResponses([offer('resp_a')]);
+  await assert.rejects(mockApi.updateOwnOrderTerms('order-x', { estimatedPrice: 900 }));
+  assert.equal(responses().resp_a.status, 'SENT');
+});
+
+await check('/responses (backend OFF): a rejected local offer is not listed; a marked one says so', () => {
+  assert.match(sourceFunction(responsesSource, 'loadResponsesForOrder'), /&& r\.rejectedBy !== 'passenger_edit'\);/);
+  assert.match(sourceFunction(responsesSource, 'mapResponseToDriverCard'), /previousTerms: Boolean\(response && response\.previousTermsAt\)/);
 });
 
 // ── C. the seam, backend ON ───────────────────────────────────────────────────
@@ -219,6 +276,10 @@ await check('the form: ?orderId= opens the edit mode; the route and the new-orde
   assert.match(save, /err\.code === ORDER_NOT_EDITABLE/);
   assert.match(save, /ROLE_GATE_TEXT\.orderEdit/);
   assert.match(sourceFunction(formSource, 'handlePublish'), /^\s*if \(editing\) \{\s*handleSaveEdit\(root, draft\);/m);
+  // A late answer does not navigate a screen the passenger already left (Codex P2): both
+  // continuations check that this form is still the mounted one before acting.
+  assert.equal((save.match(/if \(editing !== order \|\| !document\.body\.contains\(root\)\) return;/g) || []).length, 2);
+  assert.ok(save.lastIndexOf('!document.body.contains(root)) return;') < save.lastIndexOf('go(back);'));
 });
 
 if (failures.length) {

@@ -31,6 +31,32 @@ export function loadAllResponses() {
   }
 }
 
+// #1188 — backend OFF: the owner's edit of an open order, applied to the open local offers on it
+// by the server's rule (server/repositories/offers.js). A new price rejects every SENT offer
+// (`rejectedBy: 'passenger_edit'`, the driver may offer again — respond.js writes a fresh SENT
+// entry, which also drops the marks); a new time or comment keeps them, marked `previousTermsAt`.
+// Returns how many offers changed. The one write this module makes, next to respond.js's own.
+export function reconcileResponsesAfterOrderEdit(orderId, { priceChanged = false, termsChanged = false, at = new Date().toISOString() } = {}) {
+  const id = typeof orderId === 'string' ? orderId.trim() : '';
+  if (!id || (!priceChanged && !termsChanged)) return 0;
+  const map = loadAllResponses();
+  let changed = 0;
+  for (const [key, r] of Object.entries(map)) {
+    if (!r || typeof r !== 'object' || r.kind !== 'passenger_response' || String(r.orderId || '') !== id || r.status !== 'SENT') continue;
+    map[key] = priceChanged
+      ? { ...r, status: 'REJECTED', rejectedBy: 'passenger_edit', rejectedReason: 'order_price_changed', rejectedAt: at }
+      : { ...r, previousTermsAt: at };
+    changed += 1;
+  }
+  if (!changed) return 0;
+  try {
+    localStorage.setItem(RESPONSES_KEY, JSON.stringify(map));
+  } catch {
+    return 0;
+  }
+  return changed;
+}
+
 // Exact-key lookup only. Returns the stored passenger_response for this
 // exact responseId, or null for: missing id, no storage, malformed JSON,
 // a non-object map, a missing entry, or the wrong kind. Never falls back

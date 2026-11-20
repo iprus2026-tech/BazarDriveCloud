@@ -11,6 +11,7 @@ import { loadRideHistory } from './ride_history.js';
 // api_client imports only api_config.)
 import { isBackendEnabled } from './api_config.js';
 import { apiFetch, ApiError } from './api_client.js';
+import { reconcileResponsesAfterOrderEdit } from './response_store.js';
 
 // ── Ownership marker for locally created posts ────────────────
 // Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
@@ -893,7 +894,7 @@ function applyOrderTerms(order, terms, now = new Date().toISOString()) {
   }
   if (priceChanged || timeChanged || commentChanged) next.termsChangedAt = now;
   if (priceChanged) next.priceChangedAt = now;
-  return next;
+  return { next, priceChanged, termsChanged: priceChanged || timeChanged || commentChanged, at: now };
 }
 
 export async function updateOwnOrderTerms(orderId, terms, { signal } = {}) {
@@ -916,8 +917,10 @@ export async function updateOwnOrderTerms(orderId, terms, { signal } = {}) {
     throw Object.assign(new Error('order is not editable'), { code: ORDER_NOT_EDITABLE });
   }
   if (!Object.keys(body).length) return { ...local };
-  const next = applyOrderTerms(local, body);
+  const { next, priceChanged, termsChanged, at } = applyOrderTerms(local, body);
   persistRideOrders(list.map((o) => (o && o.id === orderId ? next : o)));
+  // The open local offers on the order follow the edit, as the server's do.
+  reconcileResponsesAfterOrderEdit(orderId, { priceChanged, termsChanged, at });
   return next;
 }
 

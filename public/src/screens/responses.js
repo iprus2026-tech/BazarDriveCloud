@@ -365,7 +365,9 @@ function loadResponsesForOrder(orderId) {
   return Object.values(map).filter((r) =>
     r && typeof r === 'object'
     && r.kind === 'passenger_response'
-    && String(r.orderId || '') === id);
+    && String(r.orderId || '') === id
+    // #1188 — an offer rejected by the owner's price change is not an offer any more.
+    && r.rejectedBy !== 'passenger_edit');
 }
 
 // BD-LIFE-05 — Build a flat, type-guarded driverSnapshot view of one stored
@@ -563,6 +565,8 @@ export function mapResponseToDriverCard(response, request, index) {
                   ? PICKUP_TIMING_RANK[response.pickupTiming] : 1,
     note:       core.note,
     isBest:     index === 0,
+    // #1188 — made before the owner changed the time or the comment (backend OFF).
+    previousTerms: Boolean(response && response.previousTermsAt),
   };
 }
 

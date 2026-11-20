@@ -367,13 +367,16 @@ export function editFormFromOrder(order) {
   };
 }
 
-// What an edit changes, as the PATCH body: only the terms that differ from the order (an untouched
-// «now» order sends no new time, so a comment edit does not move it). Labels are never sent — the
-// record keeper makes the price label and drops a stale time label. `{}` means nothing changed.
+// What an edit changes, as the PATCH body: only the fields that differ from what the form opened
+// with (editFormFromOrder) — so a value the form had to normalize to show it (a comment over the
+// form's 200 characters, a price over its range or with kopecks) is not sent back unless the
+// passenger edits that very field; an untouched «now» order sends no new time either. Labels are
+// never sent — the record keeper makes the price label and drops a stale time label. `{}` means
+// nothing changed.
 export function orderEditTerms(order, fields, now = new Date()) {
   const terms = {};
   const before = editFormFromOrder(order);
-  if (fields.price != null && fields.price !== (Number(order.estimatedPrice) || 0)) {
+  if (fields.price != null && fields.price !== before.price) {
     terms.estimatedPrice = fields.price;
   }
   if (fields.mode !== before.mode) {
@@ -383,7 +386,7 @@ export function orderEditTerms(order, fields, now = new Date()) {
     terms.scheduledAt = `${fields.date}T${fields.time}:00`;
   }
   const comment = String(fields.comment ?? '').trim();
-  if (comment !== orderComment(order)) terms.comment = comment;
+  if (comment !== before.comment.trim()) terms.comment = comment;
   return terms;
 }
 
@@ -1136,7 +1139,9 @@ function handleSaveEdit(root, draft) {
         : 'Не удалось сохранить изменения. Попробуйте ещё раз.', draft, { publishing: false });
       return;
     }
-    if (editing !== order) return;
+    // The passenger may have left during the request (Back, Close, the tab bar): a late answer
+    // must not take over the screen they went to.
+    if (editing !== order || !document.body.contains(root)) return;
     form.publishing = false;
     go(back);
   })();

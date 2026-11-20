@@ -27,7 +27,7 @@
 //                                     screens/active_ride.js) and
 //                                     daily_communication_store.js under
 //                                     __daily_communication_threads__
-//   bazardrive.responses.v1         → screens/respond.js, screens/chat.js
+//   bazardrive.responses.v1         → screens/respond.js, screens/chat.js, response_store.js (#1188 order-edit reconcile)
 //   bazardrive.respond.v1           → screens/respond.js
 //   bazardrive.trip_confirmation.v1 → screens/trip_confirmation.js,
 //                                     screens/chat.js
