@@ -129,6 +129,16 @@ const DOC_ID_TO_KEY = {
 
 const BODY_TYPES = ['Седан', 'Минивэн', 'Внедорожник', 'Хэтчбек'];
 
+// #1185 — the first run: the user picked passenger or driver on the welcome screen a moment ago
+// and nothing else exists yet (no phone, not registered). Onboarding does not ask «Кто вы?»
+// again. Not this case: a guest, an onboarded profile, a user with no role (welcome «Войти»),
+// and someone coming back to an unfinished registration with a phone already stored — there the
+// role step stays the first screen.
+export function roleAlreadyChosen(u) {
+  return !!u && u.onboarded !== true && !u.phone
+    && (u.role === 'passenger' || u.role === 'driver');
+}
+
 const REQ_DOC_COUNT = DOCS.filter((d) => d.required).length; // 3
 
 // BD-AUTH-OTP-CLIENT-01 (#1143) — OTP limits from the server (BD-AUTH-HARDEN-01, #824).
@@ -961,6 +971,14 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     const profileIdx = steps().indexOf('profile');
     if (profileIdx >= 0) step = profileIdx;
   } else if (startAtPhone) {
+    const phoneIdx = steps().indexOf('phone');
+    if (phoneIdx >= 0) step = phoneIdx;
+  } else if (roleAlreadyChosen(currentUser) && !reloadedLoginResumable()) {
+    // #1185 — the welcome screen's «Начать» already asked «Кто вы?» and stored the answer; with the
+    // backend ON the app comes straight here, and the same question was asked a second time. The
+    // flow opens on the phone step with that role; «Назад» still leads to the role step, where it
+    // can be changed. A reloaded, already verified login keeps the role step (#1177: there the
+    // role is the explicit choice that resumes the login).
     const phoneIdx = steps().indexOf('phone');
     if (phoneIdx >= 0) step = phoneIdx;
   }
