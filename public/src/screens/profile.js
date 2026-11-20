@@ -23,6 +23,7 @@ import {
 import { isBackendEnabled, getSessionToken } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
+import { shortRideNumber } from '../passenger_order_utils.js';
 import { getSmokeRole, setSmokeRole, applySmokeRole, clearSmokeRole, resolveRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
@@ -2398,7 +2399,7 @@ function driverReceiptRowHtml(r) {
       <button type="button" class="pf2-po-trip-row" data-receipt-trip="${escapeHtml(tripId)}">
         <span class="pf2-po-trip-icon" aria-hidden="true">${SVG_DOC_LG}</span>
         <span class="pf2-po-trip-info">
-          <span class="pf2-po-trip-name">Чек поездки № ${escapeHtml(tripId)}</span>
+          <span class="pf2-po-trip-name">Чек поездки № ${escapeHtml(shortRideNumber(tripId))}</span>
           <span class="pf2-po-trip-meta">
             ${when ? `<span class="pf2-po-trip-sub">${escapeHtml(when)}</span>` : ''}
             ${badge}

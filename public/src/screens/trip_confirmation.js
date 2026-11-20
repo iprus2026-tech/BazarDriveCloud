@@ -15,6 +15,7 @@ import {
   seedActiveRideFromConfirmedHandoff,
 } from './trip_confirmation_handoff.js';
 import { saveDriverHandoffSnapshot } from './driver_handoff_snapshot.js';
+import { shortRideNumber } from '../passenger_order_utils.js';
 
 // ── State enum ────────────────────────────────────────────────
 export const CF_STATE = {
@@ -241,7 +242,7 @@ function metaGrid() {
 function renderPassengerPending(tripId) {
   return {
     pillTone: 'warn',
-    pillText: `ПОЕЗДКА № ${escapeHtml(tripId)} · ОЖИДАЕТ ПОДТВЕРЖДЕНИЯ`,
+    pillText: `ПОЕЗДКА № ${escapeHtml(shortRideNumber(tripId))} · ОЖИДАЕТ ПОДТВЕРЖДЕНИЯ`,
     hero: `
       <div class="cf-hero">
         <div class="cf-hero-icon cf-hero-icon--pending" aria-hidden="true">${PENDING_SVG}</div>
@@ -271,7 +272,7 @@ function renderPassengerPending(tripId) {
 function renderDriverWaiting(tripId) {
   return {
     pillTone: 'info',
-    pillText: `ПОЕЗДКА № ${escapeHtml(tripId)} · ОТКЛИК ОТПРАВЛЕН`,
+    pillText: `ПОЕЗДКА № ${escapeHtml(shortRideNumber(tripId))} · ОТКЛИК ОТПРАВЛЕН`,
     hero: `
       <div class="cf-hero">
         <div class="cf-hero-icon cf-hero-icon--waiting" aria-hidden="true">${WAITING_SVG}</div>
@@ -310,7 +311,7 @@ function renderDriverWaiting(tripId) {
 function renderPassengerConfirmed(tripId) {
   return {
     pillTone: 'ok',
-    pillText: `ПОЕЗДКА № ${escapeHtml(tripId)} · ПОДТВЕРЖДЕНА`,
+    pillText: `ПОЕЗДКА № ${escapeHtml(shortRideNumber(tripId))} · ПОДТВЕРЖДЕНА`,
     hero: `
       <div class="cf-hero">
         <div class="cf-hero-icon cf-hero-icon--confirmed" aria-hidden="true">
@@ -339,7 +340,7 @@ function renderPassengerConfirmed(tripId) {
 function renderDriverConfirmed(tripId) {
   return {
     pillTone: 'ok',
-    pillText: `ПОЕЗДКА № ${escapeHtml(tripId)} · ПОДТВЕРЖДЕНА`,
+    pillText: `ПОЕЗДКА № ${escapeHtml(shortRideNumber(tripId))} · ПОДТВЕРЖДЕНА`,
     hero: `
       <div class="cf-hero">
         <div class="cf-hero-icon cf-hero-icon--confirmed" aria-hidden="true">
@@ -371,7 +372,7 @@ function renderDriverConfirmed(tripId) {
 function renderExpired(tripId) {
   return {
     pillTone: 'err',
-    pillText: `ПОЕЗДКА № ${escapeHtml(tripId)} · ИСТЕКЛО`,
+    pillText: `ПОЕЗДКА № ${escapeHtml(shortRideNumber(tripId))} · ИСТЕКЛО`,
     hero: `
       <div class="cf-hero">
         <div class="cf-hero-icon cf-hero-icon--error" aria-hidden="true">${ALERT_SVG}</div>
@@ -383,7 +384,7 @@ function renderExpired(tripId) {
       <div class="bd-card cf-summary-card">
         <div class="cf-summary-row">
           <span class="cf-summary-label">Заявка</span>
-          <span class="cf-summary-value">№${escapeHtml(tripId)}</span>
+          <span class="cf-summary-value">№ ${escapeHtml(shortRideNumber(tripId))}</span>
         </div>
         <div class="cf-summary-row">
           <span class="cf-summary-label">Маршрут</span>
@@ -505,7 +506,7 @@ export default function tripConfirmation() {
       </button>
       <div class="cf-title-stack">
         <span class="cf-title">Подтверждение</span>
-        <span class="cf-subtitle">№${escapeHtml(tripId)}</span>
+        <span class="cf-subtitle">№ ${escapeHtml(shortRideNumber(tripId))}</span>
       </div>
       <button type="button" class="cf-shield" id="cf-shield" aria-label="Безопасность"
               aria-expanded="false" aria-controls="cf-safety-note">

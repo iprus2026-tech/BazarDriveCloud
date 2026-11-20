@@ -593,10 +593,15 @@ function seedHandedOffOrder(...pairs) {
 }
 function currentSheet() { return app.querySelector('.active-ride-passenger__sheet'); }
 function currentRoot() { return app.querySelector('.active-ride-passenger, .passenger-cancel-fallback'); }
+// #1185 — the label now shows the ride's short number («Поездка № ordA»), no longer the raw trip
+// id, so "which trip is mounted" is read from the element's explicit data-trip-id hook, followed by
+// the visible text. Every assertion below keeps probing the full trip id.
 function tripLabelText() {
   const el = app.querySelector('.active-ride-passenger__trip-label')
     || app.querySelector('.passenger-cancel-fallback__trip');
-  return el ? el.textContent : '';
+  if (!el) return '';
+  const id = (el.dataset && el.dataset.tripId) || (typeof el.getAttribute === 'function' && el.getAttribute('data-trip-id')) || '';
+  return `${id} ${el.textContent}`;
 }
 function mountPassenger() {
   user.set({ role: 'passenger', welcomeSeen: true, onboarded: true, firstName: 'Анна', lastName: 'П.' });

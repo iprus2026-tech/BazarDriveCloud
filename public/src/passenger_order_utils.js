@@ -71,9 +71,13 @@ export function isPlaceId(value) {
 // #1118 — the ride's short number, ONE rule for the order success card («ЗАКАЗ № 2a9008») and the
 // passenger's «Квитанция о поездке» («Поездка № 2a9008»): the order id (a ride's tripId is
 // `trip_<orderId>`, so the prefix is dropped), its last «-» segment, the last six characters of it.
+// #1185 — the same rule now labels the ride on every screen (ride screen, both receipts, trip
+// confirmation, payouts). An id that is already a human number — digits and dashes only, like the
+// demo «48-321» — is shown whole, so those screens keep «№ 48-321» instead of «№ 321».
 export function shortRideNumber(id) {
   const text = String(id ?? '').trim().replace(/^trip_/, '');
   if (!text) return '';
+  if (/^\d+(?:-\d+)+$/.test(text)) return text;
   return text.split('-').slice(-1)[0].slice(-6);
 }
 
