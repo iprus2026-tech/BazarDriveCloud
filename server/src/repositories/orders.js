@@ -119,3 +119,37 @@ export async function cancelCreatedOrder(db, id) {
   );
   return rows[0] ?? null;
 }
+
+// #1188 — the owner edits an open order in place. Only the fields in `values` are written (a NULL
+// parameter keeps the column); the route is never touched. A new comment also replaces the
+// snapshot's copy, so a cleared comment cannot come back through the ride note's fallback
+// (domain/ride-order-comment.js). `termsChanged` stamps terms_changed_at, `priceChanged`
+// price_changed_at; a label-only write stamps neither. Guarded by status='CREATED'; the caller
+// holds the order's FOR UPDATE lock (lockOrderByLegacyId) on the same client.
+export async function updateCreatedOrderTerms(db, id, { values, termsChanged, priceChanged }) {
+  const v = values ?? {};
+  const { rows } = await db.query(
+    `UPDATE orders
+        SET estimated_price       = COALESCE($2::numeric, estimated_price),
+            estimated_price_label = COALESCE($3::text, estimated_price_label),
+            scheduled_mode        = COALESCE($4::text, scheduled_mode),
+            scheduled_at          = COALESCE($5::text, scheduled_at),
+            scheduled_label       = COALESCE($6::text, scheduled_label),
+            comment               = COALESCE($7::text, comment),
+            passenger_snapshot    = CASE
+              WHEN $7::text IS NOT NULL AND jsonb_typeof(passenger_snapshot) = 'object'
+                THEN jsonb_set(passenger_snapshot, '{comment}', to_jsonb($7::text))
+              ELSE passenger_snapshot END,
+            terms_changed_at      = CASE WHEN $8::boolean THEN now() ELSE terms_changed_at END,
+            price_changed_at      = CASE WHEN $9::boolean THEN now() ELSE price_changed_at END,
+            updated_at            = now()
+      WHERE id = $1 AND status = 'CREATED'
+      RETURNING *`,
+    [
+      id, v.estimatedPrice ?? null, v.estimatedPriceLabel ?? null, v.scheduledMode ?? null,
+      v.scheduledAt ?? null, v.scheduledLabel ?? null, v.comment ?? null,
+      termsChanged === true, priceChanged === true,
+    ],
+  );
+  return rows[0] ?? null;
+}

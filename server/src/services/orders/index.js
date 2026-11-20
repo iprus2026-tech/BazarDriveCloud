@@ -10,6 +10,12 @@
 //                                   At most 5 open (CREATED) orders per passenger (#1125 R6); a sixth
 //                                   -> 409 ORDER_LIMIT. A point may name a catalog place
 //                                   (`placeId`, #1160); an unknown one -> 400 UNKNOWN_PLACE.
+//   PATCH /:orderId -> 200 { order }   #1188: the owner edits an open order in place — the price,
+//                                   the time, the comment; never the route (a new route is a new
+//                                   order). Only while CREATED with no driver; otherwise 409
+//                                   ORDER_NOT_EDITABLE. A price change rejects the open offers
+//                                   (drivers offer again); a time / comment change keeps them,
+//                                   marked `previousTermsAt`. A request that changes nothing -> 200.
 //   POST /:orderId/cancel -> 200 { order }   the owner cancels an order that has no driver yet
 //                                   (CREATED -> CANCELED; open offers rejected). Repeat -> 200.
 //                                   An order with a driver (ACCEPTED or later, or CANCELED through
@@ -22,9 +28,12 @@ import { newOrderId } from '../../infra/ids.js';
 import { serializeOrder } from '../../serialize.js';
 import {
   insertOrder, listCreatedOrders, lockOrderByLegacyId, cancelCreatedOrder,
-  lockPassengerOrders, countOpenOrdersByPassenger,
+  lockPassengerOrders, countOpenOrdersByPassenger, updateCreatedOrderTerms,
 } from '../../repositories/orders.js';
-import { rejectOpenOffersOnOrderCancel } from '../../repositories/offers.js';
+import {
+  rejectOpenOffersOnOrderCancel, rejectOpenOffersOnOrderPriceChange, markOpenOffersPreviousTerms,
+} from '../../repositories/offers.js';
+import { orderTermsChange } from '../../domain/order-terms-change.js';
 import { findAssignmentByOrderId } from '../../repositories/assignment.js';
 import { resolveActorAuthority, requirePassengerActor, roleAuthorityProblem } from '../auth/authority.js';
 import { findPublicPlace, PLACE_ID_PATTERN } from '../../domain/public-places.js';
@@ -68,6 +77,19 @@ const POINT = {
   if: { anyOf: Object.keys(GEO_FIELDS).map((k) => ({ required: [k] })) },
   then: { required: ['lng', 'lat'] },
 };
+// The terms of an order its owner sets on create and may change later (#1188): the price, the time,
+// the comment. One definition for POST and PATCH, so an edit can never store a value a create
+// would refuse. The maxima match the column domains (NUMERIC(12,2)) so an over-range value is a
+// 400 VALIDATION here, not a pg overflow surfaced as a retryable 500 INTERNAL (which the client's
+// «Повторить» would loop on).
+const ORDER_TERMS = {
+  estimatedPrice: { type: 'number', minimum: 0, maximum: 9999999999.99 },
+  estimatedPriceLabel: { type: 'string', maxLength: 64 },
+  scheduledMode: { type: 'string', enum: ['now', 'later'] },
+  scheduledAt: { type: 'string', maxLength: 64 },
+  scheduledLabel: { type: 'string', maxLength: 64 },
+  comment: { type: 'string', maxLength: 1000 },
+};
 // #1125 R6 — open (CREATED) orders a passenger may have at once.
 const OPEN_ORDER_LIMIT = 5;
 
@@ -102,17 +124,10 @@ export default async function ordersService(app) {
           source: { type: 'string', enum: ['feed', 'map'] },
           pickup: POINT,
           dropoff: POINT,
-          // maxima match the column domains (NUMERIC(10,3) / INTEGER / NUMERIC(12,2)) so an
-          // over-range value is a 400 VALIDATION here, not a pg overflow surfaced as a retryable
-          // 500 INTERNAL (which the client's «Повторить» would loop on).
+          // maxima match the column domains (NUMERIC(10,3) / INTEGER) — see ORDER_TERMS.
           distanceKm: { type: 'number', minimum: 0, maximum: 9999999.999 },
           durationMin: { type: 'integer', minimum: 0, maximum: 2147483647 },
-          estimatedPrice: { type: 'number', minimum: 0, maximum: 9999999999.99 },
-          estimatedPriceLabel: { type: 'string', maxLength: 64 },
-          scheduledMode: { type: 'string', enum: ['now', 'later'] },
-          scheduledAt: { type: 'string', maxLength: 64 },
-          scheduledLabel: { type: 'string', maxLength: 64 },
-          comment: { type: 'string', maxLength: 1000 },
+          ...ORDER_TERMS,
           passenger: { type: ['object', 'null'] },
         },
       },
@@ -168,6 +183,61 @@ export default async function ordersService(app) {
       return reply.code(status).send({ error, code, retryable });
     }
     return reply.code(201).send({ order: serializeOrder(result.row, { viewerId: viewer.userId }) });
+  });
+
+  // PATCH /api/v1/orders/:orderId — #1188: the owner edits an open order in place. Same gates and
+  // the same order lock as the cancel below (and as /select and POST /offers, so an edit can never
+  // land on an order that was selected a moment ago). What the edit does to the offers already
+  // made is the owner's decision of 2026-11-20 (domain/order-terms-change.js): a price change
+  // rejects them, a time / comment change keeps them marked as made for the previous terms.
+  app.patch('/:orderId', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['orderId'],
+        properties: { orderId: { type: 'string', minLength: 1, maxLength: 200 } },
+      },
+      body: {
+        type: 'object',
+        // The route (pickup / dropoff, distance, duration) is not editable: naming it is a 400.
+        additionalProperties: false,
+        minProperties: 1,
+        properties: ORDER_TERMS,
+      },
+    },
+  }, async (req, reply) => {
+    const viewer = await req.resolveUser();
+    if (req.authError) {
+      return reply.code(503).send({ error: 'session lookup failed', code: 'SESSION_LOOKUP_FAILED', retryable: true });
+    }
+    if (!viewer) {
+      return reply.code(401).send({ error: 'authentication required', code: 'UNAUTHENTICATED', retryable: false });
+    }
+    const result = await app.db.tx(async (client) => {
+      const authority = requirePassengerActor(await resolveActorAuthority(client, viewer));
+      if (!authority.ok) return { err: roleAuthorityProblem(authority, 'passenger') };
+      const order = await lockOrderByLegacyId(client, req.params.orderId);
+      if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found', false] };
+      if (String(order.passenger_id) !== String(viewer.userId)) {
+        return { err: [403, 'FORBIDDEN', 'only the order owner can edit it', false] };
+      }
+      // Editable only while it is open: no driver (no assignment, even a canceled one) and CREATED.
+      const notEditable = [409, 'ORDER_NOT_EDITABLE', 'the order is no longer open for changes', false];
+      if (await findAssignmentByOrderId(client, order.id)) return { err: notEditable };
+      if (order.status !== 'CREATED') return { err: notEditable };
+      const change = orderTermsChange(order, req.body);
+      // Nothing differs from the stored order: a repeated request changes nothing, offers included.
+      if (!change.hasWrites) return { row: order };
+      const row = await updateCreatedOrderTerms(client, order.id, change);
+      if (change.priceChanged) await rejectOpenOffersOnOrderPriceChange(client, order.id);
+      else if (change.termsChanged) await markOpenOffersPreviousTerms(client, order.id);
+      return { row };
+    });
+    if (result.err) {
+      const [status, code, error, retryable] = result.err;
+      return reply.code(status).send({ error, code, retryable });
+    }
+    return reply.code(200).send({ order: serializeOrder(result.row, { viewerId: viewer.userId }) });
   });
 
   // POST /api/v1/orders/:orderId/cancel — #1049: the owner withdraws an order before any driver is
