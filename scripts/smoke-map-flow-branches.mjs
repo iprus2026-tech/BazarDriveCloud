@@ -51,6 +51,18 @@ expect('loc-perm: allow (/map?state=default) and manual (/route-picker) are dist
   && /go\('\/route-picker'\)/.test(locPerm)
   && !/action === 'allow'[\s\S]{0,120}go\('\/route-picker'\)/.test(locPerm));
 
+// ── #1183 — driver mode on the passenger map and board ──
+// A driver reaches /map on purpose (the «Карта» chips on /driver-map) but cannot build a passenger
+// route, so the route CTA leads to /driver-map and the manual-address controls are gone; the
+// passenger's /responses board is part of the guarded passenger order flow.
+const routerSrc = read('../public/src/router.js');
+expect('map: in driver mode the route CTA goes to /driver-map and manual controls are removed [#1183]',
+  /const driverView = resolveRole\(user\.get\(\)\) === 'driver';/.test(map)
+    && /if \(driverView\) \{[\s\S]{0,160}\[data-action="manual"\][\s\S]{0,60}el\.remove\(\)/.test(map)
+    && /if \(!driverView\) go\('\/route-picker'\);\s*else go\('\/driver-map'\);/.test(map));
+expect('router: /responses is in the passenger order flow that driver mode sends to /driver-map [#1183]',
+  /const PASSENGER_ORDER_ROUTES = new Set\(\['\/route-picker', '\/route-preview', '\/order-map-draft', '\/responses'\]\);/.test(routerSrc));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
