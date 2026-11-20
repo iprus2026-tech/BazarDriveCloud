@@ -2,7 +2,7 @@ import { listFeedPosts } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
-import { user } from '../state.js';
+import { user, refreshDriverLineOff } from '../state.js';
 import {
   canAcceptOrder,
   canAcceptPassengerRequest,
@@ -291,6 +291,12 @@ export default function feed(renderContext) {
         // BD-SMOKE-ROLE-01 — gate the driver accept on the per-tab effective
         // role so a passenger smoke tab cannot execute the accept flow even if
         // the shared persisted role is driver.
+        // #1185 — the card was rendered «Принять заказ» for a driver on the line; if «На линии» was
+        // switched off since (also in another tab — user.get() is this tab's cache), say so.
+        if (refreshDriverLineOff()) {
+          toast('Вы не на линии. Выйдите на линию, чтобы принять заказ');
+          return;
+        }
         const u = applySmokeRole(user.get());
         const post = posts.find((p) => String(p.id) === String(postId));
         if (!canAcceptPassengerRequest(u, post)) return;

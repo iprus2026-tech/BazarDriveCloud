@@ -2,7 +2,7 @@ import { listFeedPosts } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
-import { user } from '../state.js';
+import { user, refreshDriverLineOff } from '../state.js';
 import {
   canAcceptOrder,
   canAcceptPassengerRequest,
@@ -316,6 +316,12 @@ function runCtaAction(spec, post, detailsHref) {
     return;
   }
   if (spec.kind === 'accept') {
+    // #1185 — «На линии» switched off since the button was drawn (also in another tab): no accept;
+    // re-render so the button becomes «Откликнуться».
+    if (refreshDriverLineOff()) {
+      go(postId ? `/post?id=${encodeURIComponent(postId)}` : '/feed');
+      return;
+    }
     if (!canAcceptPassengerRequest(fresh, post)) return;
     // One ride at a time: an unfinished ride is reopened instead of accepting another.
     const busy = busyDriverRide();

@@ -100,6 +100,7 @@ const readyDriver = {
   role: 'driver', onboarded: true, phone: '+70000000002',
   vehicleMake: 'E2E', vehicleModel: 'TEST', vehiclePlate: 'TEST',
   documentsReady: true, waybillOpen: true, medicalCheckPassed: true,
+  driverOnline: true, // #1185 — the «На линии» toggle gates direct accept
 };
 const pick = new Function('canManageOwnOrder', 'canAcceptOrder', `${pickBody}; return pickCtaSpec;`)(canManageOwnOrder, canAcceptOrder);
 const foreignOrder = { id: 'order-backend', status: 'CREATED', passenger: { isCurrentUser: false } };
@@ -107,6 +108,8 @@ const backendPost = rideOrderToFeedPost(foreignOrder, { authority: 'backend' });
 const backendSpec = pick(backendPost, readyDriver);
 expect('backend foreign order falls through to the respond CTA', backendSpec.kind === 'respond' && backendSpec.label === 'Откликнуться');
 expect('local foreign order retains the direct accept CTA', pick(rideOrderToFeedPost(foreignOrder, { authority: 'local' }), readyDriver).kind === 'accept');
+expect('a ready driver who is not «На линии» gets the offer CTA, not direct accept [#1185]',
+  pick(rideOrderToFeedPost(foreignOrder, { authority: 'local' }), { ...readyDriver, driverOnline: false }).kind === 'respond');
 expect('backend creator retains the own-order CTA', pick(rideOrderToFeedPost({ ...foreignOrder, passenger: { isCurrentUser: true } }, { authority: 'backend' }), readyDriver).kind === 'own');
 expect('legacy local passenger retains the own-order CTA', pick(rideOrderToFeedPost({ id: 'order-legacy', status: 'CREATED' }, { authority: 'local' }), readyDriver).kind === 'own');
 const routes = [];

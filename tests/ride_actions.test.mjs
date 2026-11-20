@@ -37,12 +37,14 @@ function makeLocalStorage() {
 globalThis.localStorage = makeLocalStorage();
 beforeEach(() => { globalThis.localStorage.clear(); });
 
-// A driver that passes isDriverLineReady (role + profile + docs + waybill + medical).
+// A driver that passes isDriverLineReady (role + profile + docs + waybill + medical) and has gone
+// «На линию» (#1185 — the toggle now gates direct accept too).
 const READY_DRIVER = {
   role: 'driver',
   phone: '+7 900 000-00-00',
   vehicleMake: 'Kia', vehicleModel: 'Rio', vehiclePlate: 'A123BC',
   documentsReady: true, waybillOpen: true, medicalCheckPassed: true,
+  driverOnline: true,
 };
 
 // ── BD-RIDE-WAITING-POLICY-01A (#912) — direct policy-contract pin ───────────
@@ -101,6 +103,10 @@ test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order',
   const post = { type: 'trip', passenger: true, price: '900 ₽' };
   assert.equal(canAcceptOrder(post, { ...READY_DRIVER, role: 'passenger' }), false);
   assert.equal(canAcceptOrder(post, { ...READY_DRIVER, waybillOpen: false }), false);
+  // #1185 — line-ready but not «На линии»: no direct accept, whatever the stored value is.
+  assert.equal(canAcceptOrder(post, { ...READY_DRIVER, driverOnline: false }), false);
+  const { driverOnline: _never, ...neverToggled } = READY_DRIVER;
+  assert.equal(canAcceptOrder(post, neverToggled), false, 'a driver who never switched the toggle on');
   assert.equal(canAcceptOrder({ ...post, createdByCurrentUser: true }, READY_DRIVER), false);
   assert.equal(canAcceptOrder(null, READY_DRIVER), false);
   // a non-passenger "trip" post is not acceptable.

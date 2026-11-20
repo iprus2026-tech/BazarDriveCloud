@@ -20,7 +20,7 @@ import { listNearbyOrders, createRideOrder } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
 import { isBackendEnabled } from '../api_config.js';
-import { user, isDriverLineReady } from '../state.js';
+import { user, isDriverLineReady, refreshDriverLineOff } from '../state.js';
 import { getSmokeRole } from '../smoke_role.js';
 import { busyDriverRide } from '../driver_current_trip.js';
 
@@ -29,6 +29,8 @@ const STATE = {
   EMPTY:     'empty',
   ACCEPTED:  'accepted',
   NOT_READY: 'not_ready',
+  // #1185 — line-ready, but the driver's own «На линии» toggle is off.
+  OFFLINE:   'offline',
 };
 
 const READ_STATE = { LOADING: 'loading', LOADED: 'loaded', EMPTY: 'empty', ERROR: 'error' };
@@ -251,6 +253,28 @@ function buildEmptyCard() {
     </div>
     <button class="bd-btn primary map-home__cta" type="button" data-action="create-order">
       Создать тестовый заказ
+    </button>
+    <button class="bd-btn ghost map-home__cta map-home__cta--ghost" type="button" data-action="feed">
+      Вернуться в ленту
+    </button>
+  `;
+  return card;
+}
+
+// #1185 — a line-ready driver whose «На линии» toggle is off sees this instead of the order list:
+// no rows, no accept wiring, one tap to go online.
+function buildOfflineCard() {
+  const card = document.createElement('div');
+  card.className = 'map-home__sheet driver-map__sheet';
+  card.dataset.state = STATE.OFFLINE;
+  card.innerHTML = `
+    <div class="map-home__sheet-grip" aria-hidden="true"></div>
+    <div class="bd-empty">
+      <div class="bd-empty__title">Вы не на линии</div>
+      <p>Выйдите на линию, чтобы видеть заказы рядом и принимать их.</p>
+    </div>
+    <button class="bd-btn primary map-home__cta" type="button" data-action="go-online">
+      Выйти на линию
     </button>
     <button class="bd-btn ghost map-home__cta map-home__cta--ghost" type="button" data-action="feed">
       Вернуться в ленту
@@ -688,13 +712,27 @@ export default function driverMapScreen() {
   // onDriverMapRetry before its declaration is safe — the arrow only runs when
   // the user taps «Повторить».
   const onDriverMapRetry = () => { void renderList(true); };
+  // #1185 — the «На линии» gate of the working surface. Fixture previews (?fixture=…) are not a
+  // driver's shift and skip it. refreshDriverLineOff() first: user.get() is this tab's cache and
+  // would not see the toggle switched off in another tab.
+  const isOffline = () => !fixture && (refreshDriverLineOff() || user.get().driverOnline !== true);
+  function renderOffline() {
+    ++readEpoch;
+    cancelActiveRead();
+    stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
+    renderReadState(READ_STATE.EMPTY, buildOfflineCard());
+    root.dataset.state = STATE.OFFLINE;
+  }
   async function renderList(isRetry) {
+    if (isOffline()) { renderOffline(); return; }
     const epoch = ++readEpoch;
     renderReadState(READ_STATE.LOADING, buildLoadingCard());
     root.dataset.state = STATE.LIST;
     if (fixture === READ_STATE.LOADING) return;
     const live = await readNearbyOrders({ isRetry, onRetry: onDriverMapRetry, epoch });
     if (!isCurrent(epoch) || !keepDriverPrecedence() || !isDriverLineReady(user.get())) return;
+    // The toggle was switched off (here or in another tab) while the read was in flight.
+    if (isOffline()) { renderOffline(); return; }
     if (live === READ_FAILED) {
       renderReadState(READ_STATE.ERROR, buildReadErrorCard());
       return;
@@ -748,6 +786,11 @@ export default function driverMapScreen() {
         await renderReadinessGate(false);
         return;
       }
+      // #1185 — and the same for the «На линии» toggle: off between render and tap → no accept.
+      if (isOffline()) {
+        renderOffline();
+        return;
+      }
       if (busyDriverRide()) {
         showDriverNotice('Сначала завершите текущую поездку — новый заказ можно принять после неё.');
         return;
@@ -769,6 +812,14 @@ export default function driverMapScreen() {
         // the driver can publish a fresh local order to accept.
         go('/order-map-draft');
       }
+    } else if (action === 'go-online') {
+      // #1185 — the same flag the profile toggle writes; readiness is re-checked first.
+      if (!isDriverLineReady(user.get())) {
+        await renderReadinessGate(false);
+        return;
+      }
+      user.set({ driverOnline: true });
+      void renderList(false);
     } else if (action === 'complete-readiness') {
       // Reachable once the accept-time re-check above swaps the gate into this
       // (originally ready) surface — keep the gate's CTA / locked rows live.
