@@ -3,6 +3,7 @@ import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import {
   getOrderById, listOrderOffers, selectOfferOnBackend, cancelOrderOnBackend, DEMO_RESPONSE_KIND, ORDER_NOT_CANCELABLE,
+  cancelOwnLocalOrder, isOwnLocalOrder,
 } from '../mock_api.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED, DRIVER_NOT_ELIGIBLE } from '../role_gate.js';
@@ -1057,10 +1058,11 @@ function renderRoleGateState() {
     </div>`;
 }
 
-// #1049 — the owner withdraws a published order before any driver is selected
-// (backend ON only). An inline confirm inside the order card; the server answer
-// decides: success settles the read region to «Заказ отменён», a refusal stays
-// here with its reason (a retry only where a repeat can help).
+// #1049 — the owner withdraws a published order before any driver is selected.
+// An inline confirm inside the order card; the answer decides: success settles
+// the read region to «Заказ отменён», a refusal stays here with its reason (a
+// retry only where a repeat can help). Backend ON: the server answers. Backend
+// OFF (#1188): the local order store is the record (cancelOwnLocalOrder).
 const ORDER_CANCEL_QUESTION = 'Отменить заказ? Водители перестанут его видеть, их отклики будут отклонены.';
 
 function renderOrderCancelHtml(stage, { message = '', retry = false, profile = false } = {}) {
@@ -1684,6 +1686,11 @@ export default function responses() {
   // #1049 — the owner's order already withdrawn (its local copy follows a
   // confirmed server cancel): no offers read, the canceled state only.
   const orderCanceledOnEntry = backendAuthoritative && !!canonicalOrder && canonicalOrder.status === 'CANCELED';
+  // #1188 — with the backend OFF the owner's own order on this device (never the Inbox demo
+  // order, never a fixture) can be withdrawn too. A withdrawn local order already opens on the
+  // canceled state (localOrderCanceled below).
+  const localOwnOrder = () => !fixture && !backendAuthoritative && !isBackendEnabled()
+    && !request.isDemoOrder && isOwnLocalOrder(canonicalOrder);
 
   // BD-DRIVER-MAP-X-15 — handoff detection. The URL `state` is only a UI hint;
   // once the linked order is actually accepted (a driver took it on DriverMap,
@@ -2020,7 +2027,7 @@ export default function responses() {
   let orderCancelPending = false;
 
   function orderCancelable() {
-    return backendAuthoritative && !fixture && !!canonicalOrder && canonicalOrder.status === 'CREATED'
+    return (backendAuthoritative || localOwnOrder()) && !fixture && !!canonicalOrder && canonicalOrder.status === 'CREATED'
       && !isAccepted && readState !== 'role-gate' && readState !== 'canceled';
   }
 
@@ -2058,7 +2065,12 @@ export default function responses() {
     orderCancelPending = true;
     renderOrderCancel('pending');
     try {
-      await cancelOrderOnBackend(request.orderId);
+      if (backendAuthoritative) {
+        await cancelOrderOnBackend(request.orderId);
+      } else if (!cancelOwnLocalOrder(request.orderId)) {
+        // #1188 — backend OFF: the local copy is no longer an open order of this user.
+        throw Object.assign(new Error('order is not cancelable'), { code: ORDER_NOT_CANCELABLE });
+      }
     } catch (err) {
       orderCancelPending = false;
       if (!document.body.contains(root)) return;
