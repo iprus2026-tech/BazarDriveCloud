@@ -324,7 +324,7 @@ still needs a later server-side guarantee. Account switch (B2-C) remains deferre
 | `public/src/mapbox/map_shell.js` | Pure DOM map placeholder. No SDK, token or network. The only map surface on every screen except `/map`, where it is the pre-hydration paint and fallback for the live `DEFAULT` map. |
 | `public/src/mapbox/mapbox_config.js` | Mapbox on/off gate: token resolution (committed token honored only on the Pages origin, dev override), custom Marfino `MAPBOX_STYLE` and center. No Web Storage. |
 | `public/src/mapbox/mapbox_loader.js` | Lazy loader for the vendored mapbox-gl SDK; resolves `null` with no DOM, script or network work when dark. |
-| `public/src/screens/welcome.js` | First-run entry. Start routes straight to `/driver-map` or `/feed` (or runs a pending action) and never opens `/onboarding`; «Войти» opens `/onboarding`. |
+| `public/src/screens/welcome.js` | First-run entry. Start routes to `/driver-map` or `/feed` (or runs a pending action) and never calls `go('/onboarding')` itself. Backend OFF: the user lands there. Backend ON: the session admission guard (`sessionRouteAdmission()`) sends an anonymous user from those routes to `/onboarding`, which then opens on the phone step because the role was just chosen (`roleAlreadyChosen()`, #1185). «Войти» opens `/onboarding` on the role step. |
 | `public/src/screens/onboarding.js` | Role, phone/OTP mock, profile, vehicle, docs. |
 | `public/src/screens/profile.js` | Guest/passenger profile and driver dashboard (readiness, garage, payouts). |
 | `public/src/screens/feed.js` | Main feed hub and card CTA routing. |
