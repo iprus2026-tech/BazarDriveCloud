@@ -1,11 +1,15 @@
-// BD-FEED-01 — static regression smoke for the Feed inert-control stubs.
+// BD-FEED-01 / #1186 — static regression smoke: the Feed carries no inert control.
 //
-// The per-post kebab («Меню поста») and the like / comment buttons have no backend
-// or target screen yet (search and share became real — pinned below as wired). Rather than leave them as
-// silent dead controls, they are marked `data-noop` and a delegated handler
-// swallows their click — the same explicit-stub convention as rules.js. This
-// smoke pins that every inert control carries data-noop and the handler exists,
-// so a refactor can't silently ship a dead control again.
+// The per-post kebab («Меню поста») and the like / comment buttons had no backend or
+// target screen. They were first marked `data-noop` (explicit stubs, a delegated handler
+// swallowed their click) and this smoke pinned that marking. By the owner's decision
+// (#1186) they are no longer rendered at all until the features exist: a control that
+// looks tappable and does nothing is not shipped. Search and share became real earlier and
+// stay pinned as wired.
+//
+// This smoke now pins the opposite invariant of its first version, on purpose: no
+// `data-noop` control in the feed, no kebab / like / comment markup, and the share
+// action still wired — so a refactor can't silently ship a dead control again.
 //
 // STATIC: reads source and asserts the contract holds. No browser, no DOM.
 
@@ -20,7 +24,7 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
-// ── A. every inert control is marked data-noop ──
+// ── A. the feed's controls: real ones wired, inert ones absent ──
 // BD-FEED-SEARCH-01 — search is a real client-side filter now, not a stub.
 expect('search topbar button is wired (not data-noop) and toggles the search field',
   /<button class="bd-iconbtn"[^>]*id="feed-search-toggle"[^>]*aria-label="Поиск"/.test(feed)
@@ -28,10 +32,15 @@ expect('search topbar button is wired (not data-noop) and toggles the search fie
   && /searchToggle\.addEventListener\('click'/.test(feed));
 expect('search filters the loaded posts and has a no-results reset',
   /postMatchesQuery\(p, q\)/.test(feed) && /data-feed-search-reset/.test(feed));
-expect('per-post kebab («Меню поста») is data-noop',
-  /<button class="feed-card-menu"[^>]*\bdata-noop\b/.test(feed));
-const actionNoop = (feed.match(/<button class="feed-post-actions__btn[^"]*"[^>]*\bdata-noop\b/g) || []).length;
-expect('like / comment buttons are data-noop', actionNoop >= 2, `count=${actionNoop}`);
+// #1186 — the three inert controls are gone, not merely marked.
+expect('the feed renders no data-noop control', !/\bdata-noop\b/.test(feed));
+expect('per-post kebab («Меню поста») is not rendered',
+  !/feed-card-menu/.test(feed) && !/Меню поста/.test(feed));
+expect('like / comment buttons are not rendered (no count-only action, no likes / comments read)',
+  !/aria-label="Нравится/.test(feed) && !/aria-label="Комментарии/.test(feed)
+  && !/p\.likes/.test(feed) && !/p\.comments/.test(feed));
+const actionButtons = (feed.match(/<button class="feed-post-actions__btn[^"]*"/g) || []).length;
+expect('share is the only post action', actionButtons === 1, `count=${actionButtons}`);
 // BD-FEED-SHARE-01 — share is real: system share sheet, clipboard fallback, honest toast.
 expect('share button is wired (data-action="share", not data-noop)',
   /<button class="feed-post-actions__btn feed-post-actions__share"[^>]*data-action="share"/.test(feed)
@@ -39,9 +48,9 @@ expect('share button is wired (data-action="share", not data-noop)',
 expect('share uses navigator.share with a clipboard fallback and ignores a dismissed sheet',
   /navigator\.share\(/.test(feed) && /clipboard\.writeText\(url\)/.test(feed) && /AbortError/.test(feed));
 
-// ── B. a delegated handler swallows data-noop clicks (explicit no-op) ──
-expect('a delegated [data-noop] handler intercepts the click and preventDefaults',
-  /closest\('\[data-noop\]'\)[\s\S]{0,40}preventDefault\(\)/.test(feed));
+// ── B. nothing is left to swallow: no delegated no-op handler either ──
+expect('no delegated [data-noop] click swallower remains',
+  !/closest\('\[data-noop\]'\)/.test(feed));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
