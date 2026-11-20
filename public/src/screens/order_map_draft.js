@@ -8,7 +8,10 @@ import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { user } from '../state.js';
-import { createRideOrder, findOwnOpenOrderForRoute, LOCAL_USER_ID } from '../mock_api.js';
+import {
+  createRideOrder, findOwnOpenOrderForRoute, LOCAL_USER_ID,
+  getOrderById, isOwnLocalOrder, updateOwnOrderTerms, ORDER_NOT_EDITABLE,
+} from '../mock_api.js';
 import { routeEstimateFor } from './route_picker.js';
 import { roleGateCode, ROLE_GATE_TEXT, PROFILE_CTA_LABEL, PASSENGER_ROLE_REQUIRED } from '../role_gate.js';
 import { enrichOrderPointWithCoords, maskPassengerPhone, shortRideNumber } from '../passenger_order_utils.js';
@@ -133,6 +136,12 @@ function scrollFeedbackIntoView(root) {
 
 let formHydrated = false;
 let routeFingerprint = null;
+// #1188 — the order being edited (`/order-map-draft?orderId=<id>`), or null for a new order. While
+// it is set the form holds that order's terms: nothing is read from or written to the new-order
+// draft (FORM_DRAFT_KEY), and the route is fixed — another route is a new order.
+let editing = null;
+// The form last held an edited order's terms: the next new-order entry starts from defaults.
+let formHeldEdit = false;
 // #1185 — the route note last offered as the comment (null: none offered yet). See applyRouteNote().
 let appliedRouteNote = null;
 
@@ -239,6 +248,7 @@ function applyRouteNote(draft) {
 }
 
 function persistForm() {
+  if (editing) return;
   try {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem(FORM_DRAFT_KEY, JSON.stringify({
@@ -323,6 +333,80 @@ export function isPastSchedule(date, time, now = new Date()) {
   return Number.isFinite(at.getTime()) && at.getTime() < now.getTime();
 }
 
+function hashParam(name) {
+  try {
+    const hash = (typeof window !== 'undefined' && window.location && window.location.hash) || '';
+    const qi = hash.indexOf('?');
+    return qi === -1 ? null : new URLSearchParams(hash.slice(qi + 1)).get(name);
+  } catch {
+    return null;
+  }
+}
+
+// #1188 — the comment as the ride reads it: the order's own, else the passenger snapshot's.
+function orderComment(order) {
+  const own = typeof order?.comment === 'string' ? order.comment.trim() : '';
+  if (own) return own;
+  return typeof order?.passenger?.comment === 'string' ? order.passenger.comment.trim() : '';
+}
+
+const ISO_MINUTE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/;
+
+// The form fields an edited order opens with. A «later» order whose time is not a timestamp (a
+// composer order keeps free text) opens with empty date/time fields, so the passenger sets one.
+export function editFormFromOrder(order) {
+  const later = order?.scheduledMode === 'later';
+  const at = later && typeof order.scheduledAt === 'string' ? ISO_MINUTE.exec(order.scheduledAt.trim()) : null;
+  const price = Number(order?.estimatedPrice);
+  return {
+    mode: later ? 'later' : 'now',
+    date: at ? at[1] : '',
+    time: at ? at[2] : '',
+    price: Number.isFinite(price) && price > 0 ? clampPrice(price) : null,
+    comment: orderComment(order).slice(0, COMMENT_LIMIT),
+  };
+}
+
+// What an edit changes, as the PATCH body: only the fields that differ from what the form opened
+// with (editFormFromOrder) — so a value the form had to normalize to show it (a comment over the
+// form's 200 characters, a price over its range or with kopecks) is not sent back unless the
+// passenger edits that very field; an untouched «now» order sends no new time either. Labels are
+// never sent — the record keeper makes the price label and drops a stale time label. `{}` means
+// nothing changed.
+export function orderEditTerms(order, fields, now = new Date()) {
+  const terms = {};
+  const before = editFormFromOrder(order);
+  if (fields.price != null && fields.price !== before.price) {
+    terms.estimatedPrice = fields.price;
+  }
+  if (fields.mode !== before.mode) {
+    terms.scheduledMode = fields.mode;
+    terms.scheduledAt = fields.mode === 'later' ? `${fields.date}T${fields.time}:00` : now.toISOString();
+  } else if (fields.mode === 'later' && `${fields.date}T${fields.time}` !== `${before.date}T${before.time}`) {
+    terms.scheduledAt = `${fields.date}T${fields.time}:00`;
+  }
+  const comment = String(fields.comment ?? '').trim();
+  if (comment !== before.comment.trim()) terms.comment = comment;
+  return terms;
+}
+
+// The route draft of an edited order: its own points; no estimate is shown (the price is the
+// order's, not a new quote).
+function draftFromOrder(order) {
+  return {
+    pickup: order.pickup,
+    dropoff: order.dropoff,
+    distanceKm: isFiniteNumber(order.distanceKm) && order.distanceKm > 0 ? order.distanceKm : null,
+    durationMin: isFiniteNumber(order.durationMin) && order.durationMin > 0 ? order.durationMin : null,
+    estimatedPrice: null,
+  };
+}
+
+// An order this form may edit: the caller's own, still open (no driver, not canceled).
+function editableOrder(order) {
+  return isOwnLocalOrder(order) && order.status === 'CREATED' && isValidPoint(order.pickup) && isValidPoint(order.dropoff);
+}
+
 function validate(draft) {
   const errors = [];
   if (form.mode === 'later') {
@@ -342,7 +426,9 @@ function validate(draft) {
     }
   }
   const price = currentPrice(draft);
-  if (price == null || price <= 0) {
+  // #1188 — an edited order with no budget («По договорённости») may keep having none.
+  const keepsNoBudget = editing && !(Number(editing.estimatedPrice) > 0) && (price == null || price === 0);
+  if ((price == null || price <= 0) && !keepsNoBudget) {
     errors.push({
       key: 'price',
       copy: hasEstimate(draft) ? 'Проверьте цену поездки' : 'Укажите цену поездки',
@@ -353,20 +439,20 @@ function validate(draft) {
 }
 
 // ── Render: topbar ────────────────────────────────────────────
-function renderTopbar(stateLabel, tone = 'draft') {
+function renderTopbar(stateLabel, tone = 'draft', title = 'Новый заказ') {
   const topbar = document.createElement('div');
   topbar.className = 'bd-topbar omd-topbar';
   topbar.dataset.pill = tone;
   topbar.innerHTML = `
     <button class="bd-iconbtn omd-topbar__back" type="button" data-action="back"
-            aria-label="Назад к предпросмотру">
+            aria-label="${editing ? 'Назад к заказу' : 'Назад к предпросмотру'}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M15 18l-6-6 6-6"/>
       </svg>
     </button>
     <div class="bd-topbar__titles">
-      <h1 class="bd-topbar__title">Новый заказ</h1>
+      <h1 class="bd-topbar__title">${escapeHtml(title)}</h1>
       <p class="bd-topbar__sub omd-topbar__sub">${escapeHtml(stateLabel)}</p>
     </div>
     <button class="bd-iconbtn omd-topbar__close" type="button" data-action="close"
@@ -444,15 +530,16 @@ function renderRouteSummary(draft) {
           <div class="omd-route__value">${escapeHtml(draft.dropoff.label)}</div>
         </div>
       </div>
-      <button class="bd-iconbtn omd-route__edit" type="button" data-action="edit-route"
+      ${editing ? '' : `<button class="bd-iconbtn omd-route__edit" type="button" data-action="edit-route"
               aria-label="Изменить маршрут">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 20h9"/>
           <path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4 12.5-12.5z"/>
         </svg>
-      </button>
+      </button>`}
     </div>
+    ${editing ? '<p class="omd-route__fixed">Маршрут заказа не меняется. Для другого маршрута создайте новый заказ.</p>' : ''}
 
     ${hasEstimate(draft) ? `<dl class="omd-metrics" aria-label="Параметры маршрута">
       <div class="omd-metric">
@@ -653,12 +740,31 @@ function renderLockHint() {
         <rect x="3" y="11" width="18" height="11" rx="2"/>
         <path d="M7 11V7a5 5 0 0110 0v4"/>
       </svg>
-      <span>Водитель увидит маршрут, цену и комментарий перед принятием заказа.</span>
+      <span>${editing
+        ? 'Новая цена отклонит отклики водителей — они смогут предложить снова. Новое время или комментарий водители увидят, их отклики останутся.'
+        : 'Водитель увидит маршрут, цену и комментарий перед принятием заказа.'}</span>
     </div>
   `;
 }
 
+// #1188 — the edit form saves in place: no route change, no new-order draft.
+function renderEditActions() {
+  const saving = form.publishing;
+  return `
+    <button class="bd-btn primary omd-publish ${saving ? 'is-loading' : ''}" type="button"
+            data-action="publish" ${saving ? 'disabled aria-busy="true"' : ''}>
+      ${saving
+        ? '<span class="omd-spinner" aria-hidden="true"></span><span>Сохраняем…</span>'
+        : '<span>Сохранить изменения</span>'}
+    </button>
+    <button class="bd-btn ghost omd-draft" type="button" data-action="back" ${saving ? 'disabled' : ''}>
+      <span>Не изменять</span>
+    </button>
+  `;
+}
+
 function renderPublishActions() {
+  if (editing) return renderEditActions();
   const publishing = form.publishing;
   const cta = publishing
     ? `<span class="omd-spinner" aria-hidden="true"></span><span>Публикуем…</span>`
@@ -765,6 +871,31 @@ function renderMissingBody() {
   return card;
 }
 
+// ── Render: an order that cannot be edited (#1188) ────────────
+// A stale link, another user's order, or one that already has a driver or was canceled.
+function renderNotEditableBody(order) {
+  const card = document.createElement('div');
+  card.className = 'omd-card omd-card--missing';
+  const hint = !order
+    ? 'Заказ не найден на этом устройстве.'
+    : (order.status === 'CREATED'
+        ? 'Изменить можно только свой открытый заказ.'
+        : 'У заказа уже есть водитель или он отменён — менять его условия нельзя.');
+  card.innerHTML = `
+    <div class="omd-empty">
+      <h2 class="omd-empty__title" tabindex="-1">Заказ нельзя изменить</h2>
+      <p class="omd-empty__hint">${escapeHtml(hint)}</p>
+    </div>
+    ${order ? `<button class="bd-btn primary omd-publish" type="button" data-action="back">
+      <span>К заказу</span>
+    </button>` : ''}
+    <button class="bd-btn omd-secondary" type="button" data-action="close">
+      <span>В ленту</span>
+    </button>
+  `;
+  return card;
+}
+
 // ── Render: success state ─────────────────────────────────────
 // The card's time line. An order restored from the store (#1181) is not always one this form
 // made: a composer order («Новая публикация») keeps its free-text time in scheduledLabel, and
@@ -858,8 +989,27 @@ function renderSuccessBody(order, { restored = false } = {}) {
 }
 
 // ── Build and event wiring ────────────────────────────────────
-function buildSection({ state, draft, order, restored = false }) {
+function buildSection({ state, draft, order, restored = false, notEditable = undefined }) {
   const fragment = document.createDocumentFragment();
+  if (notEditable !== undefined) {
+    fragment.appendChild(renderTopbar('ЗАКАЗ НЕ ИЗМЕНЁН', 'missing', 'Изменить заказ'));
+    const scroll = document.createElement('div');
+    scroll.className = 'bd-scroll omd-scroll';
+    scroll.dataset.state = 'not-editable';
+    scroll.appendChild(renderNotEditableBody(notEditable));
+    fragment.appendChild(scroll);
+    return fragment;
+  }
+  if (editing) {
+    fragment.appendChild(renderTopbar(`ЗАКАЗ № ${shortRideNumber(editing.id)}`, 'draft', 'Изменить заказ'));
+    const scroll = document.createElement('div');
+    scroll.className = 'bd-scroll omd-scroll';
+    scroll.dataset.state = 'edit';
+    scroll.appendChild(renderMap(draft));
+    scroll.appendChild(renderValidBody(draft));
+    fragment.appendChild(scroll);
+    return fragment;
+  }
   // BD-ORDER-P-01 — pill copy uses natural Russian (no technical
   // request/draft/created/state wording leaking into the UI):
   //   state=success → ОПУБЛИКОВАН (green)
@@ -950,7 +1100,58 @@ async function publishOrder(draft) {
   return order;
 }
 
+// #1188 — the edit form's save: only the changed terms go to the record keeper; with none changed
+// the order is left alone. Success returns to the order's offers.
+function handleSaveEdit(root, draft) {
+  if (form.publishing) return;
+  const order = editing;
+  const errors = validate(draft);
+  form.errors = errors;
+  if (errors.length) {
+    publishFeedback(root, 'warn', errors.some((e) => e.key === 'price') ? 'Проверьте цену заказа.' : 'Проверьте поля заказа.', draft);
+    return;
+  }
+  const back = `/responses?orderId=${encodeURIComponent(order.id)}`;
+  const terms = orderEditTerms(order, {
+    mode: form.mode, date: form.date, time: form.time, price: currentPrice(draft), comment: form.comment,
+  });
+  if (!Object.keys(terms).length) {
+    go(back);
+    return;
+  }
+  publishFeedback(root, 'info', 'Сохраняем изменения…', draft, { publishing: true });
+  (async () => {
+    try {
+      await updateOwnOrderTerms(order.id, terms);
+    } catch (err) {
+      if (editing !== order || !document.body.contains(root)) return;
+      if (roleGateCode(err) === PASSENGER_ROLE_REQUIRED) {
+        publishFeedback(root, 'error', ROLE_GATE_TEXT.orderEdit, draft, { publishing: false, action: 'open-profile' });
+        return;
+      }
+      if (err && err.code === ORDER_NOT_EDITABLE) {
+        publishFeedback(root, 'error', 'Заказ уже нельзя изменить: водитель выбран или заказ отменён.', draft, { publishing: false });
+        return;
+      }
+      const status = Number(err && err.status);
+      publishFeedback(root, 'error', status >= 400 && status < 500 && status !== 408 && status !== 429
+        ? 'Сервер не принял изменения. Проверьте поля заказа.'
+        : 'Не удалось сохранить изменения. Попробуйте ещё раз.', draft, { publishing: false });
+      return;
+    }
+    // The passenger may have left during the request (Back, Close, the tab bar): a late answer
+    // must not take over the screen they went to.
+    if (editing !== order || !document.body.contains(root)) return;
+    form.publishing = false;
+    go(back);
+  })();
+}
+
 function handlePublish(root, draft) {
+  if (editing) {
+    handleSaveEdit(root, draft);
+    return;
+  }
   debugPublish('handlePublish:start', { hasDraft: Boolean(draft), publishing: form.publishing });
   pushDebugTrail('handlePublish', `draft=${draft ? '1' : '0'} publishing=${form.publishing ? '1' : '0'}`);
   // BD-MAP-08 — duplicate tap while a publish is already in flight.
@@ -1047,12 +1248,16 @@ function handleAction(root, action, draft, state) {
     return;
   }
   if (action === 'back') {
-    go('/route-preview');
+    const orderId = editing ? editing.id : hashParam('orderId');
+    go(orderId ? `/responses?orderId=${encodeURIComponent(orderId)}` : '/route-preview');
     return;
   }
   if (action === 'close') {
     lastOrder = null;
     go('/feed');
+    return;
+  }
+  if (editing && (action === 'edit-route' || action === 'pick-route' || action === 'save-draft' || action === 'new-order')) {
     return;
   }
   if (action === 'new-order') {
@@ -1184,10 +1389,45 @@ function handleModeClick(root, target, draft) {
 }
 
 export default function orderMapDraftScreen() {
-  const draft = readRouteDraft();
-  hydrateForm();
-  syncRouteFingerprint(draft);
-  applyRouteNote(draft);
+  // #1188 — `?orderId=` opens that order for editing instead of a new-order form.
+  const editId = hashParam('orderId');
+  editing = null;
+  let editDraft = null;
+  if (editId) {
+    const order = getOrderById(editId);
+    if (!editableOrder(order)) {
+      const root = document.createElement('section');
+      root.className = 'screen screen--order-map-draft';
+      root.dataset.state = 'not-editable';
+      root.appendChild(buildSection({ notEditable: order || null }));
+      root.addEventListener('click', (event) => {
+        const target = event.target && typeof event.target.closest === 'function' ? event.target.closest('[data-action]') : null;
+        if (!target) return;
+        if (target.dataset.action === 'back') go(order ? `/responses?orderId=${encodeURIComponent(order.id)}` : '/feed');
+        else if (target.dataset.action === 'close') go('/feed');
+      });
+      return root;
+    }
+    editing = order;
+    formHeldEdit = true;
+    Object.assign(form, editFormFromOrder(order));
+    editDraft = draftFromOrder(order);
+  }
+  if (!editing && formHeldEdit) {
+    formHeldEdit = false;
+    form.mode = 'now';
+    form.date = '';
+    form.time = '';
+    form.price = null;
+    form.comment = '';
+    formHydrated = false;
+  }
+  const draft = editDraft || readRouteDraft();
+  if (!editing) {
+    hydrateForm();
+    syncRouteFingerprint(draft);
+    applyRouteNote(draft);
+  }
   // Reset transient state on fresh entry.
   form.publishing = false;
   form.errors = [];
@@ -1203,7 +1443,7 @@ export default function orderMapDraftScreen() {
   const state = draft ? STATE.VALID : STATE.MISSING;
   // #1181 — an own order for this route is already open (a reload on the success card, Back
   // from /responses, «new order» with the same route): show it, not a fresh publishable form.
-  const openOrder = ownOpenOrderFor(draft);
+  const openOrder = editing ? null : ownOpenOrderFor(draft);
   if (openOrder) lastOrder = openOrder;
 
   const root = document.createElement('section');
@@ -1232,7 +1472,7 @@ export default function orderMapDraftScreen() {
         ? target.closest('[data-action]')
         : null;
       const action = actionTarget ? actionTarget.dataset.action : null;
-      const liveDraft = readRouteDraft();
+      const liveDraft = editing ? null : readRouteDraft();
       const effectiveDraft = liveDraft || renderedDraft;
       if (effectiveDraft) renderedDraft = effectiveDraft;
       const effectiveState = effectiveDraft ? STATE.VALID : STATE.MISSING;
@@ -1285,7 +1525,7 @@ export default function orderMapDraftScreen() {
 
   root.addEventListener('click', (event) => {
     try {
-      const liveDraft = readRouteDraft();
+      const liveDraft = editing ? null : readRouteDraft();
       const effectiveDraft = liveDraft || renderedDraft;
       if (effectiveDraft) renderedDraft = effectiveDraft;
       const effectiveState = effectiveDraft ? STATE.VALID : STATE.MISSING;

@@ -365,7 +365,9 @@ function loadResponsesForOrder(orderId) {
   return Object.values(map).filter((r) =>
     r && typeof r === 'object'
     && r.kind === 'passenger_response'
-    && String(r.orderId || '') === id);
+    && String(r.orderId || '') === id
+    // #1188 — an offer rejected by the owner's price change is not an offer any more.
+    && r.rejectedBy !== 'passenger_edit');
 }
 
 // BD-LIFE-05 — Build a flat, type-guarded driverSnapshot view of one stored
@@ -563,6 +565,8 @@ export function mapResponseToDriverCard(response, request, index) {
                   ? PICKUP_TIMING_RANK[response.pickupTiming] : 1,
     note:       core.note,
     isBest:     index === 0,
+    // #1188 — made before the owner changed the time or the comment (backend OFF).
+    previousTerms: Boolean(response && response.previousTermsAt),
   };
 }
 
@@ -716,6 +720,8 @@ function mapServerOfferToDriverCard(offer, request, index) {
     etaRank:    1,
     note:       pickStr(offer && offer.message),
     isBest:     index === 0,
+    // #1188 — the owner changed the time or the comment after this offer was made.
+    previousTerms: Boolean(offer && offer.previousTermsAt),
   };
 }
 
@@ -814,12 +820,15 @@ function renderDriverCard(driver, selectedDriverId, declinedFlag) {
            </div>`
         : '');
 
-  const noteBlock = driver.note
+  const noteBlock = (driver.note
     ? `<div class="responses__driver-note">
          <span class="responses__driver-note-icon" aria-hidden="true">${QUOTE_SVG}</span>
          <span class="responses__driver-note-text">${escapeHtml(driver.note)}</span>
        </div>`
-    : '';
+    : '')
+    // #1188 — an offer made before the owner changed the time or the comment stays selectable;
+    // the passenger is told what it answered.
+    + (driver.previousTerms ? '<p class="responses__driver-previous-terms">Отклик на прежние условия — время или комментарий заказа с тех пор изменились.</p>' : '');
 
   let actionsBlock;
   if (isDeclined) {
@@ -1089,7 +1098,11 @@ function renderOrderCancelHtml(stage, { message = '', retry = false, profile = f
         ${primary}
       </div>`;
   }
-  return '<button type="button" class="responses__cancel-order" data-order-action="ask-cancel">Отменить заказ</button>';
+  // #1188 — the owner may also change the price, the time or the comment of the open order.
+  return `<div class="responses__order-manage">
+      <button type="button" class="responses__edit-order" data-order-action="edit-order">Изменить заказ</button>
+      <button type="button" class="responses__cancel-order" data-order-action="ask-cancel">Отменить заказ</button>
+    </div>`;
 }
 
 // #1049 — the read region after a confirmed cancel (or on entry to an order
@@ -1407,6 +1420,7 @@ function renderOffer(driver) {
           <span class="responses__driver-note-icon" aria-hidden="true">${QUOTE_SVG}</span>
           <span class="responses__driver-note-text">${escapeHtml(driver.note || 'Готов подъехать к точке подачи.')}</span>
         </div>
+        ${driver.previousTerms ? '<p class="responses__driver-previous-terms">Отклик на прежние условия — время или комментарий заказа с тех пор изменились.</p>' : ''}
         <div class="responses__offer-actions">
           <button type="button" class="bd-btn primary responses__offer-select" data-action="select">
             ${CHECK_SVG}
@@ -2122,6 +2136,8 @@ export default function responses() {
         focusOrderCancel('[data-order-action="ask-cancel"]');
       } else if (action === 'open-profile') {
         go('/profile');
+      } else if (action === 'edit-order') {
+        if (request.orderId && orderCancelable()) go(`/order-map-draft?orderId=${encodeURIComponent(request.orderId)}`);
       } else if (action === 'confirm-cancel') {
         void cancelOrder();
       }

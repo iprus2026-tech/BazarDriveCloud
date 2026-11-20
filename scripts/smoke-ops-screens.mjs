@@ -1130,6 +1130,8 @@ const BACKEND_AWARE_HELPERS = [
   // #1188 — its backend-OFF counterpart. It makes no server call; it is mode-aware (it refuses to
   // touch the local copy while the backend is ON), which is why its guard lands it on this list.
   'cancelOwnLocalOrder',
+  // #1188 — the owner's order edit (/order-map-draft?orderId=): PATCH ON, the local store OFF.
+  'updateOwnOrderTerms',
   // #1070 — the payouts receipts and the driver's «сегодня» from the server history.
   'listDriverReceiptsResolved', 'loadDriverTodayStats',
   // #1115 — the passenger's «Квитанция о поездке» from their own history (GET /history ON).

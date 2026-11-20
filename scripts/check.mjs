@@ -539,6 +539,18 @@ if (exists(orderLifecycleClientSmoke)) {
   }
 }
 
+// Order edit, client side (#1188): the owner changes the price, the time or the comment of an open
+// order — the seam in both modes, the form's rules, the /responses entry and previous-terms mark.
+const orderEditClientSmoke = path.join(root, 'scripts', 'smoke-order-edit-client.mjs');
+if (exists(orderEditClientSmoke)) {
+  try {
+    execFileSync(process.execPath, [orderEditClientSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-edit-client.mjs failed\n${msg}`);
+  }
+}
+
 // Slice 4c client (#1052, #1070 p.4): the driver's passenger row is the server's passenger (the
 // order comment as the note, no demo note/rating/luggage); no mock fare with the backend ON.
 const rideOrderCommentClientSmoke = path.join(root, 'scripts', 'smoke-ride-order-comment-client.mjs');
