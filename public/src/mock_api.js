@@ -82,9 +82,11 @@ export const FEED_POSTS_V2 = [
     role: null,
     time: '26 ч',
     title: 'Camry 70 — зимняя резина Bridgestone 215/55 R17',
-    body: 'Использовалась один сезон. Износ 5%. Самовывоз с СТО на Сейфуллина.',
-    price: '45 000 ₸',
-    tags: ['запчасти', 'астана'],
+    // #1185 — the demo feed is one city and one currency (Москва, ₽): this listing used to be
+    // priced in ₸ with an Astana pickup, next to ruble fares.
+    body: 'Использовалась один сезон. Износ 5%. Самовывоз с СТО на Варшавском шоссе.',
+    price: '28 000 ₽',
+    tags: ['запчасти', 'москва'],
     likes: 5,
     comments: 2,
   },
