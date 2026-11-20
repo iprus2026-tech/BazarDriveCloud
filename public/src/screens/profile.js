@@ -3731,8 +3731,17 @@ function renderDriver(root, u, logout, ownsScreen, switchRole) {
       return;
     }
 
-    if (e.target.closest('#pf2-ip-open-shift') || e.target.closest('#pf2-ip-check-ready')) {
+    const checkReadyBtn = e.target.closest('#pf2-ip-check-ready');
+    if (e.target.closest('#pf2-ip-open-shift') || checkReadyBtn) {
       maybeShowPermitWarn();
+      // #1185 — with the permit already marked the warning stays hidden, and «Проверить отметки»
+      // used to do nothing at all. Same transient label as its sibling stubs.
+      if (checkReadyBtn && user.get().taxiPermit && checkReadyBtn.dataset.busy !== '1') {
+        checkReadyBtn.dataset.busy = '1';
+        const orig = checkReadyBtn.innerHTML;
+        checkReadyBtn.textContent = 'Разрешение отмечено';
+        setTimeout(() => { checkReadyBtn.innerHTML = orig; delete checkReadyBtn.dataset.busy; }, 1500);
+      }
       return;
     }
 

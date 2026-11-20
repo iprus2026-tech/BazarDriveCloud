@@ -2,6 +2,7 @@ import { go } from '../router.js';
 import { isBackendEnabled } from '../api_config.js';
 import { createLogoutControl } from '../auth_logout.js';
 import { getThemePref, setThemePref } from '../theme.js';
+import { user } from '../state.js';
 
 // BD-SETTINGS-01 — Settings screen. Net-new surface ported from the Cloud
 // Design render gate (st-*/bd-* prototype) into repo-native settings__*
@@ -211,19 +212,29 @@ export default function settings(renderContext, { logout } = {}) {
     btn.addEventListener('click', () => paintThemePref(setThemePref(btn.dataset.themePref)));
   });
 
-  // ── Push toggle reveals the Звук row; both are demo toggles ─
+  // ── Push toggle reveals the Звук row ─────────────────────
+  // #1185 — the toggle is the stored `notificationsEnabled` preference (the same flag the welcome
+  // permissions step and the Inbox prompt write), read on entry and saved on every tap, so it
+  // survives a reload. Delivery itself stays demo (see the note under the card); «Звук» is a
+  // session-only demo toggle.
   const pushRow = root.querySelector('#settings-push-row');
   const pushToggle = root.querySelector('#settings-push-toggle');
   const soundRow = root.querySelector('#settings-sound-row');
   const soundToggle = root.querySelector('#settings-sound-toggle');
-  pushRow.addEventListener('click', () => {
-    const on = pushToggle.classList.toggle('settings__toggle--on');
+  function paintPush(on) {
+    pushToggle.classList.toggle('settings__toggle--on', on);
     pushRow.setAttribute('aria-pressed', on ? 'true' : 'false');
     soundRow.hidden = !on;
     if (!on) {
       soundToggle.classList.remove('settings__toggle--on');
       soundRow.setAttribute('aria-pressed', 'false');
     }
+  }
+  paintPush(user.get().notificationsEnabled === true);
+  pushRow.addEventListener('click', () => {
+    const on = !pushToggle.classList.contains('settings__toggle--on');
+    user.set({ notificationsEnabled: on });
+    paintPush(on);
   });
   soundRow.addEventListener('click', () => {
     const on = soundToggle.classList.toggle('settings__toggle--on');
