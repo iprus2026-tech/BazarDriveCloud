@@ -311,6 +311,12 @@ await check('the driver\'s own offer: current, made for the previous terms, or r
   // Backend OFF the local offer itself carries the outcome.
   assert.equal(standing(mine({ previousTermsAt: '2026-11-20T11:00:00.000Z' }), post()), 'terms-changed');
   assert.equal(standing(mine({ status: 'REJECTED', rejectedBy: 'passenger_edit' }), post()), 'price-changed');
+  // Backend ON the server's time for the send wins over the device's (Codex P2): an offer that
+  // reached the server after the price edit was accepted for the new price.
+  assert.equal(standing(mine({ serverSentAt: '2026-11-20T11:00:00.500Z' }),
+    post({ priceChangedAt: '2026-11-20T11:00:00.000Z', termsChangedAt: '2026-11-20T11:00:00.000Z' })), 'current');
+  assert.equal(standing(mine({ serverSentAt: '2026-11-20T10:59:59.000Z' }),
+    post({ priceChangedAt: '2026-11-20T11:00:00.000Z' })), 'price-changed');
   // Any other rejection, a withdrawn offer, another post's offer: no own offer here.
   assert.equal(standing(mine({ status: 'REJECTED', rejectedBy: 'passenger' }), post()), null);
   assert.equal(standing(mine({ status: 'WITHDRAWN' }), post()), null);
@@ -333,6 +339,9 @@ await check('feed, post detail and /respond read the offer against the post\'s e
   assert.match(respondSource, /const existingOffer = ownOffer && !rejectedOffer \? ownOffer\.offer : null;/);
   assert.match(respondSource, /Пассажир изменил цену — ваш прежний отклик/);
   assert.match(respondSource, /Пассажир изменил время или комментарий после вашего отклика/);
+  // The live send keeps the server's time for it.
+  assert.match(respondSource, /const serverOffer = await submitOfferToBackend\(\{/);
+  assert.match(respondSource, /if \(serverOffer && typeof serverOffer\.updatedAt === 'string'\) response\.serverSentAt = serverOffer\.updatedAt;/);
 });
 
 if (failures.length) {

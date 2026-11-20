@@ -859,7 +859,7 @@ function renderPassengerRide(root, post) {
     // either way (off-path + the /chat?responseId handoff rely on it).
     if (isBackendEnabled() && canonicalLink.orderId) {
       try {
-        await submitOfferToBackend({
+        const serverOffer = await submitOfferToBackend({
           orderId:    canonicalLink.orderId,
           driverName: driverSnapshot.name,
           car:        driverSnapshot.car,
@@ -870,6 +870,9 @@ function renderPassengerRide(root, post) {
           vehicleColor: carColor,
           vehiclePlate: pickStr(vehicle?.plate),
         });
+        // #1188 — the server's own time for this send: the order's edit stamps are compared with it
+        // (ownOfferOnPost), not with this device's clock before the request went out.
+        if (serverOffer && typeof serverOffer.updatedAt === 'string') response.serverSentAt = serverOffer.updatedAt;
       } catch (err) {
         setLoading(false);
         // BD-AUTH-POLICY-01B-C (K3-2): a passenger-mode (or ungranted) session is refused with

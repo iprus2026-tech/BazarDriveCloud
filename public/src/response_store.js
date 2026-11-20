@@ -78,7 +78,10 @@ export function resolveResponseById(responseId) {
 //   'current'       — made for the order as it stands.
 // Backend OFF the local offer itself says so (reconcileResponsesAfterOrderEdit); with the backend
 // ON the driver cannot read the offer back, so the post's edit stamps (the public projection's
-// termsChangedAt / priceChangedAt) are compared with the time the offer was sent from this device.
+// termsChangedAt / priceChangedAt) are compared with the server's time for the send
+// (`serverSentAt`, the offer's updatedAt the POST answered with — one clock with the stamps, and
+// right even when an edit committed while the offer was in transit); an offer without it (backend
+// OFF, or saved before #1188) falls back to the device time it was sent at.
 // Returns { offer, standing } or null when there is no own offer on the post.
 export function ownOfferOnPost(post) {
   const id = post && (typeof post.id === 'string' || typeof post.id === 'number') ? String(post.id).trim() : '';
@@ -87,7 +90,7 @@ export function ownOfferOnPost(post) {
   if (!r || String(r.requestId) !== id || !(Number(r.driverPrice) > 0)) return null;
   if (r.status === 'REJECTED' && r.rejectedBy === 'passenger_edit') return { offer: r, standing: 'price-changed' };
   if (r.status !== 'SENT') return null;
-  const sentAt = Date.parse(r.createdAt);
+  const sentAt = Date.parse(typeof r.serverSentAt === 'string' ? r.serverSentAt : r.createdAt);
   const after = (stamp) => typeof stamp === 'string' && Number.isFinite(sentAt) && Date.parse(stamp) > sentAt;
   if (after(post.priceChangedAt)) return { offer: r, standing: 'price-changed' };
   if (r.previousTermsAt || after(post.termsChangedAt)) return { offer: r, standing: 'terms-changed' };
