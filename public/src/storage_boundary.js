@@ -60,6 +60,7 @@
 //                                     Order Detail 01D-2A passenger-selection
 //                                     overlay).
 //   bazardrive.myposts.v1           → mock_api.js
+//   bazardrive.inbox_read.v1        → mock_api.js (ids of opened Inbox items)
 //   profileTripDemo                 → passenger Profile demo override
 //
 // Intentionally NOT cleared (not user-scoped):
@@ -103,6 +104,7 @@ import { clearRouteDraftStore } from './screens/route_picker.js';
 import { clearOrderFormDraftStore } from './screens/order_map_draft.js';
 import {
   clearMyPostsStore,
+  clearInboxReadStore,
   clearRideOrdersStore,
   clearDriverReceiptsStore,
 } from './mock_api.js';
@@ -156,6 +158,7 @@ export function clearUserScopedCachesPreservingAuth() {
   clearRideOrdersStore();
   clearDriverReceiptsStore();
   clearMyPostsStore();
+  clearInboxReadStore();
   clearDriverOfferStore();
   clearTripDemoMode();
   return true;

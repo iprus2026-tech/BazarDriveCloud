@@ -62,6 +62,8 @@ import {
   saveRideHistoryEntry,
   buildDriverHistoryEntry,
   loadRideHistory,
+  markDriverTripClosed,
+  isDriverTripClosed,
 } from '../ride_history.js';
 import {
   openDriverCancelSheet,
@@ -1812,8 +1814,11 @@ export default function activeRide({ isCurrent = () => true } = {}) {
     }
     sheet.innerHTML = '';
     openDriverEarningsSheet(root, {
-      state: earningsState,
+      // #1185 — a trip the driver already closed reopens on the closed card, not on the summary
+      // with «Закрыть поездку» again. An explicit ?state= / ?payment= still wins.
+      state: earningsState || (isDriverTripClosed(ride.tripId) ? 'closed' : earningsState),
       payload,
+      onClosed: () => { markDriverTripClosed(ride.tripId); },
       onClose:   () => go('/driver-map'),
       onOrders:  () => go('/driver-map'),
       onFeed:    () => go('/feed'),

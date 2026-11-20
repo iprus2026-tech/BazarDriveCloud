@@ -3,6 +3,7 @@ import {
   INBOX_STATUS_LABEL,
   INBOX_STATUS_TONE,
   ensureDemoResponseOrder,
+  markInboxItemRead,
 } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
@@ -661,6 +662,14 @@ export default function inbox() {
     go(href);
   }
 
+  // #1185 — opening an item (its card or either of its buttons) marks it read before leaving, so
+  // the unread count is lower when the user comes back, and after a reload.
+  function markOpened(el) {
+    if (fixtureMode) return;
+    const card = el && el.closest('[data-inbox-id]');
+    if (card) markInboxItemRead(card.dataset.inboxId);
+  }
+
   promptHost.addEventListener('click', (e) => {
     const promptBtn = e.target.closest('[data-notif-prompt]');
     if (!promptBtn) return;
@@ -707,6 +716,7 @@ export default function inbox() {
     const actionBtn = e.target.closest('[data-inbox-action]');
     if (actionBtn) {
       e.stopPropagation();
+      if (actionBtn.dataset.href) markOpened(actionBtn);
       openHref(actionBtn.dataset.href);
       return;
     }
@@ -717,6 +727,7 @@ export default function inbox() {
     }
     const card = e.target.closest('[data-inbox-id]');
     if (!card) return;
+    if (card.dataset.href) markOpened(card);
     openHref(card.dataset.href);
   });
 
@@ -731,6 +742,7 @@ export default function inbox() {
     const card = e.target.closest('[data-inbox-id]');
     if (!card || e.target.closest('button')) return;
     e.preventDefault();
+    if (card.dataset.href) markOpened(card);
     openHref(card.dataset.href);
   });
 

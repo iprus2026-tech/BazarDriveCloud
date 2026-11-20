@@ -356,9 +356,47 @@ export const INBOX_STATUS_TONE = {
   CANCELED:        'danger',
 };
 
+// #1185 — which inbox items the user has opened. The items themselves are still the demo seed
+// (real data is #1190); only the ids of opened ones are stored, so «непрочитанных» goes down when
+// an item is opened and stays down after a reload. User-scoped: cleared at the auth boundary.
+const INBOX_READ_KEY = 'bazardrive.inbox_read.v1';
+const INBOX_READ_MAX = 200;
+
+function readInboxReadIds() {
+  try {
+    const raw = localStorage.getItem(INBOX_READ_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string' && id) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function markInboxItemRead(id) {
+  if (typeof id !== 'string' || !id) return false;
+  const ids = readInboxReadIds();
+  if (ids.includes(id)) return true;
+  ids.push(id);
+  try {
+    localStorage.setItem(INBOX_READ_KEY, JSON.stringify(ids.slice(-INBOX_READ_MAX)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearInboxReadStore() {
+  try { localStorage.removeItem(INBOX_READ_KEY); } catch {}
+}
+
 export async function listInboxItems() {
   // Return a defensive copy so screens cannot mutate the seed.
-  return INBOX_ITEMS_V1.map((item) => ({ ...item }));
+  const read = new Set(readInboxReadIds());
+  return INBOX_ITEMS_V1.map((item) => {
+    const copy = { ...item };
+    if (read.has(copy.id)) copy.unread = false;
+    return copy;
+  });
 }
 
 // ── Legacy posts (classic announcements board) ─────────────────

@@ -126,6 +126,13 @@ expect('syncHeader updates subtitle + status chip + dataset.state',
   && /\.responses__sub/.test(responses)
   && /renderStatusChip\(liveStatus, \{ announce: readState !== 'loading' \}\)/.test(responses));
 
+// ── #1185 — the counter follows declines ────────────────────
+expect('the response counter shows the offers still on the table, with the declined count beside it',
+  /const hiddenCount = drivers\.filter\(\(d\) => declined\.has\(d\.id\)\)\.length;/.test(responses)
+    && /const activeCount = drivers\.length - hiddenCount;/.test(responses)
+    && /responses__count-badge">\$\{escapeHtml\(String\(activeCount\)\)\}/.test(responses)
+    && !/responses__count-badge">\$\{escapeHtml\(String\(drivers\.length\)\)\}/.test(responses));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

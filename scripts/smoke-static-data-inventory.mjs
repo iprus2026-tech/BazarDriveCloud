@@ -61,6 +61,7 @@ const CLEARED = [
   'bazardrive.order_form.v1', 'bazardrive.ride_orders.v1',
   'bazardrive.driver_receipts.v1', 'bazardrive.driver_offers.v1',
   'bazardrive.order_overlay.v1', 'bazardrive.myposts.v1', 'profileTripDemo',
+  'bazardrive.inbox_read.v1',
 ];
 // NOT_CLEARED — untouched by clearUserScopedStorage().
 //   documented:true  → must appear in storage_boundary.js's audit comment.
