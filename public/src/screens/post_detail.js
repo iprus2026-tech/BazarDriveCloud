@@ -355,7 +355,7 @@ function renderPost(root, post, guestReadOnly = false) {
   // their offer on the button; the same action opens it for editing. Applied here, outside the
   // pure resolver: it reads the device-local response store.
   const ownOffer = pickedCta.kind === 'respond' && post.type === 'trip' && post.passenger === true && isDriverMode(u)
-    ? ownOfferLabel(post.id) : '';
+    ? ownOfferLabel(post) : '';
   const ctaSpec = ownOffer ? { ...pickedCta, label: ownOffer } : pickedCta;
 
   const metaLine = [

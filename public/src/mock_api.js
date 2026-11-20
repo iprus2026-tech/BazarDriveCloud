@@ -1341,6 +1341,10 @@ export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
     rideOrderStatus: order.status,
     createdAt: Date.parse(order.createdAt) || Date.now(),
     createdByCurrentUser,
+    // #1188 — when the owner last changed the terms / the price (timestamps only). A driver's own
+    // offer older than them was made for the previous terms, or rejected by the new price.
+    termsChangedAt: typeof order.termsChangedAt === 'string' ? order.termsChangedAt : null,
+    priceChangedAt: typeof order.priceChangedAt === 'string' ? order.priceChangedAt : null,
   };
 }
 

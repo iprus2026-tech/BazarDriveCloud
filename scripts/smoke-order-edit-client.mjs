@@ -282,6 +282,68 @@ await check('the form: ?orderId= opens the edit mode; the route and the new-orde
   assert.ok(save.lastIndexOf('!document.body.contains(root)) return;') < save.lastIndexOf('go(back);'));
 });
 
+// ── F. the driver's side: what became of their own offer ──────────────────────
+const responseStore = await import('../public/src/response_store.js');
+const respondSource = read('../public/src/screens/respond.js');
+
+await check('the feed projection carries the order\'s edit stamps (timestamps only)', () => {
+  const base = { id: 'order-x', status: 'CREATED', pickup: { label: 'A' }, dropoff: { label: 'B' }, createdAt: '2026-11-20T09:00:00.000Z' };
+  const post = mockApi.rideOrderToFeedPost({ ...base, termsChangedAt: '2026-11-20T10:00:00.000Z', priceChangedAt: '2026-11-20T10:00:00.000Z' });
+  assert.deepEqual([post.termsChangedAt, post.priceChangedAt], ['2026-11-20T10:00:00.000Z', '2026-11-20T10:00:00.000Z']);
+  const plain = mockApi.rideOrderToFeedPost(base);
+  assert.deepEqual([plain.termsChangedAt, plain.priceChangedAt], [null, null]);
+});
+
+await check('the driver\'s own offer: current, made for the previous terms, or rejected by the new price', () => {
+  const sent = '2026-11-20T10:00:00.000Z';
+  const mine = (extra = {}) => ({ id: 'resp_order-x', kind: 'passenger_response', requestId: 'order-x', orderId: 'order-x', status: 'SENT', driverPrice: 950, createdAt: sent, ...extra });
+  const post = (extra = {}) => ({ id: 'order-x', termsChangedAt: null, priceChangedAt: null, ...extra });
+  const standing = (offer, p) => {
+    storage.set(RESPONSES_KEY, JSON.stringify({ [offer.id]: offer }));
+    const own = responseStore.ownOfferOnPost(p);
+    return own ? own.standing : null;
+  };
+  assert.equal(standing(mine(), post()), 'current');
+  // Edits before the offer do not count; edits after it do. The price wins over the terms.
+  assert.equal(standing(mine(), post({ termsChangedAt: '2026-11-20T09:00:00.000Z', priceChangedAt: '2026-11-20T09:00:00.000Z' })), 'current');
+  assert.equal(standing(mine(), post({ termsChangedAt: '2026-11-20T11:00:00.000Z' })), 'terms-changed');
+  assert.equal(standing(mine(), post({ termsChangedAt: '2026-11-20T11:00:00.000Z', priceChangedAt: '2026-11-20T11:00:00.000Z' })), 'price-changed');
+  // Backend OFF the local offer itself carries the outcome.
+  assert.equal(standing(mine({ previousTermsAt: '2026-11-20T11:00:00.000Z' }), post()), 'terms-changed');
+  assert.equal(standing(mine({ status: 'REJECTED', rejectedBy: 'passenger_edit' }), post()), 'price-changed');
+  // Backend ON the server's time for the send wins over the device's (Codex P2): an offer that
+  // reached the server after the price edit was accepted for the new price.
+  assert.equal(standing(mine({ serverSentAt: '2026-11-20T11:00:00.500Z' }),
+    post({ priceChangedAt: '2026-11-20T11:00:00.000Z', termsChangedAt: '2026-11-20T11:00:00.000Z' })), 'current');
+  assert.equal(standing(mine({ serverSentAt: '2026-11-20T10:59:59.000Z' }),
+    post({ priceChangedAt: '2026-11-20T11:00:00.000Z' })), 'price-changed');
+  // Any other rejection, a withdrawn offer, another post's offer: no own offer here.
+  assert.equal(standing(mine({ status: 'REJECTED', rejectedBy: 'passenger' }), post()), null);
+  assert.equal(standing(mine({ status: 'WITHDRAWN' }), post()), null);
+  assert.equal(standing(mine({ requestId: 'other' }), post()), null);
+
+  storage.set(RESPONSES_KEY, JSON.stringify({ resp_x: mine({ id: 'resp_x', requestId: 'x' }) }));
+  const label = (p) => responseStore.ownOfferLabel({ id: 'x', ...p });
+  assert.equal(label({}), `Вы откликнулись · ${new Intl.NumberFormat('ru-RU').format(950)} ₽`);
+  assert.match(label({ termsChangedAt: '2026-11-20T11:00:00.000Z' }), /^Условия изменились · ваш отклик /);
+  assert.equal(label({ priceChangedAt: '2026-11-20T11:00:00.000Z' }), 'Цена изменилась · откликнуться снова');
+  assert.equal(responseStore.ownOfferLabel('x'), `Вы откликнулись · ${new Intl.NumberFormat('ru-RU').format(950)} ₽`, 'a bare id still reads the offer');
+  assert.equal(responseStore.ownOfferLabel({ id: 'none' }), '');
+});
+
+await check('feed, post detail and /respond read the offer against the post\'s edits', () => {
+  assert.match(read('../public/src/screens/feed.js'), /isDriverMode\(u\) \? ownOfferLabel\(p\) : ''/);
+  assert.match(read('../public/src/screens/post_detail.js'), /\? ownOfferLabel\(post\) : ''/);
+  // A price-rejected offer is a fresh bid (no prefill of the old price), and the form says why.
+  assert.match(respondSource, /const rejectedOffer = offerStanding === 'price-changed' \? ownOffer\.offer : null;/);
+  assert.match(respondSource, /const existingOffer = ownOffer && !rejectedOffer \? ownOffer\.offer : null;/);
+  assert.match(respondSource, /Пассажир изменил цену — ваш прежний отклик/);
+  assert.match(respondSource, /Пассажир изменил время или комментарий после вашего отклика/);
+  // The live send keeps the server's time for it.
+  assert.match(respondSource, /const serverOffer = await submitOfferToBackend\(\{/);
+  assert.match(respondSource, /if \(serverOffer && typeof serverOffer\.updatedAt === 'string'\) response\.serverSentAt = serverOffer\.updatedAt;/);
+});
+
 if (failures.length) {
   console.error(`FAIL ${failures.length} expectation(s):`);
   for (const f of failures) console.error(`  - ${f}`);

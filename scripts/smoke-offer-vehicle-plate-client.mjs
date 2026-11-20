@@ -95,7 +95,7 @@ function respondHarness({ backend = true, submit } = {}) {
     loadResource: (fn) => fn(),
     resolveActiveGarageVehicle: () => ({ model: 'Kia Rio', color: 'Серый', plate: 'А 108 ОР 77' }),
     // #1176 — respond.js imports this from response_store.js; these cases have no earlier offer.
-    findOwnOfferForPost: () => null,
+    ownOfferOnPost: () => null,
     setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
     window: { location: { hash: '#/respond' } },
     document: { body: { contains: () => true }, createElement: (tag) => new FakeElement(tag) },
