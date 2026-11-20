@@ -146,6 +146,20 @@ function docsReadyOver(keys, docs) {
   });
 }
 
+// #1185 — a shift document and its line-readiness mark are one fact: «Путевой лист» is
+// `waybillOpen`, «Медосмотр» is `medicalCheckPassed`. The line gate (isDriverLineReady) reads the
+// marks, the Documents tab writes the documents, so every writer of a shift document moves the
+// mark with it — setDocumentStatus() below, and onboarding's finish through this helper.
+const SHIFT_DOC_MARKS = { waybill: 'waybillOpen', medicalCheck: 'medicalCheckPassed' };
+
+export function shiftMarksFromDocuments(docs) {
+  const marks = {};
+  for (const [key, mark] of Object.entries(SHIFT_DOC_MARKS)) {
+    marks[mark] = docsReadyOver([key], docs);
+  }
+  return marks;
+}
+
 // documentsReady = registration readiness: only the REGISTRATION_DOCS (dl /
 // osago / permit) must be ready. Mirrors the обязательные set in the
 // onboarding UI so finishing onboarding with the three required docs does not
@@ -969,6 +983,9 @@ export function setDocumentStatus(key, status) {
   load();
   const docs = cache.driverDocuments || {};
   const next = { ...docs, [key]: { ...(docs[key] || {}), status } };
-  cache = normalize({ ...cache, driverDocuments: next });
+  // A shift document carries its readiness mark with it, both ways (#1185).
+  const mark = SHIFT_DOC_MARKS[key];
+  const marks = mark ? { [mark]: shiftMarksFromDocuments(next)[mark] } : {};
+  cache = normalize({ ...cache, ...marks, driverDocuments: next });
   persist();
 }

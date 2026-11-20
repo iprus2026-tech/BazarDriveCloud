@@ -1,4 +1,4 @@
-import { user, REQUIRED_DOCS } from '../state.js';
+import { user, REQUIRED_DOCS, shiftMarksFromDocuments } from '../state.js';
 import { isPlausiblePlate, VEHICLE_TEXT_MAX } from '../garage.js';
 import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
@@ -1106,6 +1106,9 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       phoneVerified,
       documentsReady,
       driverDocuments,
+      // #1185 — «Путевой лист» / «Медосмотр» ticked here are the same fact as the line-readiness
+      // marks the gate reads; without them the driver saw both documents added and the gate at 5/7.
+      ...shiftMarksFromDocuments(driverDocuments),
     });
     const pending = consumePendingAction();
     if (pending) pending();
