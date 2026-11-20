@@ -10,7 +10,9 @@
 // Seven states: action → confirm → submitting → result → compensation → done,
 // with failure as an alternate branch off submitting (retry loops back to
 // submitting; back exits the sub-flow without any local persistence).
-// Mock/UI only: the compensation figures are fixed demo values. The ONLY
+// Mock/UI only: the compensation figures are fixed demo values, and since #1182 the copy says so
+// — an estimate («Предварительный расчёт»), never a promise of money: nothing here reaches the
+// fare, the receipt, the history or the payouts. The ONLY
 // persistence is the existing NO_SHOW transition, fired via the screen's
 // onConfirmNoShow callback at the confirm step — BD-RIDE-D-NOSHOW-ACK-01
 // (V2-04C2): that callback may be backend-ACK-first (returns a Promise), so
@@ -97,7 +99,7 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
         <div class="ns-sub">Отметьте «не вышел», только если пассажир не появился и не отвечает. Что произойдёт:</div>
         <div class="ns-bullets">
           <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CHECK, 13, 2.6)}</div><span>Поездка закроется со статусом <b>«Пассажир не вышел»</b></span></div>
-          <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CARD, 13, 2.2)}</div><span>Вам начислят компенсацию за ожидание <b>${escapeHtml(comp.pickupComp)}</b></span></div>
+          <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CARD, 13, 2.2)}</div><span>Покажем расчёт компенсации за ожидание — начисление пока не подключено</span></div>
           <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CAR, 13, 2)}</div><span>Вы сразу вернётесь к приёму новых заказов</span></div>
         </div>
         <div class="ns-hint">${svg(I_INFO, 14, 1.9)}<span>Частые ложные отметки влияют на рейтинг. Убедитесь, что связались с пассажиром.</span></div>
@@ -211,7 +213,7 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
         <div class="ns-head">
           <div class="ns-head-icon success">${svg(I_CARD, 22)}</div>
           <div class="ns-head-copy">
-            <div class="ns-eyebrow success"><span class="ns-eyebrow-dot" aria-hidden="true"></span>Итог заказа</div>
+            <div class="ns-eyebrow success"><span class="ns-eyebrow-dot" aria-hidden="true"></span>Предварительный расчёт</div>
             <div class="ns-title">Компенсация за ожидание</div>
           </div>
         </div>
@@ -220,9 +222,9 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
           <div class="ns-receipt-row"><span class="ns-receipt-key">Компенсация за подачу</span><span class="ns-receipt-val">${escapeHtml(comp.pickupComp)}</span></div>
           <div class="ns-receipt-row"><span class="ns-receipt-key">Комиссия сервиса</span><span class="ns-receipt-val ns-receipt-val--muted">${escapeHtml(comp.commission)}</span></div>
           <div class="ns-receipt-div" aria-hidden="true"></div>
-          <div class="ns-receipt-row"><span class="ns-receipt-key ns-receipt-key--total">К начислению</span><span class="ns-receipt-total">${escapeHtml(comp.net)}</span></div>
+          <div class="ns-receipt-row"><span class="ns-receipt-key ns-receipt-key--total">Расчётная сумма</span><span class="ns-receipt-total">${escapeHtml(comp.net)}</span></div>
         </div>
-        <div class="ns-hint">${svg(I_INFO, 14, 1.9)}<span>Сумма зачислится в баланс смены. Поездка не учитывается как завершённая.</span></div>
+        <div class="ns-hint">${svg(I_INFO, 14, 1.9)}<span>Это расчёт, а не начисление: выплата за ожидание и неявку пока не подключена, в баланс смены, чек и выплаты сумма не попадёт. Поездка не учитывается как завершённая.</span></div>
         <div class="ns-actions-stack">
           <button type="button" class="bd-btn primary ns-btn-ic" id="ns-to-done">${svg(I_CAR, 16, 1.9)}<span>Вернуться к заказам</span></button>
         </div>
@@ -235,7 +237,7 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
       <div class="ns-flow ns-flow--pad ns-flow--center">
         <div class="ns-result-badge success">${svg(I_CAR, 26, 2)}</div>
         <div class="ns-title ns-title--center">Вы снова на линии</div>
-        <div class="ns-sub ns-sub--center">${escapeHtml(comp.net)} добавлены к смене. Ищем для вас следующий заказ рядом.</div>
+        <div class="ns-sub ns-sub--center">Заказ закрыт без начислений. Ищем для вас следующий заказ рядом.</div>
         <div class="ns-searching" aria-hidden="true"><span class="ns-search-dot"></span><span class="ns-search-dot"></span><span class="ns-search-dot"></span><span class="ns-searching-text">Поиск заказов…</span></div>
         <div class="ns-actions-stack">
           <button type="button" class="bd-btn primary" id="ns-to-orders">К списку заказов</button>

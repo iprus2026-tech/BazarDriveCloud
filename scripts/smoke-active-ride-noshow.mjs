@@ -52,6 +52,18 @@ expect('net is derived (paidWait + pickup − commission)',
 expect('paid wait is frozen at the confirm step (counts dwell time) [Codex P2]',
   /comp\s*=\s*buildComp\(resolvePaidWait\(\)\)/.test(flow) && /typeof p === 'function'/.test(flow));
 
+// #1182 — the figures are an estimate, not money: nothing in this flow (or anywhere else) carries
+// them to the fare, the receipt, the history or the payouts, so the copy must not promise that.
+expect('compensation is labelled an estimate that is not paid out yet [#1182]',
+  flow.includes('Предварительный расчёт') && flow.includes('Расчётная сумма')
+  && /Это расчёт, а не начисление/.test(flow) && /пока не подключен/.test(flow));
+expect('no copy promises a credit to the shift balance [#1182]',
+  !/Вам начислят/.test(flow) && !/зачислится/.test(flow) && !/добавлены к смене/.test(flow)
+  && !/К начислению/.test(flow));
+expect('the paid-wait sheet shows the amount as an estimate, not as accrued money [#1182]',
+  /расчёт <span id="ar-paid-accrued">/.test(screen) && /пока не начисляется/.test(screen)
+  && !/начислено <span id="ar-paid-accrued">/.test(screen));
+
 // ── C. Persistence isolation — the ONLY mutation is the onConfirmNoShow hook ──
 expect('flow module never imports ride_state', !/from\s+'[^']*ride_state/.test(flow));
 expect('flow module never persists ride state directly',
