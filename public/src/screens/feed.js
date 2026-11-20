@@ -383,13 +383,9 @@ export default function feed(renderContext) {
     // action buttons need JS, handled above.
   });
 
-  // BD-FEED-01 — the post-menu (⋮), like and comment controls are
-  // intentional UI-only stubs (no backend / target screen yet). Mark them
-  // data-noop and swallow their click so they are explicit no-ops, not mistaken
-  // for broken wiring (mirrors the rules.js data-noop convention).
-  root.addEventListener('click', (e) => {
-    if (e.target.closest('[data-noop]')) e.preventDefault();
-  });
+  // #1186 — the post menu (⋮), like and comment controls were enabled stubs: they looked
+  // tappable and did nothing. By the owner's decision they are not rendered until the features
+  // exist (see renderCardHeader / renderPostActions); every control on a card now does something.
 
   refreshList(false);
   return root;
@@ -467,34 +463,14 @@ function renderCardHeader(p) {
         <div class="feed-card-header__name">${escapeHtml(p.author || '—')}</div>
         <div class="feed-card-header__meta">${escapeHtml(meta)}</div>
       </div>
-      <button class="feed-card-menu" type="button" data-noop aria-label="Меню поста">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="18" height="18">
-          <circle cx="5" cy="12" r="2"/>
-          <circle cx="12" cy="12" r="2"/>
-          <circle cx="19" cy="12" r="2"/>
-        </svg>
-      </button>
     </div>
   `;
 }
 
+// #1186 — share is the one post action that exists. Like and comment come back with their features.
 function renderPostActions(p) {
   return `
     <div class="feed-post-actions">
-      <button class="feed-post-actions__btn" type="button" data-noop aria-label="Нравится: ${escapeHtml(String(p.likes || 0))}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
-          <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/>
-        </svg>
-        ${escapeHtml(String(p.likes || 0))}
-      </button>
-      <button class="feed-post-actions__btn" type="button" data-noop aria-label="Комментарии: ${escapeHtml(String(p.comments || 0))}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
-          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-        </svg>
-        ${escapeHtml(String(p.comments || 0))}
-      </button>
       <button class="feed-post-actions__btn feed-post-actions__share" type="button" data-action="share" data-post-id="${escapeHtml(p.id || '')}" aria-label="Поделиться">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">

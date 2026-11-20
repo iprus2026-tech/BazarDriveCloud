@@ -32,11 +32,14 @@ expect('category chip markup declares aria-pressed (true for the active chip), n
 expect('the chip click handler keeps aria-pressed in sync with the active chip',
   /setAttribute\('aria-pressed',\s*selected \? 'true' : 'false'\)/.test(feed));
 
-// ── B. like / comment counts are in the accessible name ──
-expect('like button aria-label includes the like count',
-  /aria-label="Нравится: \$\{escapeHtml\(String\(p\.likes \|\| 0\)\)\}"/.test(feed));
-expect('comment button aria-label includes the comment count',
-  /aria-label="Комментарии: \$\{escapeHtml\(String\(p\.comments \|\| 0\)\)\}"/.test(feed));
+// ── B. post actions have accessible names ──
+// #1186 — the like / comment buttons (count-only controls whose count had to be in the
+// accessible name) are no longer rendered; the remaining action is the icon-only share button.
+expect('the icon-only share button has an accessible name',
+  /<button class="feed-post-actions__btn feed-post-actions__share"[^>]*aria-label="Поделиться"/.test(feed));
+expect('no count-only action button is rendered without a label',
+  !/aria-label="Нравится/.test(feed) && !/aria-label="Комментарии/.test(feed)
+  && (feed.match(/<button class="feed-post-actions__btn[^"]*"/g) || []).length === 1);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
