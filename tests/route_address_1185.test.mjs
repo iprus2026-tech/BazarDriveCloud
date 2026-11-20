@@ -35,6 +35,19 @@ test('the city is not repeated, and either part alone is the whole label', () =>
   assert.equal(manualAddressLabel('', ''), '');
 });
 
+test('the city is matched as a whole part of the address, not as letters inside a word', () => {
+  // Codex review on #1216: «томская» contains «омск», and the city was silently dropped.
+  assert.equal(manualAddressLabel('Омск', 'Томская улица, 5'), 'Омск, Томская улица, 5');
+  assert.equal(manualAddressLabel('Тула', 'ул. Тульская, 3'), 'Тула, ул. Тульская, 3');
+  assert.equal(manualAddressLabel('Москва', 'Московский проспект, 10'), 'Москва, Московский проспект, 10');
+  assert.equal(manualAddressLabel('Химки', 'ул. Химкинская, 1, Химки'), 'ул. Химкинская, 1, Химки', 'named as its own part, anywhere in the line');
+  assert.equal(manualAddressLabel('Нижний  Новгород', 'нижний новгород, ул. Ленина, 5'), 'нижний новгород, ул. Ленина, 5');
+  assert.equal(manualAddressLabel('г. Химки', 'город Химки, ул. Ленина, 5'), 'город Химки, ул. Ленина, 5');
+  assert.equal(manualAddressLabel('г.Химки', 'Химки, ул. Ленина, 5'), 'Химки, ул. Ленина, 5');
+  assert.equal(manualAddressLabel('Горки', 'ул. Ленина, 5'), 'Горки, ул. Ленина, 5', 'a city starting with «г» keeps its name');
+  assert.equal(manualAddressLabel('Горки', 'Горки, ул. Ленина, 5'), 'Горки, ул. Ленина, 5');
+});
+
 test('the route note is the pickup note, then the dropoff note marked «Куда:»', () => {
   const point = (note) => ({ label: 'x', ...(note === undefined ? {} : { note }) });
   assert.equal(routeNoteOf({ pickup: point('Подъезд 3, домофон 28#'), dropoff: point() }), 'Подъезд 3, домофон 28#');

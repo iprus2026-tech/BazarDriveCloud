@@ -299,13 +299,20 @@ function clonePoint(point) {
 // The entrance / comment of a manually entered address (the order form's comment holds 200).
 const POINT_NOTE_MAX = 200;
 
-// «Город, улица дом» for a manually entered address; the city is not repeated when the street
-// line already names it, and either part alone is the whole label.
+// «Город, улица дом» for a manually entered address; either part alone is the whole label. The
+// city is not repeated when the street line already names it — as a whole comma-separated part
+// («Химки, ул. Ленина, 5», «г. Химки, …»), never as a run of letters inside another word: «Омск»
+// is not named by «Томская улица, 5».
+const cityKey = (text) => String(text ?? '').trim().toLowerCase()
+  .replace(/^(?:г\.\s*|г\s+|город\s+)/, '').replace(/\s+/g, ' ');
+
 export function manualAddressLabel(city, street) {
   const c = String(city ?? '').trim();
   const st = String(street ?? '').trim();
   if (!c || !st) return st || c;
-  return st.toLowerCase().includes(c.toLowerCase()) ? st : `${c}, ${st}`;
+  const key = cityKey(c);
+  const named = key !== '' && st.split(',').some((part) => cityKey(part) === key);
+  return named ? st : `${c}, ${st}`;
 }
 
 // #1185 — two points are the same place when their visible label and address agree.
