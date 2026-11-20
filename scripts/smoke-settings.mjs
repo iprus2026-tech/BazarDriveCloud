@@ -81,6 +81,20 @@ expect('sw.js precaches settings.js',
 expect('cloud.css defines the settings toggle atom',
   /\.settings__toggle\s*\{/.test(css) && /\.settings__toggle--on\b/.test(css));
 
+// ── H. #1185 — controls that used to be silent or forgot their state ──
+expect('the push toggle reads and writes the stored notificationsEnabled preference [#1185]',
+  /paintPush\(user\.get\(\)\.notificationsEnabled === true\)/.test(screen)
+    && /user\.set\(\{\s*notificationsEnabled:\s*on\s*\}\)/.test(screen));
+const confirmation = read('../public/src/screens/trip_confirmation.js');
+expect('the /trip-confirmation shield toggles a safety note instead of a no-op [#1185]',
+  /id="cf-safety-note"[^>]*hidden/.test(confirmation)
+    && /#cf-shield'\)\.addEventListener\('click',\s*\(e\)\s*=>\s*\{[\s\S]{0,200}note\.hidden = !note\.hidden/.test(confirmation)
+    && !/no-op stub here/.test(confirmation));
+expect('the collapsed safety note is really hidden: .bd-alert display:flex needs a [hidden] override [#1185]',
+  /\.cf-safety-note\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(css));
+expect('«Проверить отметки» answers when the permit is already marked [#1185]',
+  /checkReadyBtn && user\.get\(\)\.taxiPermit[\s\S]{0,260}Разрешение отмечено/.test(profile));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

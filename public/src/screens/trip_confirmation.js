@@ -507,12 +507,16 @@ export default function tripConfirmation() {
         <span class="cf-title">Подтверждение</span>
         <span class="cf-subtitle">№${escapeHtml(tripId)}</span>
       </div>
-      <button type="button" class="cf-shield" id="cf-shield" aria-label="Безопасность">
+      <button type="button" class="cf-shield" id="cf-shield" aria-label="Безопасность"
+              aria-expanded="false" aria-controls="cf-safety-note">
         ${SHIELD_SVG}
       </button>
     </div>
 
     <div class="bd-scroll cf-scroll">
+      <div class="bd-alert info cf-safety-note" id="cf-safety-note" role="status" hidden>
+        SOS, «Поделиться поездкой» и жалоба доступны на экране поездки — он откроется после подтверждения.
+      </div>
       <div class="cf-pill cf-pill--${view.pillTone}" role="status">
         <span class="cf-pill-dot" aria-hidden="true"></span>
         <span class="cf-pill-text">${view.pillText}</span>
@@ -609,8 +613,13 @@ export default function tripConfirmation() {
     }
   });
 
-  root.querySelector('#cf-shield').addEventListener('click', () => {
-    // Safety sheet is owned by BD-RIDE-P-07; no-op stub here.
+  // #1185 — the shield was a silent no-op. The safety sheet itself is owned by the ride screen
+  // (BD-RIDE-P-07 / BD-RIDE-D-SAFETY-01), so before a ride exists it says where those tools are.
+  root.querySelector('#cf-shield').addEventListener('click', (e) => {
+    const note = root.querySelector('#cf-safety-note');
+    if (!note) return;
+    note.hidden = !note.hidden;
+    e.currentTarget.setAttribute('aria-expanded', note.hidden ? 'false' : 'true');
   });
 
   if (state === CF_STATE.DRIVER_WAITING) {

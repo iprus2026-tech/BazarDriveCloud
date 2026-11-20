@@ -11640,6 +11640,11 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding-bottom: 140px;
 }
 
+/* #1185 — the shield's safety note. `.bd-alert` sets display:flex, which beats the UA [hidden]
+   rule, so the collapsed state needs its own override (same as .pf2-ip-permit-warn). */
+.cf-safety-note { font-size: 13px; line-height: 1.4; color: var(--text-2); }
+.cf-safety-note[hidden] { display: none; }
+
 /* ── Status pill ─────────────────────────────────────────── */
 .cf-pill {
   display: inline-flex;
