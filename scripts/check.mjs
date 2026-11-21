@@ -259,6 +259,18 @@ if (exists(mapboxRenderMapSmoke)) {
   }
 }
 
+// BD-MAP-MAPLIBRE-M2 (BD-DOCS-053) — provider-neutral map renderer seam: dark by default, MapLibre only
+// with a configured style (wins over Mapbox), Mapbox unchanged otherwise; vendored bundle not precached.
+const mapRendererSmoke = path.join(root, 'scripts', 'smoke-map-renderer.mjs');
+if (exists(mapRendererSmoke)) {
+  try {
+    execFileSync(process.execPath, [mapRendererSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-map-renderer.mjs failed\n${msg}`);
+  }
+}
+
 // BD-UX-ROLES-02 (#1139) — one 760px shell column for every screen with the tab bar; no screen
 // widens the shell on its own; both profiles in one column; .has-tabbar is set before the screen loads.
 const shellWidthSmoke = path.join(root, 'scripts', 'smoke-shell-width.mjs');

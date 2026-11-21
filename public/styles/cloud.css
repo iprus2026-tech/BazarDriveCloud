@@ -12149,7 +12149,10 @@ button.pfp-menu-row:active { opacity: 0.7; }
   inset: 0;
   display: block;
 }
-.map-home__map.mapboxgl-map {
+/* BD-MAP-MAPLIBRE-M2: both renderers' own CSS sets their container to position: relative; keep it
+   filling the stage (otherwise the container collapses to 0 height and the canvas is clipped). */
+.map-home__map.mapboxgl-map,
+.map-home__map.maplibregl-map {
   position: absolute;
   inset: 0;
   width: 100%;
