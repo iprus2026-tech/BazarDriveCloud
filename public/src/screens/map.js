@@ -1,14 +1,16 @@
-// BD-MAP-01 — MapHome render gate; BD-MAP-RENDER-MAP (#805) — first per-surface REAL Mapbox render.
-// 5 render-gate states over the MapShell placeholder. DARK by default: with no token, resolveState()
-// never reaches DEFAULT (it returns TOKEN_MISSING), so no real map is constructed and the placeholder
-// is byte-for-byte unchanged. When a token IS set (isMapboxEnabled()), the DEFAULT state hydrates a
-// real mapboxgl.Map over the placeholder (render-then-hydrate), with a self-clearing GL-context teardown.
+// BD-MAP-01 — MapHome render gate; BD-MAP-RENDER-MAP (#805) — first per-surface REAL map render.
+// 5 render-gate states over the MapShell placeholder. DARK by default: with no map renderer configured,
+// resolveState() never reaches DEFAULT (it returns TOKEN_MISSING), so no real map is constructed and the
+// placeholder is byte-for-byte unchanged. When a renderer IS configured (isMapRendererEnabled()), the
+// DEFAULT state hydrates a real map over the placeholder (render-then-hydrate), with a self-clearing
+// GL-context teardown. BD-MAP-MAPLIBRE-M2 (BD-DOCS-053): the renderer is provider-neutral —
+// map_renderer.js picks MapLibre (when a style is configured) or Mapbox (when its token is honored).
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
-import { hasMapboxToken, isMapboxEnabled, getDefaultCenter, MAPBOX_STYLE } from '../mapbox/mapbox_config.js';
-import { loadMapboxSdk } from '../mapbox/mapbox_loader.js';
+import { getDefaultCenter } from '../mapbox/mapbox_config.js';
+import { isMapRendererEnabled, loadMapRenderer } from '../mapbox/map_renderer.js';
 import {
   MAP_STATE,
   isValidMapState,
@@ -29,7 +31,8 @@ const STATE_QUERY_KEYS = new Map([
   ['token_missing', MAP_STATE.TOKEN_MISSING],
 ]);
 
-const LIVE_MAP_BADGE = 'Марфино · Mapbox';
+// The live badge names the data the map shows (OSM attribution stays in the map's own control).
+const LIVE_MAP_BADGE = Object.freeze({ maplibre: 'Марфино · OpenStreetMap', mapbox: 'Марфино · Mapbox' });
 
 const STATE_COPY = {
   [MAP_STATE.DEFAULT]: {
@@ -78,19 +81,20 @@ function getHashQuery() {
 }
 
 // Render-gate decision tree.
-// Valid explicit ?state= overrides win, except DEFAULT requires a token:
-// without one it resolves to TOKEN_MISSING. With no valid override, priority
-// is token check → geolocation permission state → default.
+// Valid explicit ?state= overrides win, except DEFAULT requires a map renderer
+// (a MapLibre style or a Mapbox token): without one it resolves to TOKEN_MISSING.
+// With no valid override, priority is renderer check → geolocation permission
+// state → default.
 function resolveState(query, prefs) {
   const override = query.get('state');
   if (override) {
     const mapped = STATE_QUERY_KEYS.get(override);
     if (isValidMapState(mapped)) {
-      if (mapped === MAP_STATE.DEFAULT && !hasMapboxToken()) return MAP_STATE.TOKEN_MISSING;
+      if (mapped === MAP_STATE.DEFAULT && !isMapRendererEnabled()) return MAP_STATE.TOKEN_MISSING;
       return mapped;
     }
   }
-  if (!hasMapboxToken()) return MAP_STATE.TOKEN_MISSING;
+  if (!isMapRendererEnabled()) return MAP_STATE.TOKEN_MISSING;
   const perm = getPermissionStatus();
   if (perm === GEO_STATUS.DENIED) return MAP_STATE.DENIED;
   if (!prefs.locationAllowed && (perm === GEO_STATUS.UNKNOWN || perm === GEO_STATUS.PROMPT)) {
@@ -163,17 +167,17 @@ function buildMapPlaceholder(state) {
 }
 
 // BD-MAP-RENDER-MAP (#805) — render-then-hydrate. The placeholder `container` is already painted; once
-// the vendored SDK loads (only when a token is configured), take over the container with a real map.
-// loadMapboxSdk() resolves null when DARK (no token) or on failure → the placeholder simply stays, so
-// this is inert without a token.
+// the vendored renderer loads (only when one is configured), take over the container with a real map.
+// loadMapRenderer() resolves null when DARK (nothing configured) or on failure → the placeholder simply
+// stays, so this is inert without a renderer.
 //
 // BD-SCREEN-LIFECYCLE-01A (#919) pilot — hydration is fire-and-forget and asynchronous (an SDK load, a
-// requestAnimationFrame deferral), so the mapboxgl.Map instance does not exist yet at the moment
+// requestAnimationFrame deferral), so the map instance does not exist yet at the moment
 // mapScreen() returns its lifecycle result to the router. `lifecycle` is a small mutable handle shared
 // between mapScreen()'s returned dispose() and this function's async continuation, so dispose() can
 // close over whatever this function has (or hasn't) created by the time it actually runs:
 //   - lifecycle.disposed: set true exactly once by dispose(); checked here in ADDITION to the existing
-//     document.body.contains(container) check, immediately before `new mapboxgl.Map(...)`, so a late
+//     document.body.contains(container) check, immediately before `new lib.Map(...)`, so a late
 //     hydration continuation for an already-disposed screen never creates a new GL resource.
 //   - lifecycle.mapInstance: becomes known the moment the map is actually constructed.
 //   - lifecycle.teardownId: the existing 2s defensive self-poll, kept unchanged as a backstop for any
@@ -182,8 +186,9 @@ function buildMapPlaceholder(state) {
 //     already ran (checks lifecycle.mapInstance/teardownId before touching them) — whichever fires
 //     first does the real work, the other is a safe no-op.
 function hydrateRealMap(container, lifecycle, badge) {
-  loadMapboxSdk().then((mapboxgl) => {
-    if (!mapboxgl) return;                              // DARK / SDK unavailable → keep the placeholder
+  loadMapRenderer().then((renderer) => {
+    if (!renderer) return;                              // DARK / SDK unavailable → keep the placeholder
+    const { lib, style, provider } = renderer;
     // On a memoized-SDK REVISIT this .then runs as a microtask BEFORE router.js appends the screen
     // (Codex #812), so the container isn't mounted yet — bailing here would leave /map on the
     // placeholder forever. Defer to the next frame (after the append) instead of bailing permanently.
@@ -195,9 +200,9 @@ function hydrateRealMap(container, lifecycle, badge) {
       container.removeAttribute('aria-label');           // the live canvas is the map now
       let map;
       try {
-        map = new mapboxgl.Map({
+        map = new lib.Map({
           container,
-          style: MAPBOX_STYLE,
+          style,
           center: [c.lng, c.lat],
           zoom: c.zoom,
         });
@@ -208,9 +213,9 @@ function hydrateRealMap(container, lifecycle, badge) {
         return;
       }
       lifecycle.mapInstance = map;
-      pinPublicPlaces(mapboxgl, map, lifecycle);
+      pinPublicPlaces(lib, map, lifecycle);
       // #1136 — follow the CONTAINER, not only the window. Inside Telegram the shell height changes
-      // through a CSS variable (viewport_changed after expand) with no window `resize`, so Mapbox's
+      // through a CSS variable (viewport_changed after expand) with no window `resize`, so the renderer's
       // own trackResize never fires and the canvas keeps the collapsed height (map drawn only in the
       // top part). One resize per frame however many entries arrive; disconnected by dispose() and by
       // the teardown poll below. Without ResizeObserver, window resize alone keeps working.
@@ -226,11 +231,11 @@ function hydrateRealMap(container, lifecycle, badge) {
         });
         lifecycle.resizeObserver.observe(container);
       }
-      // A token or constructor success alone does not mean the map has loaded.
+      // A configured renderer or constructor success alone does not mean the map has loaded.
       if (badge) {
         map.once('load', () => {
           if (lifecycle.disposed !== false || !document.body.contains(container)) return;
-          badge.textContent = LIVE_MAP_BADGE;
+          badge.textContent = LIVE_MAP_BADGE[provider] || LIVE_MAP_BADGE.mapbox;
         });
       }
       // Defensive backstop only (BD-SCREEN-LIFECYCLE-01A): the router-owned disposer is now the
@@ -252,7 +257,7 @@ function hydrateRealMap(container, lifecycle, badge) {
 
 // #1160 — the public places catalog (airports, stations) pinned on the live map, with the backend ON
 // (none when OFF). Each marker is the taxi pickup point; map.remove() takes the markers with it.
-function pinPublicPlaces(mapboxgl, map, lifecycle) {
+function pinPublicPlaces(lib, map, lifecycle) {
   listPublicPlaces().then((places) => {
     if (lifecycle.disposed || lifecycle.mapInstance !== map) return;
     for (const place of places) {
@@ -275,7 +280,7 @@ function pinPublicPlaces(mapboxgl, map, lifecycle) {
         el.setAttribute('aria-expanded', String(!label.hidden));
       });
       try {
-        new mapboxgl.Marker({ element: el }).setLngLat([place.lng, place.lat]).addTo(map);
+        new lib.Marker({ element: el }).setLngLat([place.lng, place.lat]).addTo(map);
       } catch { /* the map was torn down meanwhile */ }
     }
   }, () => { /* no catalog — the map works without the pins */ });
@@ -480,10 +485,11 @@ export default function mapScreen() {
   // BD-SCREEN-LIFECYCLE-01A (#919) pilot — shared mutable handle between this closure's returned
   // dispose() and hydrateRealMap()'s async continuation (see the comment on hydrateRealMap).
   const mapLifecycle = { disposed: false, mapInstance: null, teardownId: null, resizeObserver: null };
-  // BD-MAP-RENDER-MAP (#805): in the live DEFAULT state WITH a token, hydrate a real Mapbox map over the
-  // placeholder. DARK (no token) ⇒ resolveState() returns TOKEN_MISSING (never DEFAULT) AND
-  // isMapboxEnabled() is false, so this never runs and the placeholder path is byte-for-byte unchanged.
-  if (state === MAP_STATE.DEFAULT && isMapboxEnabled()) hydrateRealMap(mapWrap, mapLifecycle, topbar.querySelector('.map-home__sub'));
+  // BD-MAP-RENDER-MAP (#805): in the live DEFAULT state WITH a configured renderer, hydrate a real map
+  // over the placeholder. DARK (nothing configured) ⇒ resolveState() returns TOKEN_MISSING (never
+  // DEFAULT) AND isMapRendererEnabled() is false, so this never runs and the placeholder path is
+  // byte-for-byte unchanged.
+  if (state === MAP_STATE.DEFAULT && isMapRendererEnabled()) hydrateRealMap(mapWrap, mapLifecycle, topbar.querySelector('.map-home__sub'));
   const banner = buildBanner(state);
   if (banner) stage.appendChild(banner);
   root.appendChild(stage);

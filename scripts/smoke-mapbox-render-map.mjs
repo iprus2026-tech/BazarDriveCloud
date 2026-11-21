@@ -1,8 +1,10 @@
-// BD-MAP-RENDER-MAP (#805) — static + behavioural smoke for the first per-surface REAL Mapbox render (/map).
+// BD-MAP-RENDER-MAP (#805) — static + behavioural smoke for the first per-surface REAL map render (/map).
 //
-// map.js must stay DARK by default: with no token, resolveState() returns TOKEN_MISSING (never DEFAULT)
-// and isMapboxEnabled() is false, so no mapboxgl.Map is ever constructed and the MapShell placeholder is
-// unchanged. The live render (DEFAULT + token) is render-then-hydrate. router.js now owns a disposer
+// map.js must stay DARK by default: with no map renderer configured, resolveState() returns
+// TOKEN_MISSING (never DEFAULT) and isMapRendererEnabled() is false, so no map is ever constructed and
+// the MapShell placeholder is unchanged. The live render (DEFAULT + renderer) is render-then-hydrate.
+// BD-MAP-MAPLIBRE-M2 (BD-DOCS-053): the renderer comes from the provider-neutral map_renderer.js
+// (MapLibre or Mapbox); the screen uses only the API both share. router.js now owns a disposer
 // (BD-SCREEN-LIFECYCLE-01A, #919) that is the primary teardown and frees the GL context; the
 // document.body.contains watcher below is only a defensive backstop for a detachment the disposer
 // somehow didn't observe. The actual visual render + CSP completeness are verified on a device with a
@@ -32,7 +34,7 @@ if (queryKeysSource && resolveSource) {
   for (const tokenAvailable of [false, true]) {
     const resolve = runInNewContext(`${queryKeysSource}\n${resolveSource}\nresolveState;`, {
       MAP_STATE, isValidMapState, GEO_STATUS,
-      hasMapboxToken: () => tokenAvailable,
+      isMapRendererEnabled: () => tokenAvailable,
       getPermissionStatus: () => GEO_STATUS.UNKNOWN,
     });
     const cases = [
@@ -52,7 +54,7 @@ if (queryKeysSource && resolveSource) {
   }
 }
 
-// Live copy requires the Mapbox load event, not merely a token or a constructed instance.
+// Live copy requires the map's load event, not merely a configured renderer or a constructed instance.
 const copySource = src.match(/^const STATE_COPY = \{[\s\S]*?^\};/m)?.[0];
 const liveBadgeSource = src.match(/^const LIVE_MAP_BADGE = [^\n]+;/m)?.[0];
 const hydrateSource = src.match(/^function hydrateRealMap\([^\n]*\) \{[\s\S]*?^\}/m)?.[0];
@@ -60,32 +62,33 @@ const defaultBadge = copySource
   ? runInNewContext(`${copySource}\nSTATE_COPY[MAP_STATE.DEFAULT].badge;`, { MAP_STATE }) : null;
 const liveBadge = liveBadgeSource ? runInNewContext(`${liveBadgeSource}\nLIVE_MAP_BADGE;`) : null;
 expect('DEFAULT pre-hydration badge is neutral: Карта района', defaultBadge === 'Карта района');
-expect('live badge is exactly Марфино · Mapbox', liveBadge === 'Марфино · Mapbox');
+expect('live badge names the provider: Марфино · Mapbox / Марфино · OpenStreetMap',
+  liveBadge?.mapbox === 'Марфино · Mapbox' && liveBadge?.maplibre === 'Марфино · OpenStreetMap');
 expect('mapScreen passes its rendered badge into hydration',
   /hydrateRealMap\(mapWrap,\s*mapLifecycle,\s*topbar\.querySelector\('\.map-home__sub'\)\)/.test(src));
 expect('the shipped hydration function is available for behavioural checks', Boolean(hydrateSource));
 if (copySource && liveBadgeSource && hydrateSource) {
-  async function hydrateProbe({ sdkNull = false, sdkReject = false, constructorThrows = false } = {}) {
+  async function hydrateProbe({ sdkNull = false, sdkReject = false, constructorThrows = false, provider = 'mapbox' } = {}) {
     const badge = { textContent: defaultBadge };
     const lifecycle = { disposed: false, mapInstance: null, teardownId: null };
     const container = { replaceChildren() {}, removeAttribute() {} };
     const raf = [], listeners = [];
-    let attached = true, constructed = 0, restored = 0;
+    let attached = true, constructed = 0, restored = 0, options = null;
     class FakeMap {
-      constructor() {
+      constructor(opts) {
         constructed += 1;
+        options = opts;
         if (constructorThrows) throw new Error('constructor failure');
       }
       once(event, callback) { listeners.push({ event, callback }); }
       remove() {}
     }
     const hydrate = runInNewContext(`${liveBadgeSource}\n${hydrateSource}\nhydrateRealMap;`, {
-      loadMapboxSdk: () => sdkReject ? Promise.reject(new Error('SDK failure'))
-        : Promise.resolve(sdkNull ? null : { Map: FakeMap }),
+      loadMapRenderer: () => sdkReject ? Promise.reject(new Error('SDK failure'))
+        : Promise.resolve(sdkNull ? null : { provider, lib: { Map: FakeMap }, style: `${provider}-style` }),
       requestAnimationFrame: (callback) => raf.push(callback),
       document: { body: { contains: (node) => attached && node === container } },
       getDefaultCenter: () => ({ lng: 0, lat: 0, zoom: 1 }),
-      MAPBOX_STYLE: 'test-style',
       pinPublicPlaces: () => {},
       restoreMapPlaceholder: () => { restored += 1; },
       setInterval: () => 1,
@@ -96,7 +99,7 @@ if (copySource && liveBadgeSource && hydrateSource) {
     await Promise.resolve();
     for (const callback of raf.splice(0)) callback();
     return {
-      badge, lifecycle, constructed, restored,
+      badge, lifecycle, constructed, restored, options,
       loadListeners: listeners.filter(({ event }) => event === 'load').length,
       detach() { attached = false; },
       fireLoad() {
@@ -109,7 +112,13 @@ if (copySource && liveBadgeSource && hydrateSource) {
     loaded.constructed === 1 && loaded.loadListeners === 1);
   expect('successful construction alone keeps the neutral badge', loaded.badge.textContent === defaultBadge);
   loaded.fireLoad();
-  expect('Mapbox load changes the badge to the exact live copy', loaded.badge.textContent === liveBadge);
+  expect('Mapbox load changes the badge to the exact live copy', loaded.badge.textContent === liveBadge.mapbox);
+  expect('the map is built with the style the renderer returned', loaded.options?.style === 'mapbox-style');
+  const libre = await hydrateProbe({ provider: 'maplibre' });
+  libre.fireLoad();
+  expect('BD-DOCS-053 M2: a MapLibre renderer builds the same map with its own style and OSM badge',
+    libre.constructed === 1 && libre.options?.style === 'maplibre-style'
+    && libre.badge.textContent === liveBadge.maplibre);
   for (const [label, options] of [
     ['SDK-null', { sdkNull: true }],
     ['SDK-rejection', { sdkReject: true }],
@@ -148,12 +157,11 @@ if (copySource && liveBadgeSource && hydrateSource) {
       fire() { if (!this.disconnected) this.callback([{ target: this.targets[0] }]); }
     }
     const hydrate = runInNewContext(`${liveBadgeSource}\n${hydrateSource}\nhydrateRealMap;`, {
-      loadMapboxSdk: () => Promise.resolve({ Map: FakeMap }),
+      loadMapRenderer: () => Promise.resolve({ provider: 'mapbox', lib: { Map: FakeMap }, style: 'test-style' }),
       requestAnimationFrame: (callback) => { raf.push(callback); return raf.length; },
       ResizeObserver: FakeResizeObserver,
       document: { body: { contains: (node) => attached && node === container } },
       getDefaultCenter: () => ({ lng: 0, lat: 0, zoom: 1 }),
-      MAPBOX_STYLE: 'test-style',
       pinPublicPlaces: () => {},
       restoreMapPlaceholder: () => {},
       setInterval: (callback) => { poll = callback; return 7; },
@@ -205,20 +213,22 @@ expect('#1136: dispose() disconnects the container ResizeObserver before removin
   && /const mapLifecycle = \{ disposed: false, mapInstance: null, teardownId: null, resizeObserver: null \};/.test(src));
 
 // ── The foundation seam is imported ──
-expect('map.js imports isMapboxEnabled + getDefaultCenter + MAPBOX_STYLE from mapbox_config',
-  /import\s*\{[^}]*\bisMapboxEnabled\b[^}]*\bgetDefaultCenter\b[^}]*\bMAPBOX_STYLE\b[^}]*\}\s*from\s*'\.\.\/mapbox\/mapbox_config\.js'/.test(src));
-expect('map.js imports loadMapboxSdk from mapbox_loader',
-  /import\s*\{\s*loadMapboxSdk\s*\}\s*from\s*'\.\.\/mapbox\/mapbox_loader\.js'/.test(src));
+expect('map.js imports getDefaultCenter from mapbox_config',
+  /import\s*\{\s*getDefaultCenter\s*\}\s*from\s*'\.\.\/mapbox\/mapbox_config\.js'/.test(src));
+expect('map.js imports isMapRendererEnabled + loadMapRenderer from the provider-neutral map_renderer',
+  /import\s*\{\s*isMapRendererEnabled,\s*loadMapRenderer\s*\}\s*from\s*'\.\.\/mapbox\/map_renderer\.js'/.test(src));
+expect('BD-DOCS-053 M2: map.js names no SDK directly (no mapbox_loader import, no mapboxgl, no MAPBOX_STYLE)',
+  !/mapbox_loader\.js|maplibre_loader\.js|\bmapboxgl\b|\bmaplibregl\b|\bMAPBOX_STYLE\b/.test(src));
 
-// ── The live render is GATED: DEFAULT state AND isMapboxEnabled() (dark never constructs a Map) ──
-expect('the real-map hydrate is gated behind state === DEFAULT && isMapboxEnabled()',
-  /state\s*===\s*MAP_STATE\.DEFAULT\s*&&\s*isMapboxEnabled\(\)\s*\)\s*hydrateRealMap\(/.test(src));
-expect('hydrateRealMap constructs a real mapboxgl.Map with the configured style/center',
-  /new\s+mapboxgl\.Map\(\{/.test(src) && /style:\s*MAPBOX_STYLE/.test(src));
+// ── The live render is GATED: DEFAULT state AND isMapRendererEnabled() (dark never constructs a Map) ──
+expect('the real-map hydrate is gated behind state === DEFAULT && isMapRendererEnabled()',
+  /state\s*===\s*MAP_STATE\.DEFAULT\s*&&\s*isMapRendererEnabled\(\)\s*\)\s*hydrateRealMap\(/.test(src));
+expect('hydrateRealMap constructs the renderer\'s Map with the renderer\'s style',
+  /new\s+lib\.Map\(\{/.test(src) && /const \{ lib, style, provider \} = renderer;/.test(src));
 
 // ── Render-then-hydrate is dark-safe: bail when the SDK is null (DARK) or the screen detached ──
-expect('hydrate bails when loadMapboxSdk resolves null (DARK / unavailable) — placeholder stays',
-  /loadMapboxSdk\(\)\.then\([^)]*\)\s*=>\s*\{[\s\S]{0,160}if\s*\(!mapboxgl\)\s*return/.test(src));
+expect('hydrate bails when loadMapRenderer resolves null (DARK / unavailable) — placeholder stays',
+  /loadMapRenderer\(\)\.then\([^)]*\)\s*=>\s*\{[\s\S]{0,160}if\s*\(!renderer\)\s*return/.test(src));
 expect('hydrate re-checks document.body.contains(container) after the async load',
   /if\s*\(!document\.body\.contains\(container\)\)\s*return/.test(src));
 
@@ -232,9 +242,9 @@ expect('buildMapPlaceholder still renders the MapShell placeholder (dark path un
   /function buildMapPlaceholder\(state\)[\s\S]*?createMapShell\(/.test(src));
 
 // ── #1160 — the public places catalog is pinned on the live map ──
-const pinSource = src.match(/^function pinPublicPlaces\(mapboxgl, map, lifecycle\) \{[\s\S]*?^\}/m)?.[0];
+const pinSource = src.match(/^function pinPublicPlaces\(lib, map, lifecycle\) \{[\s\S]*?^\}/m)?.[0];
 expect('hydrateRealMap pins the public places right after the map is constructed',
-  /lifecycle\.mapInstance = map;\s*\n\s*pinPublicPlaces\(mapboxgl, map, lifecycle\);/.test(src));
+  /lifecycle\.mapInstance = map;\s*\n\s*pinPublicPlaces\(lib, map, lifecycle\);/.test(src));
 expect('map.js reads the catalog through public_places.js',
   /import \{ listPublicPlaces \} from '\.\.\/public_places\.js';/.test(src));
 if (pinSource) {
