@@ -10,6 +10,8 @@ Layers: PWA / Mapbox / Geo / Routing / Ride authority / Docs.
 
 Audited baseline: [`main@909f7f3ce8748f5333210370a67c2cef58448c86`](https://github.com/iprus2026-tech/BazarDriveCloud/commit/909f7f3ce8748f5333210370a67c2cef58448c86).
 
+> **Provider note (2026-11-21).** The owner chose MapLibre GL JS with self-hosted PMTiles in Yandex Object Storage and OSRM behind the server's `route-price` module. Decision record: BD-DOCS-053 (`docs-site/docs/decisions/map-provider-maplibre-pmtiles-osrm.md`, draft). Where this contract says «Mapbox» for the rendering layer, read «the map renderer». Its geo authority, provenance, privacy (P1-3 / 05G) and status → navigation-leg rules are unchanged. The text is aligned in a follow-up docs PR.
+
 ## 1. Scope and authority
 
 This contract splits BazarDrive map work into three map experiences inside one PWA — **Passenger Map**, **Driver Free Drive** and **Driver Active Navigation** — and freezes the rules they share: the status → navigation-leg mapping, the conceptual geo shapes, coordinate provenance, authority ownership, the PWA/native boundary, the demo-data rule and the prerequisite slice order.
