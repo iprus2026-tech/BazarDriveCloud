@@ -1601,6 +1601,17 @@ if (exists(responsesDeclineSortSmoke)) {
 // BD-CLOUD-DESIGN-LOADING-02A (#866) — Responses stable shell + four
 // matching-offers read states, deterministic fixtures, a11y skeleton, retry,
 // teardown guard, backend-OFF parity, and the version-only SW refresh.
+// /responses background offers refresh (backend ON): the period, its guards, the no-op on unchanged offers.
+const responsesOffersRefreshSmoke = path.join(root, 'scripts', 'smoke-responses-offers-refresh.mjs');
+if (exists(responsesOffersRefreshSmoke)) {
+  try {
+    execFileSync(process.execPath, [responsesOffersRefreshSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-responses-offers-refresh.mjs failed\n${msg}`);
+  }
+}
+
 const responsesLoadingStatesSmoke = path.join(root, 'scripts', 'smoke-responses-loading-states.mjs');
 if (exists(responsesLoadingStatesSmoke)) {
   try {

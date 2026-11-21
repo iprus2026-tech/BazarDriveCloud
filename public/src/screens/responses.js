@@ -1072,6 +1072,9 @@ function renderRoleGateState() {
 // the read region to «Заказ отменён», a refusal stays here with its reason (a
 // retry only where a repeat can help). Backend ON: the server answers. Backend
 // OFF (#1188): the local order store is the record (cancelOwnLocalOrder).
+// How often the board looks for new offers in the background (backend ON).
+const OFFERS_POLL_MS = 6000;
+
 const ORDER_CANCEL_QUESTION = 'Отменить заказ? Водители перестанут его видеть, их отклики будут отклонены.';
 
 function renderOrderCancelHtml(stage, { message = '', retry = false, profile = false } = {}) {
@@ -2276,7 +2279,14 @@ export default function responses() {
     renderReadRegion();
   }
 
-  async function loadServerOffers({ isRetry = false } = {}) {
+  // A cheap identity of the offers the board shows: a silent refresh with the same offers changes
+  // nothing on screen (the passenger's selection, sort and hidden cards stay as they are).
+  let offersSignature = null;
+  function signatureOf(list) {
+    return JSON.stringify(list.map((d) => [d.driverId || d.id, d.price, d.note, d.previousTerms === true]));
+  }
+
+  async function loadServerOffers({ isRetry = false, silent = false } = {}) {
     if (!backendAuthoritative || fixture || readState === 'canceled' || !document.body.contains(root)) return;
     const runId = ++offersReadRunId;
     if (isRetry) setRetryBusy(true);
@@ -2288,7 +2298,11 @@ export default function responses() {
       // handoff wins; a newly terminal ride suppresses the stale accepted card
       // and lets this successful offers result settle normally.
       if (settleLatestHandoff()) return;
-      drivers = buildDriversForOrder(request, serverOffers, true);
+      const nextDrivers = buildDriversForOrder(request, serverOffers, true);
+      const nextSignature = signatureOf(nextDrivers);
+      if (silent && nextSignature === offersSignature) return;
+      offersSignature = nextSignature;
+      drivers = nextDrivers;
       readState = drivers.length ? 'loaded' : 'empty';
       effectiveState = readState === 'loaded' ? loadedDomainState() : 'empty';
       selectedDriver = null;
@@ -2297,6 +2311,9 @@ export default function responses() {
       renderReadRegion();
     } catch (err) {
       if (runId !== offersReadRunId || !document.body.contains(root)) return;
+      // A failed background refresh keeps the board the passenger is looking at; the next tick or
+      // «Проверить отклики» tries again.
+      if (silent) return;
       if (settleLatestHandoff()) return;
       // BD-AUTH-POLICY-01B-C (K3-2): a driver-mode session is refused — show the way to the profile
       // switch instead of a retry that cannot succeed.
@@ -2458,6 +2475,16 @@ export default function responses() {
       if (!document.body.contains(root)) return;
       void loadServerOffers();
     }, 0);
+    // Offers arrive while the passenger waits on this board: refresh them in the background
+    // (there is no push channel yet). Only while the order still takes offers and the passenger
+    // is not choosing or withdrawing it; never in a hidden tab; stops once the screen is gone.
+    const offersPollId = setInterval(() => {
+      if (!document.body.contains(root)) { clearInterval(offersPollId); return; }
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (selecting || orderCancelPending || isAccepted) return;
+      if (readState !== 'empty' && readState !== 'loaded') return;
+      void loadServerOffers({ silent: true });
+    }, OFFERS_POLL_MS);
   }
 
   queueMicrotask(markFeedTabActive);
