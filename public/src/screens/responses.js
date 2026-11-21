@@ -2279,17 +2279,23 @@ export default function responses() {
     renderReadRegion();
   }
 
-  // A cheap identity of the offers the board shows: a silent refresh with the same offers changes
-  // nothing on screen (the passenger's selection, sort and hidden cards stay as they are).
+  // The identity of the offers the board shows: every field of every card (driver, car, plate,
+  // price, message, marks), so a re-sent offer with a new car or name is not mistaken for the old
+  // one. A silent refresh with the same offers changes nothing on screen (the passenger's
+  // selection, sort and hidden cards stay as they are).
   let offersSignature = null;
   function signatureOf(list) {
-    return JSON.stringify(list.map((d) => [d.driverId || d.id, d.price, d.note, d.previousTerms === true]));
+    return JSON.stringify(list);
   }
+  // Reads in flight (entry, «Проверить отклики», background). A background tick never starts while
+  // one is pending, so it cannot supersede a manual check and leave its button busy.
+  let offersReadsInFlight = 0;
 
   async function loadServerOffers({ isRetry = false, silent = false } = {}) {
     if (!backendAuthoritative || fixture || readState === 'canceled' || !document.body.contains(root)) return;
     const runId = ++offersReadRunId;
     if (isRetry) setRetryBusy(true);
+    offersReadsInFlight += 1;
 
     try {
       const serverOffers = await listOrderOffers(request.orderId);
@@ -2333,6 +2339,8 @@ export default function responses() {
       effectiveState = 'empty';
       readState = 'error';
       renderReadRegion();
+    } finally {
+      offersReadsInFlight -= 1;
     }
   }
 
@@ -2481,7 +2489,7 @@ export default function responses() {
     const offersPollId = setInterval(() => {
       if (!document.body.contains(root)) { clearInterval(offersPollId); return; }
       if (typeof document !== 'undefined' && document.hidden) return;
-      if (selecting || orderCancelPending || isAccepted) return;
+      if (selecting || orderCancelPending || isAccepted || offersReadsInFlight > 0) return;
       if (readState !== 'empty' && readState !== 'loaded') return;
       void loadServerOffers({ silent: true });
     }, OFFERS_POLL_MS);

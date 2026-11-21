@@ -48,7 +48,7 @@ check('each tick stops with the screen and skips a hidden tab, a pending choice,
   const tick = block('const offersPollId = setInterval(() => {', '}, OFFERS_POLL_MS);');
   assert.match(tick, /if \(!document\.body\.contains\(root\)\) \{ clearInterval\(offersPollId\); return; \}/);
   assert.match(tick, /document\.hidden\) return;/);
-  assert.match(tick, /if \(selecting \|\| orderCancelPending \|\| isAccepted\) return;/);
+  assert.match(tick, /if \(selecting \|\| orderCancelPending \|\| isAccepted \|\| offersReadsInFlight > 0\) return;/);
   assert.match(tick, /if \(readState !== 'empty' && readState !== 'loaded'\) return;/);
   assert.match(tick, /void loadServerOffers\(\{ silent: true \}\);/);
 });
@@ -63,12 +63,17 @@ check('a background read with the same offers changes nothing on screen', () => 
   assert.match(loader, /offersSignature = nextSignature;/);
 });
 
-check('the identity covers what a card shows: driver, price, message, previous-terms mark', () => {
+check('the identity covers every field a card shows (Codex P2: a re-sent offer with a new car or name)', () => {
   const sig = block('function signatureOf(list) {', '\n  }');
-  assert.match(sig, /d\.driverId \|\| d\.id/);
-  assert.match(sig, /d\.price/);
-  assert.match(sig, /d\.note/);
-  assert.match(sig, /d\.previousTerms === true/);
+  assert.match(sig, /return JSON\.stringify\(list\);/, 'the whole card list, not a hand-picked subset');
+});
+
+check('a background tick never overlaps a pending read (Codex P2: a superseded manual check stayed busy)', () => {
+  const loader = block('async function loadServerOffers(', 'function refreshBoard()');
+  const inc = loader.indexOf('offersReadsInFlight += 1;');
+  assert.ok(inc > 0 && inc < loader.indexOf('await listOrderOffers('), 'counted before the request');
+  const fin = loader.indexOf('} finally {');
+  assert.ok(fin > 0 && loader.indexOf('offersReadsInFlight -= 1;', fin) > fin, 'released in finally, on every exit');
 });
 
 check('a failed background read keeps the board (no error state from a tick)', () => {
