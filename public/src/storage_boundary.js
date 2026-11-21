@@ -18,6 +18,11 @@
 // storage layout):
 //
 //   bazardrive.auth.v1              → auth_token.js (clearAuth() — the bearer-token session, R17)
+//
+// Not cleared here, documented: bazardrive.auth.confirmed.v1 → auth_token.js — the ownerVersion
+// of the last server-confirmed auth record (new-tab continuity). A pointer only: no token, no
+// identity; a later login writes a new ownerVersion that a stale pointer cannot match.
+//
 //   bazardrive.ride_history.v1      → ride_history.js
 //   bazardrive.favorite_routes.v1   → favorite_routes.js (clearFavoriteRoutes()
 //                                     also clears

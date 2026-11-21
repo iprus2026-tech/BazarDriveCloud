@@ -14,7 +14,7 @@ import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole, clearSmokeRole } from './smoke_role.js';
 import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
-import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from './auth_token.js';
+import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected, adoptConfirmedAuth } from './auth_token.js';
 import { setLocalLogoutObserver, resetLocalSession, AUTH_CLEAR_FOREIGN } from './mock_auth.js';
 import { createAuthLogout } from './auth_logout.js';
 import { putSessionActiveRole } from './api_client.js';
@@ -267,6 +267,10 @@ document.getElementById('fab').addEventListener('click', () => {
 // One controller owns both boot and post-verify reconciliation.
 // Rejected or mismatching candidate/bound ownership invalidates only this tab's
 // projection. A matching candidate still waits for server-confirmed admission.
+// A fresh tab (a phone relaunch) first takes back a server-confirmed session as a candidate, so
+// its profile projection is kept; the session read below still has to confirm it, and a refusal
+// resets the projection through onRejectedSession. Without such a record nothing changes.
+if (isBackendEnabled() && isAuthTabRejected()) adoptConfirmedAuth();
 if (isBackendEnabled() && isAuthTabRejected()
     && user.get().role !== 'guest') user.resetCacheOnly();
 const bootSession = createAuthSessionBootstrap({

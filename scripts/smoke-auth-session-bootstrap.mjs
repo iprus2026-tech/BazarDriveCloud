@@ -524,7 +524,20 @@ async function markerlessVersionedCase(name, saved) {
   let requests = 0;
   const c = create({ backendEnabled: () => true, requestSession: async () => { requests++; return session(); } });
   const result = await c.reconcile();
-  assert.equal(requests, 0, 'markerless new tab must not adopt retained versioned auth; state=' + result.state);
+  if (name === 'bound') {
+    // New-tab continuity (a phone relaunch is a fresh tab): a record the server CONFIRMED carries
+    // `confirmed: true` and is taken back as a candidate, then confirmed again by /auth/session
+    // before anything is trusted. A revoked session answers no user and detaches (pinned
+    // separately in smoke-auth-new-tab-continuity.mjs).
+    assert.equal(localStorage.getItem('bazardrive.auth.confirmed.v1'), JSON.parse(raw).ownerVersion, 'commit names the server-confirmed record');
+    assert.equal(requests, 1, 'the adopted candidate is confirmed by the server first');
+    assert.equal(result.state, 'AUTHENTICATED');
+    assert.equal(auth.getAuthUserId(), 'a');
+    assert.equal(auth.isAuthCandidate(), false, 'confirmed again and bound in this tab');
+    return;
+  }
+  assert.notEqual(localStorage.getItem('bazardrive.auth.confirmed.v1'), JSON.parse(raw).ownerVersion, 'an abandoned / never-confirmed candidate is never named confirmed');
+  assert.equal(requests, 0, 'markerless new tab must not adopt retained unconfirmed auth; state=' + result.state);
   assert.equal(result.state, 'ANONYMOUS');
   assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
   assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw);
