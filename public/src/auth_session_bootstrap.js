@@ -2,6 +2,7 @@
 import { isBackendEnabled } from './api_config.js';
 import { getAuthToken, getAuthUserId, getAuthPhone, setAuth, clearAuth, pinAuthTabUser,
   detachRejectedAuth, isAuthTabRejected, getAuthOwnerVersion, isAuthCandidate, commitAuthCandidate,
+  adoptConfirmedAuth,
   AUTH_CLEAR_FOREIGN } from './auth_token.js';
 import { getSession } from './api_client.js';
 
@@ -29,6 +30,7 @@ export function createAuthSessionBootstrap({
   readOwnerVersion = getAuthOwnerVersion,
   authCandidate = isAuthCandidate,
   commitCandidate = commitAuthCandidate,
+  adoptConfirmed = adoptConfirmedAuth,
   requestSession = getSession,
   pinTabUser = pinAuthTabUser,
   onRejectedSession = () => {},
@@ -489,6 +491,9 @@ export function createAuthSessionBootstrap({
     }
     if (logoutStoragePending) return fail('AUTH_STORAGE_FAILED');
     // Missing getters are not proof that durable tab detachment succeeded.
+    // A fresh tab first offers a server-confirmed record back as a candidate (it is confirmed below
+    // like any candidate); without one, the markerless tab detaches exactly as before.
+    if (!rejectedDetachPending && !bootActorPinned && tabRejected()) adoptConfirmed();
     if (rejectedDetachPending || (!bootActorPinned && tabRejected())) return detachRejectedSession();
     if (!bootActorPinned) {
       const persistedUserId = readUserId();

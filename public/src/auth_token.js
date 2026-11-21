@@ -13,6 +13,10 @@ export const AUTH_STORAGE_KEY = 'bazardrive.auth.v1';
 const STORAGE_KEY = 'bazardrive.auth.v1';
 export const AUTH_CLEAR_FOREIGN = 'foreign';
 const REJECTED_PROJECTION_KEY = 'bazardrive.auth.rejected_projection.v1';
+// The ownerVersion of the last record the server confirmed (new-tab continuity, see
+// adoptConfirmedAuth). Only a pointer: no credential, no identity. A separate key on purpose — a
+// write to STORAGE_KEY is broadcast to every tab, and confirming must not add a second one.
+const CONFIRMED_KEY = 'bazardrive.auth.confirmed.v1';
 const OWNER_VERSION = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function readMarker() {
@@ -129,15 +133,63 @@ export function isAuthCandidate() {
 // credential. Keep the version pin even after confirmation and across reload.
 export function commitAuthCandidate(ownerVersion) {
   if (!ownerVersion || getAuthOwnerVersion() !== ownerVersion) return false;
-  if (marker.state === 'bound') return true;
+  if (marker.state === 'bound') { markRecordConfirmed(ownerVersion); return true; }
   const candidate = marker;
   try {
     if (!persistMarker({ state: 'bound', ownerVersion })) throw new Error('Auth marker write failed');
+    markRecordConfirmed(ownerVersion);
     return getAuthOwnerVersion() === ownerVersion;
   } catch {
     // Retain the same safe candidate for a manual server-confirmation retry.
     marker = candidate;
     try { persistMarker(candidate); } catch {}
+    return false;
+  }
+}
+
+// New-tab session continuity. The per-tab marker keeps a fresh tab from silently resuming a
+// credential another tab abandoned (a candidate left behind by Guest / an abandoned login cannot be
+// removed atomically). But on a phone every app relaunch is a fresh tab, so a session confirmed by
+// the server must survive it. Once /auth/session has confirmed a record (commitAuthCandidate),
+// CONFIRMED_KEY names its ownerVersion; a never-confirmed candidate is never named, and a new login
+// writes a new ownerVersion that an older confirmation cannot match.
+function markRecordConfirmed(ownerVersion) {
+  try {
+    const raw = loadRaw();
+    if (raw.ownerVersion !== ownerVersion || !raw.token) return;
+    if (localStorage.getItem(CONFIRMED_KEY) !== ownerVersion) localStorage.setItem(CONFIRMED_KEY, ownerVersion);
+  } catch {
+    // Best effort: without the pointer a later fresh tab simply signs in again.
+  }
+}
+
+function confirmedVersion() {
+  try { return localStorage.getItem(CONFIRMED_KEY); } catch { return null; }
+}
+
+// A fresh tab (no marker at all in this tab's sessionStorage) may take a server-confirmed record
+// as a CANDIDATE again. Nothing is trusted yet: the bootstrap still asks /auth/session, which must
+// return the same user with a verified phone before commitAuthCandidate() binds it, and a revoked
+// session (logout and Guest revoke on the server first) answers no user, so the tab detaches as
+// before. A tab that already decided — anonymous, rejected, or holding its own marker — never adopts.
+export function isAuthRecordConfirmed() {
+  try { const raw = loadRaw(); return !!raw.ownerVersion && confirmedVersion() === raw.ownerVersion; } catch { return false; }
+}
+
+export function adoptConfirmedAuth() {
+  if (marker !== null || readMarker() !== null || blocked || tabDetachMode || pendingWrite) return false;
+  try {
+    const raw = loadRaw();
+    if (confirmedVersion() !== raw.ownerVersion || typeof raw.token !== 'string' || !raw.token
+        || typeof raw.userId !== 'string' || !raw.userId
+        || typeof raw.ownerVersion !== 'string' || !OWNER_VERSION.test(raw.ownerVersion)) return false;
+    if (!persistMarker({ state: 'candidate', ownerVersion: raw.ownerVersion })) {
+      marker = null;
+      try { sessionStorage.removeItem(REJECTED_PROJECTION_KEY); } catch {}
+      return false;
+    }
+    return recordOwned(loadRaw());
+  } catch {
     return false;
   }
 }

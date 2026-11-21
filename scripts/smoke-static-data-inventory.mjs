@@ -71,6 +71,7 @@ const NOT_CLEARED = [
   { key: 'bazardrive.user.v1', documented: true },            // reset by auth flow (user.reset)
   { key: 'bazardrive.smoke_role.v1', documented: true, session: true }, // reset by auth flow (clearSmokeRole)
   { key: 'bazardrive.auth.rejected_projection.v1', documented: false, session: true }, // tab-local auth orchestration marker
+  { key: 'bazardrive.auth.confirmed.v1', documented: true },  // ownerVersion pointer of the last server-confirmed auth record; no credential
   { key: 'bazardrive.posts.v1', documented: true },           // global cache, survives
   { key: 'bazardrive.map_prefs.v1', documented: true },       // device pref, survives
   { key: 'bazardrive.theme.v1', documented: true },           // device pref (theme.js), survives

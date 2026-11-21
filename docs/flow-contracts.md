@@ -281,6 +281,19 @@ Welcome. Ordinary step Back and verify-phone-only Back do not revoke.
 Revoke failures retain exact actor/handoff/caches/pending intent for Retry.
 Post-revoke local failures retain a repair lease without repeating revoke.
 
+New-tab continuity (backend ON): a fresh tab — on a phone, every app relaunch — has no
+per-tab ownership marker, so it used to treat every retained bearer as foreign and send the
+user back through OTP. Once `/auth/session` has confirmed a record, `auth_token.js` names its
+ownerVersion in `bazardrive.auth.confirmed.v1` (a pointer, written outside the broadcast
+token key). A fresh tab that finds the shared record so named takes it back as a candidate
+(`adoptConfirmedAuth()`, before the boot projection reset in `app.js`), and the bootstrap
+confirms it like any candidate: the same user with a verified phone binds it; `{ user: null }`
+(a session revoked by logout or Guest, both server-first) detaches the tab as before; a
+network failure leaves an untrusted candidate for Retry. Never-confirmed candidates (an
+abandoned login, a Guest detach of an unconfirmed handoff), a confirmation of an older login,
+and tabs that already decided (rejected, anonymous or holding their own marker) are never
+adopted. Pinned by `scripts/smoke-auth-new-tab-continuity.mjs`.
+
 Reload resume (#1177): a reload during full onboarding leaves a cleanup-only
 owner. After the role is chosen again, a resumable login (own bearer, stored
 phone, AUTHENTICATED session with a verified phone) is confirmed through the

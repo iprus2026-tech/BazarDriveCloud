@@ -1612,6 +1612,18 @@ if (exists(responsesOffersRefreshSmoke)) {
   }
 }
 
+// New-tab session continuity (backend ON): a server-confirmed record is taken back by a fresh tab
+// only after /auth/session confirms it again; unconfirmed, stale, revoked or foreign never are.
+const authNewTabContinuitySmoke = path.join(root, 'scripts', 'smoke-auth-new-tab-continuity.mjs');
+if (exists(authNewTabContinuitySmoke)) {
+  try {
+    execFileSync(process.execPath, [authNewTabContinuitySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-auth-new-tab-continuity.mjs failed\n${msg}`);
+  }
+}
+
 const responsesLoadingStatesSmoke = path.join(root, 'scripts', 'smoke-responses-loading-states.mjs');
 if (exists(responsesLoadingStatesSmoke)) {
   try {
