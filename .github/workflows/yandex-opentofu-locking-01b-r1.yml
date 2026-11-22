@@ -10,11 +10,14 @@ name: BD-BACKEND-DEPLOY-01B-R1 OpenTofu native S3 locking proof
 # carry a matching SHA-256 plus CLI provenance. The precheck never replaces the
 # authoritative operator-side yc read-back recorded under Issue #862.
 #
-# Pre-write preflight: both S3 keys must be confirmed absent and the full
-# version/delete-marker history must be empty with IsTruncated=false before any
-# tofu init or first apply; 403, network errors and ambiguous or partial
-# responses fail closed. The manifest SHA-256 binds the armed values to the
-# reviewed manifest bytes only - it does not prove the cloud-side binding.
+# Pre-write preflight: both approved S3 keys under the state prefix must be
+# confirmed absent and their version/delete-marker history must be empty with
+# IsTruncated=false before any tofu init or first apply; 403, network errors and
+# ambiguous or partial responses fail closed. Listing stays prefix-scoped for
+# least privilege: full-bucket emptiness is the separate operator-authorized
+# FULL_BUCKET_INVENTORY_VERIFIED gate on Gate C, never a CI claim.
+# The manifest SHA-256 binds the armed values to the reviewed manifest bytes
+# only - it does not prove the cloud-side binding.
 #
 # Two separately armed phases validate native OpenTofu S3 locking against one
 # disposable Yandex Object Storage bucket:
@@ -895,16 +898,21 @@ jobs:
             printf '%s\n' "${etag}"
           }
 
+          # Prefix-scoped by design (least privilege). This is not a full-bucket
+          # emptiness proof; Gate C requires the separate operator-authorized
+          # FULL_BUCKET_INVENTORY_VERIFIED read-back before arming.
           list_object_versions_strict() {
             local inventory_error_file
             local list_exit_status
             local error_code
             inventory_error_file="$(mktemp "${workdir}/inventory-stderr.XXXXXX")"
-            if ! aws s3api list-object-versions \
+            if aws s3api list-object-versions \
               --endpoint-url "${YANDEX_S3_ENDPOINT}" \
               --bucket "${YANDEX_BUCKET}" \
               --prefix "${STATE_KEY}" \
               --output json >"${workdir}/inventory.json" 2>"${inventory_error_file}"; then
+              :
+            else
               list_exit_status=$?
               error_code="$(aws_error_code_from_file "${inventory_error_file}")"
               : > "${inventory_error_file}"
@@ -1029,7 +1037,7 @@ jobs:
 
           if [[ "${PROOF_PHASE}" == "LOCK_TEST" ]]; then
             failure_stage='prewrite_preflight'
-            echo '01B-R1 marker: pre-write S3 preflight (both keys absent, no versions, no delete markers)'
+            echo '01B-R1 marker: pre-write S3 preflight (both approved keys absent; no versions or delete markers under the approved state prefix)'
             preflight_snapshot="$(verify_bucket_empty_preflight)"
             IFS=$'\t' read -r preflight_versions preflight_delete_markers <<<"${preflight_snapshot}"
             (( preflight_versions == 0 ))
@@ -1039,7 +1047,9 @@ jobs:
             echo "preflight_versions=${preflight_versions}"
             echo "preflight_delete_markers=${preflight_delete_markers}"
             echo 'preflight_write_forbidden_until_pass=YES'
-            echo '01B-R1 marker: pre-write S3 preflight PASS; bucket holds no object, version or delete marker'
+            echo '01B-R1 marker: pre-write S3 preflight PASS; the approved state prefix holds no object, version or delete marker'
+            echo 'preflight_scope=approved_state_prefix'
+            echo 'full_bucket_inventory=FULL_BUCKET_INVENTORY_VERIFIED_REQUIRED_AT_GATE_C'
           fi
 
           failure_stage='backend_init'
@@ -1429,7 +1439,7 @@ jobs:
             echo "- Budget ceiling: \`${BUDGET_CEILING_RUB} RUB\`"
             echo "- Full cleanup deadline: \`${CLEANUP_DEADLINE_MINUTES} minutes\` after this terminal result"
             echo
-            echo 'Versioned objects/delete markers, the bucket, and temporary IAM/WIF resources still require manifest-verified human cleanup and zero-orphan checks.'
+            echo 'Prefix-scoped versioned objects/delete markers, the whole bucket, and temporary IAM/WIF resources still require the operator-authorized FULL_BUCKET_INVENTORY_VERIFIED check and manifest-verified human cleanup with zero-orphan checks.'
           } >> "${GITHUB_STEP_SUMMARY}"
 
           echo '::notice title=01B RECOVERY PASS candidate::The exact approved stale lock was removed, state integrity was preserved, a final inert write succeeded, and current state/lock objects were removed. Human versioned-bucket and IAM/WIF cleanup remains required.'
