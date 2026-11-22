@@ -10,6 +10,12 @@ name: BD-BACKEND-DEPLOY-01B-R1 OpenTofu native S3 locking proof
 # carry a matching SHA-256 plus CLI provenance. The precheck never replaces the
 # authoritative operator-side yc read-back recorded under Issue #862.
 #
+# Pre-write preflight: both S3 keys must be confirmed absent and the full
+# version/delete-marker history must be empty with IsTruncated=false before any
+# tofu init or first apply; 403, network errors and ambiguous or partial
+# responses fail closed. The manifest SHA-256 binds the armed values to the
+# reviewed manifest bytes only - it does not prove the cloud-side binding.
+#
 # Two separately armed phases validate native OpenTofu S3 locking against one
 # disposable Yandex Object Storage bucket:
 #   LOCK_TEST -> baseline state, concurrent rejection, normal unlock, rewrite,
@@ -65,6 +71,7 @@ jobs:
       YANDEX_FEDERATED_CREDENTIAL_ID: PENDING
       IDENTITY_MANIFEST_SHA256: PENDING
       IDENTITY_MANIFEST_JSON: PENDING
+      FORBIDDEN_BUCKET_NAME: bd-state-val-01b-20260809-203ea0a7
       YANDEX_TOKEN_ENDPOINT: https://auth.yandex.cloud/oauth/token
       YANDEX_EPHEMERAL_ENDPOINT: https://iam.api.cloud.yandex.net/iam/aws-compatibility/v1/ephemeralAccessKeys
       YANDEX_S3_ENDPOINT: https://storage.yandexcloud.net
@@ -148,7 +155,22 @@ jobs:
           [[ "${YANDEX_SERVICE_ACCOUNT_ID}" =~ ^[a-z0-9]+$ ]]
           [[ "${YANDEX_FEDERATION_ID}" =~ ^[a-z0-9]+$ ]]
           [[ "${YANDEX_FEDERATED_CREDENTIAL_ID}" =~ ^[a-z0-9]+$ ]]
-          [[ "${YANDEX_BUCKET}" =~ ^bd-state-val-01b-r1-[0-9]{8}-[a-z0-9]{8}$ ]]
+          [[ "${YANDEX_BUCKET}" =~ ^bd-state-val-01b-[0-9]{8}-[a-z0-9]{8}$ ]]
+          bucket_date="${YANDEX_BUCKET:17:8}"
+          if [[ "$(date -u -d "${bucket_date}" +%Y%m%d 2>/dev/null)" != "${bucket_date}" ]]; then
+            echo '01B-R1 contract violation: bucket name must embed a valid calendar date (YYYYMMDD).'
+            exit 1
+          fi
+          if [[ "${YANDEX_BUCKET}" == "${FORBIDDEN_BUCKET_NAME}" ]]; then
+            echo '01B-R1 contract violation: the deleted 01B bucket name must never be reused.'
+            exit 1
+          fi
+          for forbidden_identity_id in ajelpmev714egr70f6g7 aje1pmev714egr70f6g7 aje546ldbm6h8loqve3h aje5461dbm6h8loqve3h ajed3k1603h8fnvr5jba; do
+            if [[ "${YANDEX_SERVICE_ACCOUNT_ID}" == "${forbidden_identity_id}" || "${YANDEX_FEDERATION_ID}" == "${forbidden_identity_id}" || "${YANDEX_FEDERATED_CREDENTIAL_ID}" == "${forbidden_identity_id}" ]]; then
+              echo '01B-R1 contract violation: deleted 01B identity IDs must never be reused.'
+              exit 1
+            fi
+          done
           [[ "${STATE_KEY}" == "01b/terraform.tfstate" ]]
           [[ "${LOCK_KEY}" == "${STATE_KEY}.tflock" ]]
           [[ "${LOCK_HOLD_SECONDS}" == "45" ]]
@@ -318,24 +340,42 @@ jobs:
             exit 1
           fi
 
-          if ! jq -e --arg sa "${YANDEX_SERVICE_ACCOUNT_ID}" --arg fed "${YANDEX_FEDERATION_ID}" --arg cred "${YANDEX_FEDERATED_CREDENTIAL_ID}" --arg bucket "${YANDEX_BUCKET}" --arg subject "${EXPECTED_SUBJECT}" --arg folder "${APPROVED_VALIDATION_FOLDER_ID}" '
+          # The SHA-256 above proves only that the armed values equal the reviewed manifest bytes.
+          # It does not prove the cloud-side binding; the authoritative binding read-back remains the
+          # Gate C CLI sequence and the independent review recorded against Issue #862.
+          if ! jq -es --arg sa "${YANDEX_SERVICE_ACCOUNT_ID}" --arg fed "${YANDEX_FEDERATION_ID}" --arg cred "${YANDEX_FEDERATED_CREDENTIAL_ID}" --arg bucket "${YANDEX_BUCKET}" --arg subject "${EXPECTED_SUBJECT}" --arg folder "${APPROVED_VALIDATION_FOLDER_ID}" '
             def armed(x): (x | type) == "string" and x != "" and x != "PENDING";
-            .schema == "01b-r1-identity-manifest/v1"
-            and armed(.service_account.id)
-            and armed(.federation.id)
-            and armed(.credential.id)
-            and armed(.credential.external_subject)
-            and .service_account.id == $sa
-            and .federation.id == $fed
-            and .credential.id == $cred
-            and .credential.service_account_id == $sa
-            and .credential.external_subject == $subject
-            and .bucket.name == $bucket
-            and .folder_id == $folder
-            and (.provenance.tool == "yc")
-            and ((.provenance.commands | type) == "array")
-            and ((.provenance.commands | length) >= 3)
-            and (.provenance.commands | all(type == "string" and startswith("yc ")))
+            def has_cmd($c; $prefix; $needle):
+              (($c | type) == "array") and any($c[];
+                (type == "string") and startswith($prefix) and contains($needle) and contains("--format json"));
+            (length == 1)
+            and (.[0] | type == "object")
+            and (.[0] as $m |
+              ($m.schema == "01b-r1-identity-manifest/v1")
+              and armed($m.service_account.id)
+              and armed($m.federation.id)
+              and armed($m.credential.id)
+              and armed($m.credential.external_subject)
+              and ($m.service_account.id == $sa)
+              and ($m.federation.id == $fed)
+              and ($m.credential.id == $cred)
+              and ($m.credential.service_account_id == $sa)
+              and ($m.credential.external_subject == $subject)
+              and ($m.bucket.name == $bucket)
+              and armed($m.bucket.collision_check.result)
+              and ($m.bucket.collision_check.result == "CONFIRMED_ABSENT")
+              and (($m.bucket.collision_check.checked_at | type) == "string")
+              and ($m.bucket.collision_check.checked_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
+              and ($m.folder_id == $folder)
+              and ($m.provenance.tool == "yc")
+              and (($m.provenance.commands | type) == "array")
+              and (($m.provenance.commands | length) >= 4)
+              and has_cmd($m.provenance.commands; "yc iam service-account get"; $sa)
+              and has_cmd($m.provenance.commands; "yc iam workload-identity oidc federation get"; $fed)
+              and has_cmd($m.provenance.commands; "yc iam workload-identity federated-credential get"; $cred)
+              and any($m.provenance.commands[];
+                (type == "string") and startswith("yc storage bucket ") and contains($bucket))
+            )
           ' <<<"${IDENTITY_MANIFEST_JSON}" >/dev/null 2>&1; then
             echo 'IDENTITY_PRECHECK_FAILED: manifest does not match the armed identity, subject, bucket or CLI provenance contract'
             unset manifest_digest
@@ -855,22 +895,16 @@ jobs:
             printf '%s\n' "${etag}"
           }
 
-          verify_inventory() {
-            local inventory
+          list_object_versions_strict() {
             local inventory_error_file
             local list_exit_status
             local error_code
-            local versions
-            local delete_markers
-            local total_bytes
             inventory_error_file="$(mktemp "${workdir}/inventory-stderr.XXXXXX")"
-            if inventory="$(aws s3api list-object-versions \
+            if ! aws s3api list-object-versions \
               --endpoint-url "${YANDEX_S3_ENDPOINT}" \
               --bucket "${YANDEX_BUCKET}" \
               --prefix "${STATE_KEY}" \
-              --output json 2>"${inventory_error_file}")"; then
-              :
-            else
+              --output json >"${workdir}/inventory.json" 2>"${inventory_error_file}"; then
               list_exit_status=$?
               error_code="$(aws_error_code_from_file "${inventory_error_file}")"
               : > "${inventory_error_file}"
@@ -883,29 +917,101 @@ jobs:
             fi
             : > "${inventory_error_file}"
             rm -f "${inventory_error_file}"
+            return 0
+          }
 
-            if ! jq -e \
-              --arg state "${STATE_KEY}" \
-              --arg lock "${LOCK_KEY}" \
-              '((.Versions // []) + (.DeleteMarkers // [])) |
-               map(select(.Key != $state and .Key != $lock)) |
-               length == 0' <<<"${inventory}" >/dev/null; then
-              echo 'inventory_result=INVALID_JSON_OR_UNAPPROVED_KEY' >&2
+          validate_inventory_json() {
+            local state_key="$1"
+            local lock_key="$2"
+            local inventory_file="${workdir}/inventory.json"
+
+            if [[ ! -s "${inventory_file}" ]]; then
+              echo 'inventory_result=EMPTY_OR_MISSING_RESPONSE' >&2
               return 1
             fi
 
-            if ! versions="$(jq -er '(.Versions // []) | length' <<<"${inventory}")"; then
-              echo 'inventory_result=VERSION_COUNT_ERROR' >&2
+            if ! jq -es --arg state "${state_key}" --arg lock "${lock_key}" '
+              def is_obj: type == "object";
+              def is_str: type == "string" and length > 0;
+              def is_int: type == "number" and . == floor and . >= 0;
+              def version_ok:
+                is_obj
+                and (.Key | is_str)
+                and (.VersionId | is_str)
+                and (.IsLatest | type == "boolean")
+                and (.LastModified | is_str)
+                and (.ETag | is_str)
+                and (.Size | is_int)
+                and (.StorageClass | is_str)
+                and ((.Key == $state) or (.Key == $lock));
+              def marker_ok:
+                is_obj
+                and (.Key | is_str)
+                and (.VersionId | is_str)
+                and (.IsLatest | type == "boolean")
+                and (.LastModified | is_str)
+                and ((.Key == $state) or (.Key == $lock));
+              (length == 1)
+              and (.[0] | is_obj)
+              and (.[0] | has("IsTruncated"))
+              and (.[0].IsTruncated == false)
+              and (.[0] | has("NextKeyMarker") | not)
+              and (.[0] | has("NextVersionIdMarker") | not)
+              and (if (.[0] | has("Versions")) then ((.[0].Versions | type) == "array") and (.[0].Versions | all(version_ok)) else true end)
+              and (if (.[0] | has("DeleteMarkers")) then ((.[0].DeleteMarkers | type) == "array") and (.[0].DeleteMarkers | all(marker_ok)) else true end)
+            ' "${inventory_file}" >/dev/null 2>&1; then
+              echo 'inventory_result=STRICT_VALIDATION_FAILED' >&2
               return 1
             fi
-            if ! delete_markers="$(jq -er '(.DeleteMarkers // []) | length' <<<"${inventory}")"; then
-              echo 'inventory_result=DELETE_MARKER_COUNT_ERROR' >&2
+
+            jq -rs '[((.[0].Versions // []) | length), ((.[0].DeleteMarkers // []) | length), ([((.[0].Versions // [])[] | .Size)] | add // 0)] | @tsv' "${inventory_file}"
+          }
+
+          verify_bucket_empty_preflight() {
+            local key
+            local status
+            local snapshot
+            local versions
+            local delete_markers
+            local total_bytes
+
+            for key in "${STATE_KEY}" "${LOCK_KEY}"; do
+              if ! status="$(s3_object_status "${key}")"; then
+                echo "preflight_result=HEAD_ERROR key=${key}" >&2
+                return 1
+              fi
+              if [[ "${status}" != "ABSENT" ]]; then
+                echo "preflight_result=OBJECT_PRESENT key=${key} status=${status}" >&2
+                return 1
+              fi
+            done
+
+            if ! list_object_versions_strict; then
+              echo 'preflight_result=INVENTORY_ERROR' >&2
               return 1
             fi
-            if ! total_bytes="$(jq -er '[((.Versions // [])[]? | (.Size // 0))] | add // 0' <<<"${inventory}")"; then
-              echo 'inventory_result=BYTE_COUNT_ERROR' >&2
+
+            if ! snapshot="$(validate_inventory_json "${STATE_KEY}" "${LOCK_KEY}")"; then
+              echo 'preflight_result=INVENTORY_ERROR' >&2
               return 1
             fi
+            IFS=$'\t' read -r versions delete_markers total_bytes <<<"${snapshot}"
+            printf '%s\t%s\n' "${versions}" "${delete_markers}"
+          }
+
+          verify_inventory() {
+            local snapshot
+            local versions
+            local delete_markers
+            local total_bytes
+
+            if ! list_object_versions_strict; then
+              return 1
+            fi
+            if ! snapshot="$(validate_inventory_json "${STATE_KEY}" "${LOCK_KEY}")"; then
+              return 1
+            fi
+            IFS=$'\t' read -r versions delete_markers total_bytes <<<"${snapshot}"
             if [[ ! "${versions}" =~ ^[0-9]+$ ||
                   ! "${delete_markers}" =~ ^[0-9]+$ ||
                   ! "${total_bytes}" =~ ^[0-9]+$ ]]; then
@@ -916,11 +1022,25 @@ jobs:
               echo 'inventory_result=BUCKET_CAP_EXCEEDED' >&2
               return 1
             fi
-            unset inventory
             printf '%s\t%s\t%s\n' "${versions}" "${delete_markers}" "${total_bytes}"
           }
 
           snapshot_helpers_ready='YES'
+
+          if [[ "${PROOF_PHASE}" == "LOCK_TEST" ]]; then
+            failure_stage='prewrite_preflight'
+            echo '01B-R1 marker: pre-write S3 preflight (both keys absent, no versions, no delete markers)'
+            preflight_snapshot="$(verify_bucket_empty_preflight)"
+            IFS=$'\t' read -r preflight_versions preflight_delete_markers <<<"${preflight_snapshot}"
+            (( preflight_versions == 0 ))
+            (( preflight_delete_markers == 0 ))
+            echo 'preflight_state_object=ABSENT'
+            echo 'preflight_lock_object=ABSENT'
+            echo "preflight_versions=${preflight_versions}"
+            echo "preflight_delete_markers=${preflight_delete_markers}"
+            echo 'preflight_write_forbidden_until_pass=YES'
+            echo '01B-R1 marker: pre-write S3 preflight PASS; bucket holds no object, version or delete marker'
+          fi
 
           failure_stage='backend_init'
           root_a="${workdir}/root-a"
