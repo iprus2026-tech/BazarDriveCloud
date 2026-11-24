@@ -176,8 +176,12 @@ slug: /decisions/driver-telemetry
     created **only for a `LIVE` sample and only on the first accepted insert** —
     historical, stale, idle and duplicate rows create none. Redis is written
     only **after** commit, by a **pending-state scan** (never a cursor), and the
-    whole publication decision — fence check, capture freshness, `(grant_version, publication_seq)`
-    comparison and write — is **one atomic Redis script**. A read-then-write
+    cache write is **one atomic Redis script** that checks the attempt lease,
+    revocation fence, capture freshness and publication order. PostgreSQL keeps
+    each driver's greatest `(grant_version, publication_seq)` in the transaction
+    that inserts a live intent. Every attempt takes a new per-driver lease and
+    verifies this durable head before dispatch. Losing the position key cannot
+    admit an older retry. A delayed command whose lease was lost cannot write. A read-then-write
     sequence is forbidden: a concurrent revocation can be lost inside it. The
     sample's exact `shift_id`/`vehicle_id`/`ride_id`/`trip_id` are re-checked
     before publishing. At first insert the server records the last fresh
@@ -193,7 +197,8 @@ slug: /decisions/driver-telemetry
     — otherwise the classification can be stale at commit. Reads re-check
     consent, cache version, session, shift and ride eligibility **for the exact
     cached binding**, and **fail closed if authorization cannot be evaluated**.
-    Both cache hits and PostgreSQL fallback return an empty live projection
+    Both cache hits and PostgreSQL fallback select the exact durable head.
+    Both return an empty live projection
     once the original capture deadline has passed or if it cannot be verified.
     **Redis and PostgreSQL are not in one transaction, and the ADR does not
     claim they are.** A revocation can commit before the Redis script runs; that

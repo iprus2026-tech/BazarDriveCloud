@@ -41,7 +41,7 @@ no synthetic real coordinates, no GitHub Actions/cloud deployment, no Gate C1.
 | Shift `OPEN/CLOSED` | Server transactional shift authority | `driver_shift` in PostgreSQL | Driver self work-context; authorized operations |
 | Online/free/busy | Future Presence service, based on heartbeat + eligibility | Redis TTL / optional audit events | Matching and coarse passenger projections |
 | Raw location fix | Browser sensor → validated, authenticated server ingress | Proposed append-only PostgreSQL | Driver self and tightly authorized internal processing |
-| Last live position | Future Presence service, driven by the durable publication intent (§C3) | PostgreSQL `driver_location_publication` + Redis cache (fenced by `grant_version`, ordered by `publication_seq`) | Role/ride-gated live projection only; denied at read time if consent or eligibility fails (§F.1) |
+| Last live position | Future Presence service, driven by the durable publication intent (§C3) | PostgreSQL intent and per-driver publication head (§C3), with a Redis cache | Role/ride-gated live projection only; denied at read time if consent or eligibility fails (§F.1) |
 | Ride/busy intervals | Server ride-state transitions | Existing `rides`, `ride_events` | Participant-gated backend services |
 | Fare/commission/net | Authorized server receipt lifecycle | Existing `receipts` | Driver self / finance; not GPS-derived |
 | Shift metrics | Future aggregation, with coverage and quality flags | Proposed aggregates table | Driver self and role-limited operations |
@@ -582,6 +582,13 @@ CREATE TABLE driver_location_publication (
   CHECK ((state = 'published') = (published_at IS NOT NULL))
 );
 
+-- Per driver, the newest committed LIVE intent. Holds no coordinates.
+CREATE TABLE driver_location_publication_head (
+  driver_id       uuid PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
+  grant_version   bigint NOT NULL CHECK (grant_version > 0),
+  publication_seq bigint NOT NULL CHECK (publication_seq > 0)
+);
+
 -- Durable revocation fence ("tombstone"): survives cache deletion and races.
 CREATE TABLE driver_telemetry_revocation_fence (
   driver_id             uuid PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
@@ -600,6 +607,25 @@ CREATE TABLE driver_telemetry_revocation_fence (
    `fresh_through = captured_at + freshness_window` on that intent. The same
    absolute instant applies at ingress, on retries and on live reads. The
    measurement is fresh through that instant, inclusive (§C2).
+
+   In that same transaction, advance the driver's durable head using the values
+   returned by the intent insert. A rollback undoes both changes. PostgreSQL
+   compares the two positive `bigint` values as an ordered pair:
+
+   ```sql
+   -- Advance the publication head for a newly inserted LIVE intent.
+   INSERT INTO driver_location_publication_head AS h (driver_id, grant_version, publication_seq)
+   VALUES (:driver, :grant, :seq)
+   ON CONFLICT (driver_id) DO UPDATE
+      SET grant_version = EXCLUDED.grant_version, publication_seq = EXCLUDED.publication_seq
+    WHERE (h.grant_version, h.publication_seq) <
+          (EXCLUDED.grant_version, EXCLUDED.publication_seq);
+   ```
+
+   The head advances before cache dispatch, including when an acknowledgement
+   is lost. Keep it across eviction, flush, outbox pruning and revocation.
+   An expired, discarded or removed head sample yields an empty projection.
+   It never promotes a previous intent. A new grant advances the same head.
 2. **One name.** The token is `publication_seq` everywhere; there is no
    `sample_seq` alias.
 3. **Discovery is a pending scan, never a cursor.** The publisher selects
@@ -612,13 +638,47 @@ CREATE TABLE driver_telemetry_revocation_fence (
    A `GET fence → deciders → SET` sequence is **not** atomic: a revocation can
    commit between the read and the write and the stale value survives. The
    publication decision and the cache mutation are therefore a single atomic
-   Redis script (Lua), executed as one unit by Redis:
+   Redis script (Lua), executed as one unit by Redis.
+
+   Drop expired pending intents in PostgreSQL even when Redis is offline (§C3 rule 7).
+   For each remaining fresh attempt, acquire a per-driver Redis lease with
+   `SET lease token NX PX lease_ms` and a fresh, unique, single-use token.
+   Use a bounded lease and put its key in the same Redis Cluster hash slot as
+   the position and fence. Only a confirmed acquisition may proceed. After
+   acquisition, in a fresh snapshot on the PostgreSQL primary, check the
+   pending intent's freshness and binding (§C3 rule 7), the active consent
+   version and durable revocation fence (§F.1), and its exact head:
+
+   ```sql
+   -- Is this intent still the driver's publication head?
+   SELECT EXISTS (
+     SELECT 1 FROM driver_location_publication_head
+      WHERE driver_id = :driver AND grant_version = :grant AND publication_seq = :seq
+   ) AS is_head;
+   ```
+
+   A superseded or revoked intent is discarded before dispatch. If the
+   authority checks cannot be evaluated, skip the write and retry. On a busy lease, unknown acquisition outcome
+   or lost lease, restart from acquisition with a new token and repeat the
+   database checks. Never replay a lease acquisition with the same token.
+   Release only by atomically comparing and deleting one's own token, or let
+   it expire. This also fences commands still in flight when their caller
+   timed out. The position hash may be absent on a valid first write or refill.
 
    ```lua
-   -- KEYS[1] = position key, KEYS[2] = fence key
-   -- ARGV = grant_version, publication_seq, payload, fresh_through_us (UTC epoch microseconds)
+   -- KEYS[1] = position key, KEYS[2] = fence key, KEYS[3] = attempt lease key
+   -- ARGV = grant_version, publication_seq, payload, fresh_through_us, lease token
+   if not ARGV[5] or ARGV[5] == '' or redis.call('GET', KEYS[3]) ~= ARGV[5] then
+     return 'lease_lost'
+   end
+   -- The publisher encodes positive bigint values as canonical ASCII decimal
+   -- strings. Compare exactly, including adjacent values above 2^53.
+   local function less(a, b)
+     if #a ~= #b then return #a < #b end
+     return a < b
+   end
    local fence = redis.call('GET', KEYS[2])
-   if fence and tonumber(fence) >= tonumber(ARGV[1]) then return 'fenced' end
+   if fence and not less(fence, ARGV[1]) then return 'fenced' end
    local deadline = tonumber(ARGV[4])
    if not deadline or not ARGV[4]:match('^%d+$') or deadline > 9007199254740991 then
      return 'expired'  -- require an exactly representable epoch-microsecond integer
@@ -630,8 +690,8 @@ CREATE TABLE driver_telemetry_revocation_fence (
    -- silently skip the CAS. Existence must be tested with EXISTS.
    if redis.call('EXISTS', KEYS[1]) == 1 then
      local v = redis.call('HMGET', KEYS[1], 'grant_version', 'publication_seq')
-     if tonumber(v[1]) > tonumber(ARGV[1])
-        or (tonumber(v[1]) == tonumber(ARGV[1]) and tonumber(v[2]) >= tonumber(ARGV[2])) then
+     if v[1] == ARGV[1] and v[2] == ARGV[2] then return 'already_published' end
+     if less(ARGV[1], v[1]) or (v[1] == ARGV[1] and less(ARGV[2], v[2])) then
        return 'stale_ignored'
      end
    end
@@ -640,8 +700,9 @@ CREATE TABLE driver_telemetry_revocation_fence (
    return 'published'
    ```
 
-   The fence and deadline checks, the pair comparison and the write are one
-   uninterruptible unit; two publishers racing with inverted order cannot both win.
+   The lease, fence, deadline and pair checks run atomically with the write.
+   An old command delivered after another publisher has acquired the lease
+   fails even if the position has since been evicted or the cache flushed.
 5. **PostgreSQL commits before Redis.** The script runs only after the sample
    transaction commits; a crash in between leaves the intent `pending` and
    retryable. Writing before commit is forbidden.
@@ -693,13 +754,12 @@ CREATE TABLE driver_telemetry_revocation_fence (
    forbidden.
 9. **Failure and retry have a defined outcome.** A Redis error, timeout or
    `503` leaves the row `pending` with `attempts = attempts + 1` and is retried
-   with backoff while the intent is fresh. `published` sets `published_at`.
-   The results `expired`, `fenced` and `stale_ignored`
-   set `discarded` and are **not** retried. Retrying is safe because the script
-   is idempotent: a repeat of an already-published `(grant_version,
-   publication_seq)` returns `stale_ignored`, and a repeat after a revocation
-   returns `fenced`. No failure mode can resurrect an older position, and no
-   failure mode can publish a position that PostgreSQL never committed.
+   with backoff while the intent is fresh. `lease_lost` also requires a fresh
+   attempt. `published` and `already_published` acknowledge the current intent
+   and set `published_at`. The latter performs no cache write. `expired`,
+   `fenced` and `stale_ignored` end in `discarded`. Apply these outcomes only
+   to a still-pending row. A duplicate or late response cannot reopen a
+   terminal intent. Losing the position key never resets the PostgreSQL head.
 
 This mirrors `notification_outbox` (migration `0004`): a durable ledger plus a
 retryable publisher, never an "in-process event after commit" that can be lost.
@@ -714,6 +774,29 @@ retryable publisher, never an "in-process event after commit" that can be lost.
 | Redis recovers after the capture deadline while the same shift and ride are active | Discard pending intent, zero cache writes |
 | Dispatch before the deadline, script execution after it | Script returns `expired`, existing position and fence unchanged |
 | Authorized cache hit or PostgreSQL fallback, just at and just after the deadline | Visible at equality, empty one microsecond later, including if the key still exists |
+
+**Ordering regression.** Run this fixture twice, once with `lose_cache`
+evicting only the position and once with it flushing the cache. Use two fresh
+samples for the same driver, active ride and grant. `admit` acquires a lease
+and checks PostgreSQL. `apply` runs the publication script. Dropping the first
+acknowledgement leaves intent 1 pending. Release its lease by expiry.
+
+```lua
+return function(f)
+  f.commit_live('1')
+  local old = f.admit('1')
+  assert(f.apply(old) == 'published') -- delivery succeeded, acknowledgement lost
+  f.expire_lease()
+  f.commit_live('2')
+  assert(f.apply(f.admit('2')) == 'published')
+  f.lose_cache()
+  assert(f.apply(old) == 'lease_lost') -- a delayed command from the first attempt
+  f.expire_lease()
+  assert(f.admit('1') == 'superseded') -- a fresh retry stops before writing
+  assert(f.cached_seq() == nil)
+  assert(f.live_seq() == '2') -- authorized fallback, same durable head
+end
+```
 
 ## D. Candidate API (NOT registered, names need frozen-shift-contract check)
 
@@ -985,7 +1068,8 @@ granted_at, revoked_at, purpose)`. `driver_location_sample.consent_version`
       publication intent** — a `pending` row carrying `driver_id`,
       `sample_id`, `grant_version` — in the same transaction. Historical,
       stale, idle and duplicate samples insert **no intent**;
-   5. commit.
+   5. for that new intent, advance the driver's publication head (§C3 rule 1)
+      and commit.
 
    The intent, not Redis, is the durable record that "this sample may become a
    live position". An ordinary non-locking `SELECT` is **not** sufficient: it
@@ -999,11 +1083,12 @@ granted_at, revoked_at, purpose)`. `driver_location_sample.consent_version`
    - A publisher drains `pending` intents **after** the PostgreSQL commit by
      scanning `WHERE state = 'pending' ORDER BY publication_seq` — never by a
      cursor (§C3 rule 3).
-   - The **entire** cache decision (fence, freshness, pair comparison and write)
+   - The **entire** cache decision (attempt lease, fence, freshness, pair comparison and write)
      is **one atomic Redis script** (§C3 rule 4). A `GET`/decide/`SET` sequence is
      explicitly forbidden: it is not atomic and a concurrent revocation can be
      lost inside it.
-   - Before running the script, the publisher re-checks the **exact** `shift_id`,
+   - After acquiring the attempt lease, the publisher verifies the exact durable
+     head (§C3 rule 4) and re-checks the **exact** `shift_id`,
      `vehicle_id`, `ride_id` and `trip_id` of the sample and that its shift is
      still `OPEN`, its ride still current and the capture still fresh (§C3 rule 7). A moved binding
      discards the intent: a position is never published under a different shift
@@ -1049,7 +1134,13 @@ granted_at, revoked_at, purpose)`. `driver_location_sample.consent_version`
    captured on ride A must not be served as a position on ride B.
 
    For a **live** projection, also evaluate the following predicate at the
-   moment of serving, after authorization. Use trusted current server time
+   moment of serving, after authorization. On both paths, use the current head
+   from the PostgreSQL primary. Validate its exact `(driver_id, grant_version,
+   publication_seq)` against the cache entry or join it to its single durable
+   intent and sample on fallback. Evaluate the head and authorization together
+   for the selected sample at read time. A missing head, or a head whose
+   sample is missing or ineligible, yields an empty projection. Never fall
+   back to the next older sample. Use trusted current server time
    and the published sample's deadline, from the same cache entry or the
    matching PostgreSQL intent on fallback. A missing, malformed or expired
    deadline yields an empty live projection. Cache TTL, a new heartbeat and
@@ -1130,7 +1221,7 @@ replayed the four files on the full pinned baseline and ran the docs-site gate.
 | Real SQL on PostgreSQL 16.16 and 18.7 | Two passes on each version. 23 matrix scenarios included 15 persisted rows and 8 expected rejections. C22 and C23 persisted coordinate-free `GAP` with `reason = 'no_fix'`. | 23/23 |
 | SQL assertions and controls | Four reason-parity assertions including two negative controls, with 14 reason-bearing results, 10 distinct reasons and 11 permitted CHECK entries. Two matrix controls and 14 constraint cases with exact rejection SQLSTATE checks. | 4/4 parity, 2/2 matrix controls, 14/14 constraints |
 | Concurrency and authoritative read | Separate PostgreSQL sessions with observed transaction locks. Six T5 results include the exact `deny` recorded after rolling back the authoritative-read fault. | 14/14 |
-| Lua model with mock Redis API | The publication body is from §C3 rule 4. The revocation fixture models the prose in §C3 rule 6. L7 requires the exact WRONGTYPE diagnostic. L8 and L9 detect broken `DEL` and a CAS-less publisher. | 18/18 |
+| Lua model with mock Redis API | The publication body came from §C3 rule 4 in the R8 snapshot. The revocation fixture models the prose in §C3 rule 6. L7 requires the exact WRONGTYPE diagnostic. L8 and L9 detect broken `DEL` and a CAS-less publisher. | 18/18 |
 
 The R7 independent report records PostgreSQL 16.16 and 18.7 and 13
 concurrency results per pass, with the authoritative-read row lost at
