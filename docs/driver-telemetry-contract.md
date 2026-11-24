@@ -305,6 +305,7 @@ therefore could not bind a completed ride:
    SELECT r.id
      FROM rides r
     WHERE r.driver_user_id = :driver
+      AND r.status NOT IN ('NEW_ORDER','CONFIRMATION_PENDING','CONFIRMED','CHAT_STARTED')
       AND COALESCE(r.accepted_at, r.created_at) <= :captured
       AND (
            r.accepted_at IS NULL                                   -- no lower bound
@@ -315,6 +316,11 @@ therefore could not bind a completed ride:
               AND (r.completed_at IS NOT NULL OR r.canceled_at IS NOT NULL))  -- active + terminal stamp
       );
    ```
+
+   The four pre-accept states in §B.1 have no ride interval yet. A row in
+   one of those states contributes to neither count, including when its
+   `created_at` precedes capture. An active or terminal ride that needs an
+   acceptance boundary and lacks it still counts as unprovable.
 
    **A missing required terminal timestamp must never be read as "the ride did
    not cover this instant".** It means the opposite: coverage cannot be decided,
@@ -567,6 +573,7 @@ CREATE TABLE driver_location_publication (
                     REFERENCES driver_location_sample(id) ON DELETE RESTRICT,
   driver_id       uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   grant_version   bigint NOT NULL CHECK (grant_version > 0),
+  fresh_through   timestamptz(6) NOT NULL CHECK (isfinite(fresh_through)), -- capture deadline (§C2)
   state           text NOT NULL DEFAULT 'pending'
                     CHECK (state IN ('pending', 'published', 'discarded')),
   attempts        integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -589,7 +596,10 @@ CREATE TABLE driver_telemetry_revocation_fence (
    the **same PostgreSQL transaction** as the sample, and only when the
    classification is `LIVE` (§C1 row 4) **and** this is the first accepted
    insert of that `(driver_id, sample_id)` (§D.3). Historical, stale, idle and
-   duplicate rows never create one.
+   duplicate rows never create one. The server records the sample's immutable
+   `fresh_through = captured_at + freshness_window` on that intent. The same
+   absolute instant applies at ingress, on retries and on live reads. The
+   measurement is fresh through that instant, inclusive (§C2).
 2. **One name.** The token is `publication_seq` everywhere; there is no
    `sample_seq` alias.
 3. **Discovery is a pending scan, never a cursor.** The publisher selects
@@ -606,9 +616,16 @@ CREATE TABLE driver_telemetry_revocation_fence (
 
    ```lua
    -- KEYS[1] = position key, KEYS[2] = fence key
-   -- ARGV = grant_version, publication_seq, payload
+   -- ARGV = grant_version, publication_seq, payload, fresh_through_us (UTC epoch microseconds)
    local fence = redis.call('GET', KEYS[2])
    if fence and tonumber(fence) >= tonumber(ARGV[1]) then return 'fenced' end
+   local deadline = tonumber(ARGV[4])
+   if not deadline or not ARGV[4]:match('^%d+$') or deadline > 9007199254740991 then
+     return 'expired'  -- require an exactly representable epoch-microsecond integer
+   end
+   local t = redis.call('TIME')
+   local now_us = tonumber(t[1]) * 1000000 + tonumber(t[2])
+   if now_us > deadline then return 'expired' end
    -- the position is a HASH: a plain GET would be WRONGTYPE and would
    -- silently skip the CAS. Existence must be tested with EXISTS.
    if redis.call('EXISTS', KEYS[1]) == 1 then
@@ -618,12 +635,13 @@ CREATE TABLE driver_telemetry_revocation_fence (
        return 'stale_ignored'
      end
    end
-   redis.call('HSET', KEYS[1], 'grant_version', ARGV[1], 'publication_seq', ARGV[2], 'payload', ARGV[3])
+   redis.call('HSET', KEYS[1], 'grant_version', ARGV[1], 'publication_seq', ARGV[2],
+              'payload', ARGV[3], 'fresh_through_us', ARGV[4])
    return 'published'
    ```
 
-   The fence check, the pair comparison and the write are one uninterruptible
-   unit; two publishers racing with inverted order cannot both win.
+   The fence and deadline checks, the pair comparison and the write are one
+   uninterruptible unit; two publishers racing with inverted order cannot both win.
 5. **PostgreSQL commits before Redis.** The script runs only after the sample
    transaction commits; a crash in between leaves the intent `pending` and
    retryable. Writing before commit is forbidden.
@@ -644,8 +662,24 @@ CREATE TABLE driver_telemetry_revocation_fence (
    and fails closed if it cannot be read (§F.1 rules 1 and 5). The fence bounds
    how long a revoked value can linger in the cache; it is not the authorization
    guarantee.
-7. **Exact identity is re-checked before publishing.** The publisher re-reads the
-   sample's own `shift_id`, `vehicle_id`, `ride_id`, `trip_id` and verifies that
+7. **Re-check binding and capture freshness on every attempt.** If the current
+   server time exceeds the intent's `fresh_through`, set its state to
+   `discarded` and stop retrying, even during a Redis outage. With the
+   pending row locked, use the current server time for `:attempt_at`:
+
+   ```sql
+   -- discard an expired pending publication
+   UPDATE driver_location_publication
+      SET state = 'discarded'
+    WHERE publication_seq = :seq AND state = 'pending'
+      AND fresh_through < :attempt_at
+   RETURNING publication_seq;
+   ```
+
+   If this returns a row, skip Redis. Otherwise pass the still-pending
+   intent's original deadline to the script. Its clock check also covers time spent
+   waiting between the PostgreSQL check and the Redis write. The publisher
+   re-reads the sample's own `shift_id`, `vehicle_id`, `ride_id`, `trip_id` and verifies that
    its covering shift is still `OPEN` and that its bound ride is still that
    driver's current active ride. If either moved, the intent is `discarded`: a
    position is never published under a different shift or ride than the one it
@@ -659,7 +693,8 @@ CREATE TABLE driver_telemetry_revocation_fence (
    forbidden.
 9. **Failure and retry have a defined outcome.** A Redis error, timeout or
    `503` leaves the row `pending` with `attempts = attempts + 1` and is retried
-   with backoff; `published` sets `published_at`; `fenced` and `stale_ignored`
+   with backoff while the intent is fresh. `published` sets `published_at`.
+   The results `expired`, `fenced` and `stale_ignored`
    set `discarded` and are **not** retried. Retrying is safe because the script
    is idempotent: a repeat of an already-published `(grant_version,
    publication_seq)` returns `stale_ignored`, and a repeat after a revocation
@@ -668,6 +703,17 @@ CREATE TABLE driver_telemetry_revocation_fence (
 
 This mirrors `notification_outbox` (migration `0004`): a durable ledger plus a
 retryable publisher, never an "in-process event after commit" that can be lost.
+
+**Regression cases for these rules** (an authorized reader and an open shift):
+
+| Fixture | Expected outcome |
+| --- | --- |
+| Each §B.1 pre-accept status at capture, no other ride | `IDLE`, both ride identifiers NULL |
+| Same fixture plus one provably covering active ride and a fresh fix | `LIVE` with that ride's exact identifiers |
+| A competing active ride is missing its required `accepted_at` | Reject with `ambiguous_ride` |
+| Redis recovers after the capture deadline while the same shift and ride are active | Discard pending intent, zero cache writes |
+| Dispatch before the deadline, script execution after it | Script returns `expired`, existing position and fence unchanged |
+| Authorized cache hit or PostgreSQL fallback, just at and just after the deadline | Visible at equality, empty one microsecond later, including if the key still exists |
 
 ## D. Candidate API (NOT registered, names need frozen-shift-contract check)
 
@@ -953,13 +999,13 @@ granted_at, revoked_at, purpose)`. `driver_location_sample.consent_version`
    - A publisher drains `pending` intents **after** the PostgreSQL commit by
      scanning `WHERE state = 'pending' ORDER BY publication_seq` — never by a
      cursor (§C3 rule 3).
-   - The **entire** publication decision (fence check + pair comparison + write)
+   - The **entire** cache decision (fence, freshness, pair comparison and write)
      is **one atomic Redis script** (§C3 rule 4). A `GET`/decide/`SET` sequence is
      explicitly forbidden: it is not atomic and a concurrent revocation can be
      lost inside it.
    - Before running the script, the publisher re-checks the **exact** `shift_id`,
      `vehicle_id`, `ride_id` and `trip_id` of the sample and that its shift is
-     still `OPEN` and its ride still current (§C3 rule 7). A moved binding
+     still `OPEN`, its ride still current and the capture still fresh (§C3 rule 7). A moved binding
      discards the intent: a position is never published under a different shift
      or ride.
    - Revocation is enforced by **two** things, with different strength: the
@@ -968,8 +1014,9 @@ granted_at, revoked_at, purpose)`. `driver_location_sample.consent_version`
      in the same atomic script that deletes the position (§C3 rule 6). The
      tombstone — not the key's absence — is what survives a delete, a race, or a
      replica still serving the old value.
-   - Failure leaves the intent `pending` with `attempts + 1` and retries with
-     backoff; `fenced`/`stale_ignored` mark it `discarded` and are not retried.
+   - A transient failure leaves a fresh intent `pending` with `attempts + 1`.
+     Retries use the original capture deadline. An expired intent or a script
+     result of `expired`, `fenced` or `stale_ignored` ends in `discarded`.
      The cache being down degrades live presence (reads fall back to the
      authoritative durable row or deny); it never loses the sample.
 
@@ -1000,6 +1047,19 @@ granted_at, revoked_at, purpose)`. `driver_location_sample.consent_version`
    empty projection, never "serve what the cache has". Reading "the driver's
    current ride is valid, so the cached point is valid" is forbidden: a point
    captured on ride A must not be served as a position on ride B.
+
+   For a **live** projection, also evaluate the following predicate at the
+   moment of serving, after authorization. Use trusted current server time
+   and the published sample's deadline, from the same cache entry or the
+   matching PostgreSQL intent on fallback. A missing, malformed or expired
+   deadline yields an empty live projection. Cache TTL, a new heartbeat and
+   a retry cannot extend this deadline. Authorized history follows its
+   separate retention and access rules.
+
+   ```sql
+   -- live-read freshness predicate (UTC instants)
+   SELECT COALESCE(isfinite(:fresh_through) AND :read_at <= :fresh_through, false) AS fresh;
+   ```
 
 5b. **Ride PATCH ordering (or fail closed).** `PATCH
    /api/v1/ride-state/rides/:tripId/status` takes `FOR UPDATE` on the `rides`

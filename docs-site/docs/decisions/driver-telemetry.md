@@ -4,7 +4,7 @@ docType: decision-record
 title: "Driver telemetry: foreground GPS, shift authority and privacy — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-11-23
+revision: 2026-11-24
 effectiveFrom: 2026-11-23
 reviewAfter: 2027-02-23
 visibleFor: [developer, dispatcher, product, qa, driver]
@@ -148,7 +148,9 @@ slug: /decisions/driver-telemetry
     both `NULL`), a `COMPLETED` ride has an **exclusive** upper bound on
     `completed_at`, and `CANCELED`/`NO_SHOW` on `canceled_at`. Comparing against
     `COALESCE(completed_at, canceled_at)` evaluates to `NULL` for an ordinary
-    active ride and silently drops it — the R4 defect.
+    active ride and silently drops it — the R4 defect. A pre-accept ride has no
+    interval yet, so it contributes to neither the covering count nor the
+    unprovable count, even beside a different active ride.
     A **retained closed shift** still covers its own interval: a capture inside
     it is storable history, never a rejection, and a successor shift never
     inherits an earlier capture. Only a capture outside **every** covering
@@ -174,11 +176,14 @@ slug: /decisions/driver-telemetry
     created **only for a `LIVE` sample and only on the first accepted insert** —
     historical, stale, idle and duplicate rows create none. Redis is written
     only **after** commit, by a **pending-state scan** (never a cursor), and the
-    whole publication decision — fence check, `(grant_version, publication_seq)`
+    whole publication decision — fence check, capture freshness, `(grant_version, publication_seq)`
     comparison and write — is **one atomic Redis script**. A read-then-write
     sequence is forbidden: a concurrent revocation can be lost inside it. The
     sample's exact `shift_id`/`vehicle_id`/`ride_id`/`trip_id` are re-checked
-    before publishing.
+    before publishing. At first insert the server records the last fresh
+    instant as `captured_at + freshness_window`. The publisher checks it on
+    each attempt, and the atomic cache script checks it again before writing.
+    An expired intent becomes `discarded`.
     Revocation is likewise **one atomic script** (`SET fence` + `DEL position`),
     so the tombstone cannot be lost by the deletion it accompanies; the fence is
     a separate key that position cleanup never deletes and is mirrored durably in
@@ -188,6 +193,8 @@ slug: /decisions/driver-telemetry
     — otherwise the classification can be stale at commit. Reads re-check
     consent, cache version, session, shift and ride eligibility **for the exact
     cached binding**, and **fail closed if authorization cannot be evaluated**.
+    Both cache hits and PostgreSQL fallback return an empty live projection
+    once the original capture deadline has passed or if it cannot be verified.
     **Redis and PostgreSQL are not in one transaction, and the ADR does not
     claim they are.** A revocation can commit before the Redis script runs; that
     window is closed by the **read path**, which denies on the authoritative
