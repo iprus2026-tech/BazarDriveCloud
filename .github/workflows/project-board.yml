@@ -1,0 +1,60 @@
+name: project-board
+
+# HUMAN_DECISION_REQUIRED: the owner must approve disclosure of the phase list and
+# Project field values, then separately authorize a first export. Keep the job
+# disabled while visibility and disclosure are unverified.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: prepare Project #1 snapshot candidate
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    env:
+      OWNER: iprus2026-tech
+      PROJECT: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Prepare allowlisted snapshot candidate
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_READ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ "$GITHUB_REPOSITORY" != iprus2026-tech/BazarDriveCloud || "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::Use the main branch of BazarDriveCloud"
+            exit 1
+          fi
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Project read access is unavailable"
+            exit 1
+          fi
+          source_sha="$(git rev-parse HEAD)"
+          main_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$source_sha" != "$GITHUB_SHA" || "$source_sha" != "$main_sha" ]]; then
+            echo "::error::Checked-out revision is not current main"
+            exit 1
+          fi
+          raw="$(mktemp "$RUNNER_TEMP/project-board.XXXXXX")"
+          trap 'rm -f -- "$raw"' EXIT
+          # JSON mode includes custom field values. --field is for table output.
+          if ! gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 > "$raw" 2>/dev/null; then
+            echo "::error::Could not read Project items"
+            exit 1
+          fi
+          observed_at="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+          main_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          node scripts/check-project-board.mjs "$raw" "$source_sha" "$main_sha" \
+            "$observed_at" "$RUNNER_TEMP/project-board-candidate"
