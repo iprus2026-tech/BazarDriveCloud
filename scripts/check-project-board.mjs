@@ -23,6 +23,7 @@ const PHASE_ROUTES = new Map([
 const DESIGN_STATES = new Set(['Todo', 'Designed (ADR)', 'Shipped']);
 const STATUSES = new Set(['Todo', 'In Progress', 'Done']);
 const LIVE_STATES = new Set(['LIVE', 'LIVE / PILOT-BLOCKED']);
+const MATRIX_STATES = new Set(['DARK', ...LIVE_STATES, 'LIVE (polling)', 'LIVE persistence / PILOT-BLOCKED']);
 
 export function checkProvenance({ source_sha, observed_at }, currentMainSha, now = Date.now()) {
   if (typeof source_sha !== 'string' || !/^[0-9a-f]{40}$/.test(source_sha) || source_sha !== currentMainSha) {
@@ -72,17 +73,66 @@ function projectPhases(board) {
   });
 }
 
-function checkPhaseRoutes(phases, inspector) {
-  const section = inspector.split(/^## /m).find((part) => part.startsWith('Live baseline'));
-  const rows = [];
-  for (const line of (section ?? '').split('\n')) {
-    const cells = line.match(/^\|\s*((?:`[^`]+`)(?:\s*,\s*`[^`]+`)*)\s*\|\s*([^|]+?)\s*\|/);
-    if (!cells) continue;
-    for (const [, route] of cells[1].matchAll(/`[A-Z]+\s+(\/[^`]+)`/g)) {
-      rows.push({ route: route.trim(), state: cells[2].trim() });
+function tableCells(line) {
+  if (!/^ {0,3}\S/.test(line)) return [];
+  const row = line.trim();
+  const cells = [];
+  let start = 0;
+  for (let index = 0; index < row.length; index++) {
+    if (row[index] === '\\') {
+      index++;
+    } else if (row[index] === '|') {
+      cells.push(row.slice(start, index).trim());
+      start = index + 1;
     }
   }
+  if (start < row.length) cells.push(row.slice(start).trim());
+  if (row.startsWith('|')) cells.shift();
+  return cells;
+}
 
+function readRouteCell(cell, row) {
+  // Consume the complete cell so that a broken token cannot hide a route in a group.
+  const route = /(`+)(?!`)[ \t]*[A-Z][A-Z0-9-]*[ \t]+(\/[^`\s]+)[ \t]*\1(?!`)/y;
+  const separator = /[ \t]*(?:,|<br[ \t]*\/?>)[ \t]*/iy;
+  const routes = [];
+  while (true) {
+    const match = route.exec(cell);
+    if (!match) throw new Error('invalid BD-DOCS-042 route cell in matrix row ' + row);
+    routes.push(match[2]);
+    if (route.lastIndex === cell.length) return routes;
+
+    separator.lastIndex = route.lastIndex;
+    if (!separator.exec(cell)) throw new Error('invalid BD-DOCS-042 route separator in matrix row ' + row);
+    route.lastIndex = separator.lastIndex;
+  }
+}
+
+function readRouteMatrix(inspector) {
+  const sections = inspector.split(/^ {0,3}##[ \t]+/m).slice(1)
+    .filter((part) => /^Live baseline(?:[ \t\r\n]|$)/.test(part));
+  const lines = (sections[0] ?? '').split(/\r?\n/);
+  const headerIndex = lines.findIndex((line, index) => index > 0 && line.trim());
+  const header = tableCells(lines[headerIndex] ?? '');
+  const delimiter = tableCells(lines[headerIndex + 1] ?? '');
+  if (sections.length !== 1 || header[0] !== 'Module / route' || header[1] !== 'State'
+      || delimiter.length !== header.length || !delimiter.every((cell) => /^:?-+:?$/.test(cell))) {
+    throw new Error('missing or invalid BD-DOCS-042 route matrix');
+  }
+
+  const rows = [];
+  for (const line of lines.slice(headerIndex + 2)) {
+    if (!line.trim() || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)) break;
+    const row = rows.length + 1;
+    const [cell, state] = tableCells(line);
+    if (!state) throw new Error('missing BD-DOCS-042 state in matrix row ' + row);
+    rows.push({ routes: readRouteCell(cell, row), state });
+  }
+  return rows.flatMap(({ routes, state }) => routes.map((route) => ({ route, state })));
+}
+
+function checkPhaseRoutes(phases, inspector) {
+  const rows = readRouteMatrix(inspector);
   for (const { issue_number: issue, design_state: design } of phases) {
     for (const prefix of PHASE_ROUTES.get(issue)) {
       const service = rows.filter(({ route }) => {
@@ -101,6 +151,9 @@ function checkPhaseRoutes(phases, inspector) {
       }
     }
   }
+
+  const unknown = rows.find(({ state }) => !MATRIX_STATES.has(state));
+  if (unknown) throw new Error('unknown BD-DOCS-042 state for ' + unknown.route);
 }
 
 export function prepareSnapshot(board, inspector, { sourceSha, currentMainSha, observedAt, now }) {
@@ -111,15 +164,10 @@ export function prepareSnapshot(board, inspector, { sourceSha, currentMainSha, o
   return { schema_version: 1, repository: REPOSITORY, project_number: 1, ...provenance, items };
 }
 
-export function renderMarkdown({ source_sha, observed_at, items }) {
+export function renderMarkdown({ items }) {
   const rows = items.map(({ issue_number, design_state, status }) =>
     '| [#' + issue_number + '](' + ISSUE_URL + issue_number + ') | ' + design_state + ' | ' + status + ' |');
   return [
-    '# Project #1 — Project board candidate',
-    '',
-    'Observed ' + observed_at + ' against `' + source_sha + '`.',
-    'The listed phases are a limited view. The route check does not assess pilot or release readiness.',
-    '',
     '| Issue | Design State | Status |',
     '| --- | --- | --- |',
     ...rows,

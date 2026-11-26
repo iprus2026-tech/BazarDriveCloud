@@ -59,9 +59,61 @@ test('a DARK grouped route row checks every route, including HEAD', () => {
   assert.throws(() => prepareSnapshot(fixture(), matrix, PROVENANCE), /#587 is Shipped but \/api\/v1\/orders is DARK/);
 });
 
-test('an unrecognized matrix state fails closed', () => {
-  const matrix = MATRIX.replace('| `GET /api/v1/orders` | LIVE |', '| `GET /api/v1/orders` | TBD |');
-  assert.throws(() => prepareSnapshot(fixture(), matrix, PROVENANCE), /unknown BD-DOCS-042 state for phase #587/);
+for (const { service, method, route, state, similar } of [
+  { service: 'Orders', method: 'GET', route: '/api/v1/orders', state: 'LIVE', similar: '/api/v1/orders-archive' },
+  { service: 'Matching', method: 'POST', route: '/api/v1/matching/select', state: 'LIVE / PILOT-BLOCKED',
+    similar: '/api/v1/matching-preview' },
+]) {
+  const code = '`' + method + ' ' + route + '`';
+  const original = MATRIX.split('\n').find((line) => line.startsWith('| ' + code + ' | ' + state + ' |'));
+  const dark = { message: 'phase #587 is Shipped but ' + route + ' is DARK' };
+  const cases = [
+    ['indented DARK row', ' | ' + code + ' | DARK |', dark],
+    ['DARK row without a leading pipe', code + ' | DARK |', dark],
+    ['DARK row without a trailing pipe', '| ' + code + ' | DARK', dark],
+    ['DARK HTML-break group', '| `GET ' + similar + '`<br />`HEAD ' + route + '` | DARK |', dark],
+    ['empty state', '| ' + code + ' ||', /missing BD-DOCS-042 state/],
+    ['missing state column', code, /missing BD-DOCS-042 state/],
+    ['unknown state', '| ' + code + ' | TBD |', /unknown BD-DOCS-042 state for phase #587/],
+    ['unparseable group member', '| `GET ' + similar + '`, `HEAD missing-path`, ' + code + ' | DARK |',
+      /invalid BD-DOCS-042 route cell/],
+    ['unsupported group separator', '| `GET ' + similar + '` and ' + code + ' | DARK |',
+      /invalid BD-DOCS-042 route separator/],
+  ];
+
+  for (const [name, row, error] of cases) {
+    test(service + ' rejects ' + name, () => {
+      assert.ok(original);
+      assert.throws(() => prepareSnapshot(fixture(), MATRIX.replace(original, row), PROVENANCE), error);
+    });
+  }
+}
+
+test('an unrecognized state on a route outside the phase mapping fails closed', () => {
+  const live = '| `GET /api/v1/health` | LIVE |';
+  assert.ok(MATRIX.includes(live));
+  const matrix = MATRIX.replace(live, '| `GET /api/v1/health` | TBD |');
+  assert.throws(() => prepareSnapshot(fixture(), matrix, PROVENANCE), /unknown BD-DOCS-042 state for \/api\/v1\/health/);
+});
+
+test('a valid indented Route & Price row is retained', () => {
+  const route = '| `ALL /api/v1/route-price/*` | DARK |';
+  assert.ok(MATRIX.includes(route));
+  const matrix = MATRIX.replace(route, '   ' + route);
+  const snapshot = prepareSnapshot(fixture(), matrix, PROVENANCE);
+  assert.equal(snapshot.items.find(({ issue_number }) => issue_number === 588).design_state, 'Designed (ADR)');
+});
+
+test('the matrix accepts ordinary GFM table formatting and complete route groups', () => {
+  const lines = MATRIX.split('\n');
+  const read = lines.find((line) => line.startsWith('| `GET /api/v1/orders` | LIVE |'));
+  const write = lines.find((line) => line.startsWith('| `POST /api/v1/orders` | LIVE / PILOT-BLOCKED |'));
+  assert.ok(read);
+  assert.ok(write);
+  const matrix = MATRIX.replace(write + '\n', '').replace(read,
+    '  ``GET /api/v1/orders?query=a,b\\|c``<BR>`HEAD /api/v1/orders`, `OPTIONS /api/v1/orders` | LIVE')
+    .replaceAll('\n', '\r\n');
+  assert.deepEqual(prepareSnapshot(fixture(), matrix, PROVENANCE), prepareSnapshot(fixture(), MATRIX, PROVENANCE));
 });
 
 test('the existing DARK phase check still applies to Route & Price', () => {
@@ -99,9 +151,15 @@ test('only allowlisted fields and canonical phases are rendered in both formats'
   });
   const markdown = renderMarkdown(snapshot);
   assert.doesNotMatch(JSON.stringify(snapshot) + markdown, /SENTINEL|other\/private-repo|totalCount|#584/);
-  for (const phase of snapshot.items) {
-    assert.ok(markdown.includes('/issues/' + phase.issue_number + ') | ' + phase.design_state + ' | ' + phase.status));
-  }
+  assert.equal(markdown.includes(snapshot.source_sha), false);
+  assert.equal(markdown.includes(snapshot.observed_at), false);
+  assert.deepEqual(markdown.split('\n'), [
+    '| Issue | Design State | Status |',
+    '| --- | --- | --- |',
+    ...snapshot.items.map(({ issue_number, design_state, status }) =>
+      `| [#${issue_number}](https://github.com/${REPOSITORY}/issues/${issue_number}) | ${design_state} | ${status} |`),
+    '',
+  ]);
 });
 
 test('missing canonical phases fail even when a foreign issue has the same number', () => {
@@ -169,6 +227,10 @@ test('CLI writes only a checked candidate and leaves no output on failure', (con
   const valid = spawnSync(process.execPath, args, { encoding: 'utf8' });
   assert.equal(valid.status, 0, valid.stderr);
   const json = JSON.parse(readFileSync(path.join(output, 'project-board.json'), 'utf8'));
+  assert.equal(json.source_sha, PROVENANCE.sourceSha);
   assert.equal(json.observed_at, observedAt);
-  assert.equal(readFileSync(path.join(output, 'project-board.md'), 'utf8'), renderMarkdown(json));
+  const markdown = readFileSync(path.join(output, 'project-board.md'), 'utf8');
+  assert.equal(markdown, renderMarkdown(json));
+  assert.equal(markdown.includes(json.source_sha), false);
+  assert.equal(markdown.includes(json.observed_at), false);
 });
