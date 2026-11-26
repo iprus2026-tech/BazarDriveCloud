@@ -1,88 +1,159 @@
 #!/usr/bin/env node
-// scripts/check-project-board.mjs — Project #1 «BazarDrive — Mini-Yonder Growth Path» vs
-// BD-DOCS-042 (docs-site/docs/processes/backend-spine-inspector.md), the governed current-state
-// matrix. Read-only; NOT part of check.mjs. Run by .github/workflows/project-board.yml after
-// `gh project item-list` has been exported, or by hand:
-//
-//   gh project item-list 1 --owner iprus2026-tech --format json --limit 500 > board.json
-//   node scripts/check-project-board.mjs board.json
-//
-// Rule (CLAUDE.md «Project tracking»): a backend phase is `Shipped` only when its server
-// implementation is live. So for every phase item whose Design State is `Shipped`, every matrix
-// row of that phase's /api/v1/<service> prefix must be LIVE (not DARK). A violation exits 1.
-// A phase item with an empty Design State is a warning (exit 0) — the board is a reference view.
-import { readFileSync } from 'node:fs';
+// Validate the Project #1 export against the BD-DOCS-042 route matrix and prepare
+// a local candidate. Publication requires a separate decision about board metadata.
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const INSPECTOR = path.join(repoRoot, 'docs-site/docs/processes/backend-spine-inspector.md');
+const REPOSITORY = 'iprus2026-tech/BazarDriveCloud';
+const ISSUE_URL = 'https://github.com/' + REPOSITORY + '/issues/';
+const INSPECTOR = new URL('../docs-site/docs/processes/backend-spine-inspector.md', import.meta.url);
+const MAX_SNAPSHOT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Phase issue -> the /api/v1 route prefixes the phase owns in BD-DOCS-042. Phases with no server
-// routes of their own (data layer #584, client anchors #592/#593) are not checked here.
-const PHASE_ROUTES = {
-  585: ['auth'],            // Auth & Identity
-  586: ['availability'],    // Presence & Heartbeat
-  587: ['matching'],        // Dispatch & Matching
-  588: ['route-price'],     // Route & Price
-  589: ['notifications'],   // Notification Service
-  590: ['safety'],          // Safety & Compliance
-  591: ['/metrics'],        // Monitoring & Audit (the bare /metrics row)
-};
+const PHASE_ROUTES = new Map([
+  [585, ['/api/v1/auth']],
+  [586, ['/api/v1/availability']],
+  [587, ['/api/v1/orders', '/api/v1/matching']],
+  [588, ['/api/v1/route-price']],
+  [589, ['/api/v1/notifications']],
+  [590, ['/api/v1/safety']],
+  [591, ['/metrics']],
+]);
 
-function fail(msg) { console.error(`FAIL project-board: ${msg}`); process.exit(1); }
+const DESIGN_STATES = new Set(['Todo', 'Designed (ADR)', 'Shipped']);
+const STATUSES = new Set(['Todo', 'In Progress', 'Done']);
+const LIVE_STATES = new Set(['LIVE', 'LIVE / PILOT-BLOCKED']);
 
-const file = process.argv[2];
-if (!file) fail('usage: node scripts/check-project-board.mjs <board.json>');
+export function checkProvenance({ source_sha, observed_at }, currentMainSha, now = Date.now()) {
+  if (typeof source_sha !== 'string' || !/^[0-9a-f]{40}$/.test(source_sha) || source_sha !== currentMainSha) {
+    throw new Error('source_sha does not match the verified main SHA');
+  }
 
-let board;
-try { board = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { fail(`cannot read ${file}: ${e.message}`); }
-const items = Array.isArray(board) ? board : (board.items || []);
-if (!items.length) fail('board export has no items');
-
-// gh prints custom fields as camelCased keys ("designState"); be tolerant about the exact spelling.
-const designKey = (item) => Object.keys(item).find((k) => /^design\s*state$/i.test(k)) || 'designState';
-
-// Route matrix: "| `GET /api/v1/x/...` | STATE | ..." and the bare "| `GET /metrics` | DARK |".
-const rows = [];
-for (const line of readFileSync(INSPECTOR, 'utf8').split('\n')) {
-  const m = line.match(/^\|\s*`(?:ALL|GET|POST|PUT|PATCH|DELETE)\s+([^`]+)`(?:,\s*`[^`]+`)?\s*\|\s*([^|]+?)\s*\|/);
-  if (m) rows.push({ route: m[1].trim(), state: m[2].trim() });
-}
-if (!rows.length) fail('no route rows parsed from BD-DOCS-042');
-
-const rowsFor = (prefix) => rows.filter((r) => (prefix.startsWith('/')
-  ? r.route === prefix
-  : r.route.startsWith(`/api/v1/${prefix}`)));
-
-// The export must carry the Design State column at all; otherwise every phase would look
-// "empty" and the Shipped rule could never fire. gh prints custom fields only when asked
-// (`--field "Design State"` in the workflow) — refuse a snapshot without it.
-if (!items.some((i) => Object.keys(i).some((k) => /^design\s*state$/i.test(k)))) {
-  fail('no item carries a Design State field — export the board with --field "Design State"');
-}
-
-let violations = 0;
-let warnings = 0;
-for (const [issue, prefixes] of Object.entries(PHASE_ROUTES)) {
-  const item = items.find((i) => i.content && i.content.number === Number(issue));
-  if (!item) { console.warn(`WARN  #${issue} is not on the board`); warnings += 1; continue; }
-  const state = item[designKey(item)] || '';
-  const label = `#${issue} ${item.title || item.content.title || ''}`.trim();
-  // Every mapped prefix must resolve to at least one matrix row (checked before any
-  // early-continue); an unmatched prefix would silently turn the Shipped rule into a no-op.
-  const missing = prefixes.filter((p) => rowsFor(p).length === 0);
-  if (missing.length) fail(`${label}: no BD-DOCS-042 matrix row for ${missing.join(', ')} — PHASE_ROUTES or the matrix changed`);
-  if (!state) { console.warn(`WARN  ${label}: Design State is empty`); warnings += 1; continue; }
-  const matrix = prefixes.flatMap(rowsFor);
-  const dark = matrix.filter((r) => /DARK/.test(r.state));
-  if (state === 'Shipped' && dark.length) {
-    console.error(`FAIL  ${label}: Design State is "Shipped" but BD-DOCS-042 has DARK rows: ${dark.map((r) => r.route).join(', ')}`);
-    violations += 1;
-  } else {
-    console.log(`ok    ${label}: ${state} (${matrix.length} matrix row(s), ${dark.length} DARK)`);
+  const timestamp = Date.parse(observed_at);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== observed_at) {
+    throw new Error('observed_at must be a canonical UTC timestamp');
+  }
+  if (timestamp > now || now - timestamp > MAX_SNAPSHOT_AGE_MS) {
+    throw new Error('observed_at is in the future or the snapshot is older than 7 days');
   }
 }
 
-console.log(`\nproject-board: ${items.length} items, ${Object.keys(PHASE_ROUTES).length} phases checked, ${violations} violation(s), ${warnings} warning(s)`);
-if (violations) process.exit(1);
+function projectPhases(board) {
+  if (!Array.isArray(board?.items) || !Number.isSafeInteger(board.totalCount)
+      || board.totalCount !== board.items.length) {
+    throw new Error('incomplete export: totalCount must equal the size of items');
+  }
+
+  const phases = new Map();
+  for (const item of board.items) {
+    const content = item?.content;
+    if (!content || content.type !== 'Issue' || content.repository !== REPOSITORY
+        || !PHASE_ROUTES.has(content.number) || content.url !== ISSUE_URL + content.number) {
+      continue;
+    }
+
+    const issue = content.number;
+    if (phases.has(issue)) throw new Error('duplicate phase #' + issue);
+
+    // gh JSON can spell the field "design State". Reject missing or ambiguous values.
+    const designKeys = Object.keys(item).filter((key) => /^design\s*state$/i.test(key));
+    const designState = item[designKeys[0]];
+    if (designKeys.length !== 1 || !DESIGN_STATES.has(designState) || !STATUSES.has(item.status)) {
+      throw new Error('missing or unknown Design State/Status for phase #' + issue);
+    }
+
+    phases.set(issue, { issue_number: issue, design_state: designState, status: item.status });
+  }
+
+  return [...PHASE_ROUTES.keys()].map((issue) => {
+    const phase = phases.get(issue);
+    if (!phase) throw new Error('missing phase #' + issue);
+    return phase;
+  });
+}
+
+function checkPhaseRoutes(phases, inspector) {
+  const section = inspector.split(/^## /m).find((part) => part.startsWith('Live baseline'));
+  const rows = [];
+  for (const line of (section ?? '').split('\n')) {
+    const cells = line.match(/^\|\s*((?:`[^`]+`)(?:\s*,\s*`[^`]+`)*)\s*\|\s*([^|]+?)\s*\|/);
+    if (!cells) continue;
+    for (const [, route] of cells[1].matchAll(/`[A-Z]+\s+(\/[^`]+)`/g)) {
+      rows.push({ route: route.trim(), state: cells[2].trim() });
+    }
+  }
+
+  for (const { issue_number: issue, design_state: design } of phases) {
+    for (const prefix of PHASE_ROUTES.get(issue)) {
+      const service = rows.filter(({ route }) => {
+        const routePath = route.split('?')[0];
+        return routePath === prefix || (prefix !== '/metrics' && routePath.startsWith(prefix + '/'));
+      });
+      if (!service.length) throw new Error('no BD-DOCS-042 rows for phase #' + issue + ' ' + prefix);
+
+      for (const { route, state } of service) {
+        if (state !== 'DARK' && !LIVE_STATES.has(state)) {
+          throw new Error('unknown BD-DOCS-042 state for phase #' + issue + ' ' + route);
+        }
+        if (design === 'Shipped' && state === 'DARK') {
+          throw new Error('phase #' + issue + ' is Shipped but ' + route + ' is DARK');
+        }
+      }
+    }
+  }
+}
+
+export function prepareSnapshot(board, inspector, { sourceSha, currentMainSha, observedAt, now }) {
+  const provenance = { source_sha: sourceSha, observed_at: observedAt };
+  checkProvenance(provenance, currentMainSha, now);
+  const items = projectPhases(board);
+  checkPhaseRoutes(items, inspector);
+  return { schema_version: 1, repository: REPOSITORY, project_number: 1, ...provenance, items };
+}
+
+export function renderMarkdown({ source_sha, observed_at, items }) {
+  const rows = items.map(({ issue_number, design_state, status }) =>
+    '| [#' + issue_number + '](' + ISSUE_URL + issue_number + ') | ' + design_state + ' | ' + status + ' |');
+  return [
+    '# Project #1 — Project board candidate',
+    '',
+    'Observed ' + observed_at + ' against `' + source_sha + '`.',
+    'The listed phases are a limited view. The route check does not assess pilot or release readiness.',
+    '',
+    '| Issue | Design State | Status |',
+    '| --- | --- | --- |',
+    ...rows,
+    '',
+  ].join('\n');
+}
+
+function main() {
+  const [input, sourceSha, currentMainSha, observedAt, outputDir] = process.argv.slice(2);
+  if (!outputDir) {
+    throw new Error('usage: node scripts/check-project-board.mjs <raw.json> <source-sha> <current-main-sha> <observed-at> <output-dir>');
+  }
+
+  let board;
+  try {
+    board = JSON.parse(readFileSync(input, 'utf8'));
+  } catch {
+    throw new Error('cannot read Project JSON');
+  }
+
+  const candidate = prepareSnapshot(board, readFileSync(INSPECTOR, 'utf8'), {
+    sourceSha, currentMainSha, observedAt,
+  });
+  mkdirSync(outputDir);
+  writeFileSync(path.join(outputDir, 'project-board.json'), JSON.stringify(candidate, null, 2) + '\n');
+  writeFileSync(path.join(outputDir, 'project-board.md'), renderMarkdown(candidate));
+  console.log('project-board: validated ' + candidate.items.length + ' allowlisted phases');
+}
+
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? '')) {
+  try {
+    main();
+  } catch (error) {
+    console.error('FAIL project-board: ' + error.message);
+    process.exitCode = 1;
+  }
+}
