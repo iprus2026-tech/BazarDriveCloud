@@ -94,5 +94,17 @@
     "sourceOfTruth": "repo",
     "reviewAfter": "2027-01-01",
     "reason": "Contributor guide for Termux/proot Android setup; documents Supabase dev-DB rationale and known non-blocking issues."
+  },
+  {
+    "id": "BD-LEGACY-009",
+    "path": "docs/driver-telemetry-contract.md",
+    "title": "Driver Telemetry Backend/Data Contract",
+    "docType": "flow-contract",
+    "status": "draft",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2027-02-23",
+    "reason": "Contract-first backend/data/API draft for driver location telemetry (BD-DRIVER-TELEMETRY-CONTRACT-01); no migration, route or runtime change exists."
   }
 ]
