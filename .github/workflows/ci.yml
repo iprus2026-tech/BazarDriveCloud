@@ -26,6 +26,8 @@ jobs:
         run: node scripts/check.mjs
       - name: Project board validator regression tests (hermetic, no Project API)
         run: node --test tests/check-project-board.test.mjs
+      - name: Project progress regression tests
+        run: node --test tests/project-progress.test.mjs
       - name: Precache-drift guard (a precached file changed ⇒ sw.js VERSION must bump)
         if: github.event_name == 'pull_request'
         run: node scripts/check-precache-drift.mjs
